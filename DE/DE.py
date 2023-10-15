@@ -6,7 +6,7 @@ import random
 # Load the original image
 imgName = input("image name: ")
 fileType = "png"
-origImg = cv2.imread("./images/%s.%s"%(imgName, fileType), cv2.IMREAD_GRAYSCALE)
+origImg = cv2.imread("./DE/images/%s.%s"%(imgName, fileType), cv2.IMREAD_GRAYSCALE)
 height, width = origImg.shape
 size = height*width
 
