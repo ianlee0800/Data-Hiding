@@ -39,7 +39,7 @@ def calculate_ssim(img1, img2, win_size=7):
 # Load the original image
 imgName = input("Image name: ")
 fileType = "png"  # You can adjust this as needed
-origImg = cv2.imread(f"./images/{imgName}.{fileType}")
+origImg = cv2.imread(f"./DE/images/{imgName}.{fileType}")
 
 if origImg is not None:
     # Convert the image to HSV color space
