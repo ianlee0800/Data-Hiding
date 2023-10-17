@@ -36,53 +36,45 @@ def calculate_ssim(img1, img2):
 # Load the original image
 imgName = input("Image name: ")
 fileType = "png"  # You can adjust this as needed
-origImg = cv2.imread(f"./DE/images/{imgName}.{fileType}")
-
-markedImg = origImg.copy()
+origImg = cv2.imread(f"./images/{imgName}.{fileType}")
 
 if origImg is not None:
-    height, width, channels = origImg.shape  # Get the number of channels
-
-    if channels == 3:
-        # Color image
-        B, G, R = cv2.split(origImg)
-
-        # Generate random numbers for each channel
+    # Convert the image to HSV color space
+    img_hsv = cv2.cvtColor(origImg, cv2.COLOR_BGR2HSV)
+    
+    # Calculate the mean saturation value
+    saturation = img_hsv[:,:,1].mean()
+    
+    # Define a threshold to classify as color or grayscale
+    saturation_threshold = 30 # You can adjust the threshold
+    
+    if saturation > saturation_threshold:
+        print("COLOR IMAGE")
+        
+        # Generate random numbers for RGB channels
         random_number_R = random.randint(0, 255)
         random_number_G = random.randint(0, 255)
         random_number_B = random.randint(0, 255)
-        print("Random Numbers (R, G, B):", random_number_R, random_number_G, random_number_B)
-
-    elif channels == 1:
-        # Grayscale image
-
-        # Define 'jump_gray' list for grayscale
-        jump_gray = []
         
-         # Populate the 'jump_gray' list with coordinates for hiding data
-        for _ in range(8):
-            y = random.randint(0, height - 1)
-            x = random.randint(0, width - 2)  # Adjusted to avoid out-of-bounds error
-            jump_gray.append((y, x))
-
-        # Generate a random number
-        random_number = random.randint(0, 255)
-        print("Random Number:", random_number)
-
-        for i in range(8):
-            bit = (random_number >> i) & 1
-            y, x = jump_gray[i]
-            left = int(markedImg[y, x])
-            right = int(markedImg[y, x + 1])
-            left_e, right_e = difference_expansion(left, right, bit)
-            markedImg[y, x] = left_e
-            markedImg[y, x + 1] = right_e
-
-        # Continue with the code for grayscale images
-
+        # Embed these random numbers in the corresponding channels
+        origImg[:, :, 2] = random_number_R
+        origImg[:, :, 1] = random_number_G
+        origImg[:, :, 0] = random_number_B
     else:
-        print("Unsupported image format. It should be either grayscale or color (3-channel).")
-
+        print("GRAYSCALE IMAGE")
+        
+        # Generate a random number for grayscale
+        random_number = random.randint(0, 255)
+        
+        # Embed this random number in the grayscale channel
+        origImg = cv2.cvtColor(origImg, cv2.COLOR_BGR2GRAY)
+        origImg = origImg.astype(np.uint8)
+        origImg[:, :] = random_number
+    
+    markedImg = origImg.copy()
+    height, width, channels = origImg.shape  # Get the number of channels
+    
+    # Continue with the code for grayscale images
     # Continue with the code for both color and grayscale images
     # Calculate SSIM with a specified win_size (e.g., 3x3)
     psnr = calculate_psnr(origImg, markedImg)
