@@ -39,7 +39,7 @@ def calculate_ssim(img1, img2, win_size=7):
 # Load the original image
 imgName = input("Image name: ")
 fileType = "png"  # You can adjust this as needed
-origImg = cv2.imread(f"./DE/images/{imgName}.{fileType}")
+origImg = cv2.imread(f"./images/{imgName}.{fileType}")
 
 if origImg is not None:
     # Convert the image to HSV color space
@@ -53,6 +53,7 @@ if origImg is not None:
 
     if saturation > saturation_threshold:
         print("COLOR IMAGE")
+        payload_bits = 3 * 8  # 3 random values, each with 8 bits
 
         # Generate random numbers for RGB channels
         random_number_R = random.randint(0, 255)
@@ -73,6 +74,7 @@ if origImg is not None:
                 stegoImg[i, j, 0] = b 
     else:
         print("GRAYSCALE IMAGE")
+        payload_bits = 8  # 1 random value with 8 bits
 
         # Generate a random number for grayscale
         random_number = random.randint(0, 255)
@@ -88,15 +90,22 @@ if origImg is not None:
     origImg_cropped = origImg[:win_size, :win_size]
     stegoImg_cropped = stegoImg[:win_size, :win_size]
     
+    payload_size = payload_bits * origImg.shape[0] * origImg.shape[1]
+    bpp = payload_size / (origImg.shape[0] * origImg.shape[1])
+    
+    
     # Calculate PSNR and SSIM using the stego image
     psnr = calculate_psnr(origImg, stegoImg)  # Calculate PSNR using the entire images
     ssim_score = calculate_ssim(origImg, stegoImg, win_size=3)  # Set your custom window size
+    
 
     # Define and calculate the payload based on your data embedding
     payload = origImg.size // 8  # Assuming each pixel hides 1 bit
+    
 
     # Print results
     print("Payload Size:", payload)
+    print("Bits Per Pixel (bpp):", bpp)
     print("PSNR:", psnr)
     print("SSIM:", ssim_score)
 
