@@ -59,6 +59,11 @@ if origImg is not None:
         random_number_R = random.randint(0, 255)
         random_number_G = random.randint(0, 255)
         random_number_B = random.randint(0, 255)
+        
+        # Print or log the random numbers
+        print("Random Number R:", random_number_R)
+        print("Random Number G:", random_number_G)
+        print("Random Number B:", random_number_B)
 
         # Create a stego image
         stegoImg = origImg.copy()
@@ -78,6 +83,9 @@ if origImg is not None:
 
         # Generate a random number for grayscale
         random_number = random.randint(0, 255)
+        
+        # Print or log the random number
+        print("Random Number:", random_number)
 
         # Create a stego image
         stegoImg = origImg.copy()
@@ -102,6 +110,7 @@ if origImg is not None:
     # Define and calculate the payload based on your data embedding
     payload = origImg.size // 8  # Assuming each pixel hides 1 bit
     
+    cv2.SS
 
     # Print results
     print("Payload Size:", payload)
