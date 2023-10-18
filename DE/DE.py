@@ -18,9 +18,6 @@ def difference_expansion(pixel, random_number):
 
     return pixel_e
 
-
-
-
 # Calculate Peak Signal-to-Noise Ratio (PSNR)
 def calculate_psnr(img1, img2):
     mse = np.mean((img1 - img2) ** 2)
@@ -92,28 +89,16 @@ if origImg is not None:
         
         for i in range(origImg.shape[0]):
             for j in range(origImg.shape[1]):
-                stegoImg[i, j] = difference_expansion(origImg[i, j], random_number)
-
-    # Crop the images to the specified window size
-    origImg_cropped = origImg[:win_size, :win_size]
-    stegoImg_cropped = stegoImg[:win_size, :win_size]
-    
-    payload_size = payload_bits * origImg.shape[0] * origImg.shape[1]
-    bpp = payload_size / (origImg.shape[0] * origImg.shape[1])
-    
+                stegoImg[i, j] = difference_expansion(origImg[i, j], random_number)  
     
     # Calculate PSNR and SSIM using the stego image
     psnr = calculate_psnr(origImg, stegoImg)  # Calculate PSNR using the entire images
     ssim_score = calculate_ssim(origImg, stegoImg, win_size=3)  # Set your custom window size
-    
-
-    # Define and calculate the payload based on your data embedding
-    payload = origImg.size // 8  # Assuming each pixel hides 1 bit
-    
-    cv2.SS
+    payload_size = payload_bits * origImg.shape[0] * origImg.shape[1]
+    bpp = payload_size / (origImg.shape[0] * origImg.shape[1])
 
     # Print results
-    print("Payload Size:", payload)
+    print("Payload Size:", payload_size)
     print("Bits Per Pixel (bpp):", bpp)
     print("PSNR:", psnr)
     print("SSIM:", ssim_score)
