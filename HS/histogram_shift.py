@@ -1,140 +1,126 @@
 import cv2
 import numpy as np
 import math
+import random
 import matplotlib.pyplot as plt
+from skimage.metrics import structural_similarity as ssim
+import os  # Import the 'os' module
 
-# 繪出影像長條圖
-def draw_histogram(imgName, img):
-    height, width = img.shape
-    q = 256
-    count = [0]*q
-    for y in range(height):
-        for x in range(width):
-            bgr = int(img[y,x])
-            for i in range(q):
-                if i == bgr:
-                    count[i] += 1
-                    i = 256
-    plt.figure()
-    plt.bar(range(1,257), count)
-    plt.savefig("./histogram/%s_histogram.png"%(imgName))
-# 計算峰值訊噪比PSNR
+
+# Function for histogram shifting
+def histogram_shifting(channel, random_number):
+    # Calculate the cumulative distribution function (CDF) of the channel
+    hist, bin_edges = np.histogram(channel, bins=256, range=(0, 256), density=True)
+    cdf = hist.cumsum()
+
+    # Calculate the CDF difference for shifting
+    cdf_min = cdf.min()
+    cdf_max = cdf.max()
+    
+    if cdf_max == cdf_min:
+        cdf_diff = np.zeros_like(cdf)
+    else:
+        cdf_diff = (cdf - cdf_min) * random_number / (cdf_max - cdf_min)
+
+    # Interpolate the values based on the CDF difference
+    shifted_channel = np.interp(channel, bin_edges[:-1], cdf_diff)
+
+    return shifted_channel
+
+
+# Calculate Peak Signal-to-Noise Ratio (PSNR)
 def calculate_psnr(img1, img2):
-    height, width = img1.shape
-    size = height*width
-    max = 255
-    mse = 0
-    for y in range(height):
-        for x in range(width):
-            bgr1 = int(img1[y,x])
-            bgr2 = int(img2[y,x])
-            # print(img1, img2)
-            diff = bgr1 - bgr2
-            mse += diff**2
-    mse = mse / size
-    psnr = 10*math.log10(max**2/mse)
-    psnr = round(psnr, 4)
+    mse = np.mean((img1 - img2) ** 2)
+    if mse == 0:
+        return 100  # Images are identical, so PSNR is infinity
+    max_pixel = 255.0
+    psnr = 10 * math.log10(max_pixel / math.sqrt(mse))
     return psnr
-#計算結構相似性SSIM
+
+# Calculate Structural Similarity Index (SSIM)
 def calculate_ssim(img1, img2):
-    height, width = img1.shape
-    size = height*width
-    sum1 = 0
-    sum2 = 0
-    sd1 = 0
-    sd2 = 0
-    cov12 = 0.0 #共變異數
-    c1 = (255*0.01)**2 #其他參數
-    c2 = (255*0.03)**2
-    c3 = c2/2
-    for y in range(height):
-        for x in range(width):
-            bgr1 = int(img1[y,x])
-            bgr2 = int(img2[y,x])
-            sum1 += bgr1
-            sum2 += bgr2
-    mean1 = sum1 / size
-    mean2 = sum2 / size
-    for y in range(height):
-        for x in range(width):
-            bgr1 = int(img1[y,x])
-            bgr2 = int(img2[y,x])
-            diff1 = bgr1 - mean1
-            diff2 = bgr2 - mean2
-            sd1 += diff1**2
-            sd2 += diff2**2
-            cov12 += (diff1*diff2)
-    sd1 = math.pow(sd1/(size-1), 0.5)
-    sd2 = math.pow(sd2/(size-1), 0.5)
-    cov12 = cov12/(size-1)
-    light = (2*mean1*mean2+c1)/(mean1**2+mean2**2+c1) #比較亮度
-    contrast = (2*sd1*sd2+c2)/(sd1**2+sd2**2+c2) #比較對比度
-    structure = (cov12+c3)/(sd1*sd2+c3) #比較結構
-    ssim = light*contrast*structure #結構相似性
-    ssim = round(ssim, 2)
-    return ssim
-#計算色階
-def count_level(img):
-    height, width= img.shape
-    count = [0]*LEVELS
-    for y in range(height):
-        for x in range(width):
-            count[img[y,x]] += 1
-    return count
+    return ssim(img1, img2, win_size=3, data_range=img2.max() - img2.min(), multichannel=True)
 
-#讀取影像
-imgName = input("image name: ")
-fileType = "png"
-origImg = cv2.imread("./image/%s.%s"%(imgName, fileType), cv2.IMREAD_GRAYSCALE)
-#長、寬、大小
-height, width = origImg.shape
-size = height * width
-LEVELS = 256
+# Load the original image
+imgName = input("Image name: ")
+fileType = "png"  # You can adjust this as needed
+origImg = cv2.imread(f"./HS/images/{imgName}.{fileType}")
 
-#輸出元影像長條圖
-draw_histogram("%s_orig"%imgName, origImg)
+if origImg is not None:
+    # Convert the image to HSV color space
+    img_hsv = cv2.cvtColor(origImg, cv2.COLOR_BGR2HSV)
+    
+    # Calculate the mean saturation value
+    saturation = img_hsv[:,:,1].mean()
+    
+    # Define a threshold to classify as color or grayscale
+    saturation_threshold = 30 # You can adjust the threshold
+    
+    if saturation > saturation_threshold:
+        print("COLOR IMAGE")
 
-outImg = origImg.copy()
-count = count_level(outImg)#計算每色階數量
-#找峰值
-peak = 0
-for i in range(1, LEVELS):
-    if count[i] > count[peak]:
-        peak = i
-#選擇左移或右移
-if peak == 255:
-    shift = -1
+        # Generate random numbers for RGB channels
+        random_number_R = random.randint(0, 255)
+        random_number_G = random.randint(0, 255)
+        random_number_B = random.randint(0, 255)
+
+        # Create a stego image
+        stegoImg = origImg.copy()
+
+        for i in range(origImg.shape[0]):
+            for j in range(origImg.shape[1]):
+                stegoImg[i, j, 2] = histogram_shifting(origImg[i, j, 2], random_number_R)
+                stegoImg[i, j, 1] = histogram_shifting(origImg[i, j, 1], random_number_G)
+                stegoImg[i, j, 0] = histogram_shifting(origImg[i, j, 0], random_number_B)
+    else:
+        print("GRAYSCALE IMAGE")
+
+        # Generate a random number for grayscale
+        random_number = random.randint(0, 255)
+
+        # Create a stego image
+        stegoImg = origImg.copy()
+
+        for i in range(origImg.shape[0]):
+            for j in range(origImg.shape[1]):
+                stegoImg[i, j, 0] = histogram_shifting(origImg[i, j, 0], random_number)
+
+    # Calculate PSNR
+    psnr_value = cv2.PSNR(origImg, stegoImg)
+
+    # Calculate SSIM
+    ssim_score = calculate_ssim(origImg, stegoImg)
+
+    # Calculate payload size in bits
+    if saturation > saturation_threshold:
+        # For color images
+        payload_bits = 3 * 8  # 3 random values, each with 8 bits
+    else:
+        # For grayscale images
+        payload_bits = 8  # 1 random value with 8 bits
+
+    payload_size = payload_bits * origImg.shape[0] * origImg.shape[1]
+    bpp = payload_size / (origImg.shape[0] * origImg.shape[1])
+
+    print("Payload Size (bits):", payload_size)
+    print("Bits Per Pixel (bpp):", bpp)
+    print("PSNR:", psnr_value)
+    print("SSIM:", ssim_score)
+    
+    # Save the stego-image
+    outcome_path = "./HS/outcome/"
+    if not os.path.exists(outcome_path):
+        os.makedirs(outcome_path)
+    cv2.imwrite(os.path.join(outcome_path, f"{imgName}_marked_histogram.{fileType}"), stegoImg)
+
+    # Plot and save the histogram
+    histogram, bins = np.histogram(origImg.ravel(), bins=256, range=(0, 256))
+    plt.hist(origImg.ravel(), bins=256, range=(0, 256), density=True, alpha=0.75, color='blue')
+    plt.xlabel('Pixel Value')
+    plt.ylabel('Normalized Frequency')
+    plt.title('Histogram of Original Image')
+    plt.grid(True)
+    plt.savefig(f"./HS/histogram/{imgName}_histogram.png")
+
 else:
-    shift = 1
-map = np.zeros((height, width))#記錄像素格為255的位置
-#隱藏嵌入值
-payload = count[peak]
-hideArray = [np.random.choice([0,1], p=[0.5,0.5]) for n in range(payload)]
-i = 0
-for y in range(height):
-    for x in range(width):
-        if shift == 1:
-            if outImg[y,x] == peak:
-                if hideArray[i] == 1:
-                    outImg[y,x] += shift
-                i += 1
-            elif outImg[y,x] > peak and outImg[y,x] != 255:
-                outImg[y,x] += shift
-        if shift == -1:
-            if outImg[y,x] == peak:
-                if hideArray[i] == 1:
-                    outImg[y,x] += shift
-                i += 1
-            elif outImg[y,x] < peak and outImg[y,x] != 0:
-                outImg[y,x] += shift
-#計算相關值與輸出嵌入後的長條圖和影像
-psnr = calculate_psnr(origImg, outImg)
-ssim = calculate_ssim(origImg, outImg)
-bpp = payload/size
-print("peak=%s"%(peak))
-print("payload=%s"%payload)
-print("bpp=%.2f"%(bpp))
-print("PSNR=%s"%psnr)
-print("SSIM=%s"%ssim)
-draw_histogram("%s_markedImg"%(imgName), outImg)
-cv2.imwrite("./outcome/%s_markedImg.%s"%(imgName, fileType), outImg)
+    print("Failed to load the image. Check the file path.")
