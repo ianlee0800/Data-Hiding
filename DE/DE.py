@@ -6,11 +6,22 @@ import random
 def number_to_bits(number, length):
     return np.array([int(bit) for bit in format(number, '0' + str(length) + 'b')])
 
-def difference_expansion(pixel, bit):
+def difference_expansion(pixel, bit, adaptive=True, threshold=128):
     l = pixel // 2
     h = pixel - l
+    
+    # 自適應選擇：僅在像素值低於某個閾值時進行嵌入
+    if adaptive and pixel > threshold:
+        return pixel
+    
+    # 簡單的錯誤容忍：如果高位（h）過小，則不進行嵌入
+    if h < 2:
+        return pixel
+    
     h_e = (h << 1) + bit
+    
     return np.clip(l + h_e, 0, 255).astype(np.uint8)
+
 
 def calculate_ssim(img1, img2):
     # Set a default window size
@@ -37,18 +48,15 @@ def calculate_ssim(img1, img2):
         # Color image, we need to specify the channel_axis
         return ssim(img1, img2, win_size=win_size, channel_axis=2)
 
-
-
 imgName = input("Image name: ")
 fileType = "png"
 origImg = cv2.imread(f"./DE/images/{imgName}.{fileType}")
-origImgCopy = origImg.copy()  # Save a copy of the original image for comparison
-
 
 if origImg is None:
     print("Failed to load the image. Check the file path.")
 else:
-    img_hsv = cv2.cvtColor(origImg, cv2.COLOR_BGR2HSV)
+    stegoImg = origImg.copy()  # Create a stego image
+    img_hsv = cv2.cvtColor(stegoImg, cv2.COLOR_BGR2HSV)
     saturation = img_hsv[:, :, 1].mean()
     saturation_threshold = 30
 
@@ -57,7 +65,9 @@ else:
         channels = ['B', 'G', 'R']
 
         for idx, color in enumerate(channels):
-            payload_size = random.randint(100, 500000)
+            max_payload_size = origImg.shape[0] * origImg.shape[1] // 4
+            min_payload_size = 0
+            payload_size = random.randint(min_payload_size, max_payload_size)
             payload = np.random.randint(0, 2, payload_size).astype(np.uint8)
 
             bit_index = 0
@@ -70,27 +80,31 @@ else:
 
     else:  # Grayscale Image
         print("GRAYSCALE IMAGE")
-        payload_size = random.randint(100, 500000)
+        stegoImg = cv2.cvtColor(stegoImg, cv2.COLOR_BGR2GRAY)
+        max_payload_size = origImg.shape[0] * origImg.shape[1] // 4
+        min_payload_size = 0
+        payload_size = random.randint(min_payload_size, max_payload_size)
         payload = np.random.randint(0, 2, payload_size).astype(np.uint8)
 
         bit_index = 0
-        grayImg = cv2.cvtColor(origImg, cv2.COLOR_BGR2GRAY)
-        for i in range(0, grayImg.shape[0], 2):
-            for j in range(0, grayImg.shape[1], 2):
+        for i in range(0, stegoImg.shape[0], 2):
+            for j in range(0, stegoImg.shape[1], 2):
                 if bit_index < payload_size:
                     bit = payload[bit_index]
-                    grayImg[i, j] = difference_expansion(grayImg[i, j], bit)
+                    stegoImg[i, j] = difference_expansion(stegoImg[i, j], bit)
                     bit_index += 1
 
-    # Calculate PSNR and SSIM using the stego image
-    psnr = cv2.PSNR(origImgCopy, origImg)
-    ssim_score = calculate_ssim(origImgCopy, origImg)
-    bpp = payload_size / (origImg.shape[0] * origImg.shape[1] / 4)
-    
+        stegoImg = cv2.cvtColor(stegoImg, cv2.COLOR_GRAY2BGR)  # Convert back to BGR for consistent PSNR and SSIM
 
+    # Calculate PSNR and SSIM using the stego image
+    psnr = cv2.PSNR(origImg, stegoImg)
+    ssim_score = calculate_ssim(origImg, stegoImg)
+    bpp = payload_size / (origImg.shape[0] * origImg.shape[1] / 4)
+    print("Image Size:", origImg.shape[0], "x" , origImg.shape[1])
+    print("Payload Size:", payload_size)
     print("Bits Per Pixel (bpp):", bpp)
     print("PSNR:", psnr)
     print("SSIM:", ssim_score)
 
     # Save the stego-image in ./DE/outcome
-    cv2.imwrite(f"./DE/outcome/{imgName}_marked.{fileType}", origImg)
+    cv2.imwrite(f"./DE/outcome/{imgName}_marked.{fileType}", stegoImg)
