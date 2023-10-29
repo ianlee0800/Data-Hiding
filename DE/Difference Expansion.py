@@ -99,59 +99,146 @@ def process_image_channel(channel_data, payload, bit_index, max_payload_size, lo
                     count_not_expandable += 1  # Debug: Update counter
                     original_lsbs.append(h % 2)
 
-    print("Debug: count_expandable =", count_expandable)  # Debug: Print counter
-    print("Debug: count_not_expandable =", count_not_expandable)  # Debug: Print counter
     return bit_index, actual_payload_size
 
-imgName = input("Image name: ")
-fileType = "png"
+def process_image_channel_for_decoding(channel_data, extracted_payload, location_map):
+    for i in range(0, channel_data.shape[0], 2):
+        for j in range(0, channel_data.shape[1], 2):
+            if location_map[i//2, j//2]:  # Check if the pixel was used for embedding
+                x_prime, y_prime = channel_data[i, j], channel_data[i, j+1]
+                x, y, bit = difference_expansion_extract(x_prime, y_prime)
+                channel_data[i, j], channel_data[i, j+1] = x, y
+                extracted_payload.append(bit)
 
-origImg = cv2.imread(f"./DE/images/{imgName}.{fileType}")
+def perform_encoding():
+    # Put your existing encoding code here
+    imgName = input("Image name: ")
+    fileType = "png"
 
-if origImg is None:
-    print("Failed to load the image. Check the file path.")
-    exit(1)  # Exit the program
+    origImg = cv2.imread(f"./DE/images/{imgName}.{fileType}")
 
-# Initialize variables
-stegoImg = origImg.copy()
-location_map = np.zeros(origImg.shape[:2], dtype=np.uint8)
-original_lsbs = []
-bit_index = 0
-actual_payload_size = 0
-max_payload_size = origImg.shape[0] * origImg.shape[1] // 2
-min_payload_size = 0
-payload_size = random.randint(min_payload_size, max_payload_size)
-payload = np.random.randint(0, 2, payload_size).astype(np.uint8)
-img_hsv = cv2.cvtColor(stegoImg, cv2.COLOR_BGR2HSV)
-saturation = img_hsv[:, :, 1].mean()
-saturation_threshold = 30
+    if origImg is None:
+        print("Failed to load the image. Check the file path.")
+        exit(1)  # Exit the program
 
-if saturation > saturation_threshold:  # Color Image
-    print("COLOR IMAGE")
-    channels = ['B', 'G', 'R']
-    for idx, color in enumerate(channels):
-        bit_index, actual_payload_size = process_image_channel(origImg[:, :, idx], payload, bit_index, max_payload_size, location_map, original_lsbs, actual_payload_size)
+    # Initialize variables
+    stegoImg = origImg.copy()
+    location_map = np.zeros(origImg.shape[:2], dtype=np.uint8)
+    original_lsbs = []
+    bit_index = 0
+    actual_payload_size = 0
+    max_payload_size = origImg.shape[0] * origImg.shape[1] // 2
+    min_payload_size = 0
+    payload_size = random.randint(min_payload_size, max_payload_size)
+    payload = np.random.randint(0, 2, payload_size).astype(np.uint8)
+    img_hsv = cv2.cvtColor(stegoImg, cv2.COLOR_BGR2HSV)
+    saturation = img_hsv[:, :, 1].mean()
+    saturation_threshold = 30
+
+    if saturation > saturation_threshold:  # Color Image
+        print("COLOR IMAGE")
+        channels = ['B', 'G', 'R']
+        for idx, color in enumerate(channels):
+            bit_index, actual_payload_size = process_image_channel(origImg[:, :, idx], payload, bit_index, max_payload_size, location_map, original_lsbs, actual_payload_size)
 
 
-else:  # Grayscale Image
-    print("GRAYSCALE IMAGE")
-    stegoImg_gray = cv2.cvtColor(stegoImg, cv2.COLOR_BGR2GRAY)
-    location_map_gray = np.zeros((stegoImg_gray.shape[0]//2, stegoImg_gray.shape[1]//2), dtype=np.uint8)
-    original_lsbs_gray = []
-    bit_index, actual_payload_size = process_image_channel(stegoImg_gray, payload, bit_index, max_payload_size, location_map_gray, original_lsbs_gray, actual_payload_size)
-    stegoImg = cv2.cvtColor(stegoImg_gray, cv2.COLOR_GRAY2BGR)  # Convert back to BGR for consistent PSNR and SSIM
+    else:  # Grayscale Image
+        print("GRAYSCALE IMAGE")
+        stegoImg_gray = cv2.cvtColor(stegoImg, cv2.COLOR_BGR2GRAY)
+        location_map_gray = np.zeros((stegoImg_gray.shape[0]//2, stegoImg_gray.shape[1]//2), dtype=np.uint8)
+        original_lsbs_gray = []
+        bit_index, actual_payload_size = process_image_channel(stegoImg_gray, payload, bit_index, max_payload_size, location_map_gray, original_lsbs_gray, actual_payload_size)
+        stegoImg = cv2.cvtColor(stegoImg_gray, cv2.COLOR_GRAY2BGR)  # Convert back to BGR for consistent PSNR and SSIM
 
-# Calculate PSNR and SSIM using the stego image
-psnr = cv2.PSNR(origImg, stegoImg)
-ssim_score = calculate_ssim(origImg, stegoImg)
-payload_size = actual_payload_size
-bpp = payload_size / (origImg.shape[0] * origImg.shape[1] / 4)   
-   
-print("Image Size:", origImg.shape[0], "x" , origImg.shape[1])
-print("Payload Size:", payload_size)
-print("Bits Per Pixel (bpp):", bpp)
-print("PSNR:", psnr)
-print("SSIM:", ssim_score)
+    # Calculate PSNR and SSIM using the stego image
+    psnr = cv2.PSNR(origImg, stegoImg)
+    ssim_score = calculate_ssim(origImg, stegoImg)
+    payload_size = actual_payload_size
+    bpp = payload_size / (origImg.shape[0] * origImg.shape[1] / 4)   
+    
+    print("Image Size:", origImg.shape[0], "x" , origImg.shape[1])
+    print("Payload Size:", payload_size)
+    print("Bits Per Pixel (bpp):", bpp)
+    print("PSNR:", psnr)
+    print("SSIM:", ssim_score)
 
-# Save the stego-image in ./DE/outcome
-cv2.imwrite(f"./DE/outcome/{imgName}_marked.{fileType}", stegoImg)
+    # Save the stego-image in ./DE/outcome
+    cv2.imwrite(f"./DE/outcome/{imgName}_marked.{fileType}", stegoImg)
+    print("Encoding completed.")
+    return imgName, stegoImg  # return image name and stego image
+
+def perform_decoding(imgName, stegoImg):
+    # Put your decoding logic here
+    fileType = "png"
+    stegoImg = cv2.imread(f"./DE/outcome/{imgName}.{fileType}")
+
+    if stegoImg is None:
+        print("Failed to load the stego image. Check the file path.")
+        exit(1)  # Exit the program
+
+    # Initialize variables
+    restoredImg = stegoImg.copy()
+    process_image_channel_for_decoding(restoredImg[:, :, idx], extracted_payload, location_map)
+    location_map = np.zeros(stegoImg.shape[:2], dtype=np.uint8)  # Replace this with the actual location map
+    extracted_payload = []
+    img_hsv = cv2.cvtColor(stegoImg, cv2.COLOR_BGR2HSV)
+    saturation = img_hsv[:, :, 1].mean()
+    saturation_threshold = 30
+
+    if saturation > saturation_threshold:  # Color Image
+        print("COLOR IMAGE")
+        channels = ['B', 'G', 'R']
+        for idx, color in enumerate(channels):
+            process_image_channel_for_decoding(stegoImg[:, :, idx], extracted_payload, location_map)
+
+    else:  # Grayscale Image
+        print("GRAYSCALE IMAGE")
+        stegoImg_gray = cv2.cvtColor(stegoImg, cv2.COLOR_BGR2GRAY)
+        process_image_channel_for_decoding(stegoImg_gray, extracted_payload, location_map)
+        restoredImg = cv2.cvtColor(stegoImg_gray, cv2.COLOR_GRAY2BGR)  # Convert back to BGR for consistent PSNR and SSIM
+
+    # Convert extracted payload to array and perform further operations
+    extracted_payload = np.array(extracted_payload)
+    
+    origImgName = input("Enter the name of the original file for comparison (from ./DE/images): ")
+    origImg = cv2.imread(f"./DE/images/{origImgName}.png")
+    
+    if origImg is None:
+        print("Failed to load the original image. Check the file path.")
+        exit(1)
+    
+    # Calculate PSNR and SSIM between original and restored images
+    psnr = cv2.PSNR(origImg, restoredImg)
+    ssim_score = calculate_ssim(origImg, restoredImg)
+
+    print("PSNR:", psnr)
+    print("SSIM:", ssim_score)
+    
+
+def main():
+    choice = input("Would you like to encode or decode? (E/D): ").upper()
+
+    if choice == 'E':
+        imgName, stegoImg = perform_encoding()
+        post_encode_choice = input("Would you like to continue with decoding? (Y/N): ").upper()
+
+        if post_encode_choice == 'Y':
+            perform_decoding(imgName, stegoImg)
+        else:
+            print("Terminating the program.")
+            exit(0)
+
+    elif choice == 'D':
+        imgName = input("Enter the name of the file to decode (from ./DE/outcome): ")
+        stegoImg = cv2.imread(f"./DE/outcome/{imgName}.png")
+        perform_decoding(imgName, stegoImg)
+
+    else:
+        print("Invalid choice. Terminating the program.")
+        exit(0)
+
+if __name__ == '__main__':
+    main()
+
+
+
