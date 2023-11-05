@@ -140,7 +140,7 @@ else:
         bpp = len(payload_bits) / (origImg.size)
             
         print(f"Payload Size (bits): {len(payload_bits)}")
-        print(f"Bits Per Pixel (bpp): {bpp:.4f}")
+        print(f"Bits Per Pixel (bpp): {bpp}")
         print(f"PSNR: {psnr_value:.4f}")
         print(f"SSIM: {ssim_score:.4f}")
 
