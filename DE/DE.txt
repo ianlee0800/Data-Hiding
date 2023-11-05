@@ -25,21 +25,6 @@ def is_expandable(l, h):
 def is_changeable(l, h):
     return abs(2 * (h // 2) + 0) <= min(2 * (255 - l), 2 * l + 1) and abs(2 * (h // 2) + 1) <= min(2 * (255 - l), 2 * l + 1)
 
-def split_payload(payload, num_channels):
-    """
-    Splits the payload into equal parts for each channel.
-    :param payload: The original payload to be split.
-    :param num_channels: The number of channels to split the payload into.
-    :return: A list of payloads, one for each channel.
-    """
-    # Calculate the size of each split payload
-    split_size = len(payload) // num_channels
-    
-    # Split the payload using numpy array_split which allows for uneven splits if necessary
-    split_payloads = np.array_split(payload, num_channels)
-    
-    return split_payloads
-
 def difference_expansion_embed(x, y, bit, location_map, i, j):
     l, h = integer_transform(x, y)
     if i < location_map.shape[0] and j < location_map.shape[1]:  # 檢查索引是否在有效範圍內
@@ -93,10 +78,6 @@ def calculate_ssim(img1, img2):
     else:
         # Color image, we need to specify the channel_axis
         return ssim(img1, img2, win_size=win_size, channel_axis=2)
-
-def split_payload(payload, num_channels):
-    split_size = len(payload) // num_channels
-    return [payload[i * split_size:(i + 1) * split_size] for i in range(num_channels)]
 
 def process_image_channel(channel_data, payload, bit_index, max_payload_size, location_map, original_lsbs, actual_payload_size):
     # Debug: Counters to keep track of the number of times conditions are met or not met
@@ -155,32 +136,12 @@ def perform_encoding():
     saturation = img_hsv[:, :, 1].mean()
     saturation_threshold = 30
 
-    # Inside perform_encoding, under the COLOR IMAGE section
     if saturation > saturation_threshold:  # Color Image
         print("COLOR IMAGE")
         channels = ['B', 'G', 'R']
-        # Split the payload equally among channels
-        payloads = split_payload(payload, len(channels))
-        # Initialize variables needed for process_image_channel function
-        max_payload_size = origImg.shape[0] * origImg.shape[1] // 2
-        location_maps = [np.zeros(origImg.shape[:2], dtype=np.uint8) for _ in channels]
-        original_lsbs = [[] for _ in channels]  # List to store LSBs for each channel
-        actual_payload_sizes = [0] * len(channels)
-        bit_indexes = [0] * len(channels)  # Starting index for each payload
+        for idx, color in enumerate(channels):
+            bit_index, actual_payload_size = process_image_channel(origImg[:, :, idx], payload, bit_index, max_payload_size, location_map, original_lsbs, actual_payload_size)
 
-        for idx, channel in enumerate(channels):
-            # Call the process_image_channel function with all required arguments
-            bit_indexes[idx], actual_payload_sizes[idx] = process_image_channel(
-                stegoImg[:, :, idx],
-                payloads[idx],
-                bit_indexes[idx],
-                max_payload_size,
-                location_maps[idx],
-                original_lsbs[idx],
-                actual_payload_sizes[idx]
-            )
-            # Save location map for this channel
-            np.save(f"./DE/location_map/{imgName}_marked_{channel}_location_map.npy", location_maps[idx])
 
     else:  # Grayscale Image
         print("GRAYSCALE IMAGE")
@@ -216,54 +177,51 @@ def perform_decoding(imgName):
         imgName += "_marked"
     stegoImgPath = f"./DE/outcome/{imgName}.{fileType}"
     stegoImg = cv2.imread(stegoImgPath)
+    location_map_path = f"./DE/location_map/{imgName}_location_map.npy"
 
     if stegoImg is None:
         print(f"Failed to load the stego image from {stegoImgPath}. Check the file path.")
-        exit(1)  # Exit the program if the stego image could not be loaded
+        exit(1)
 
+    # Check if the location map exists
+    if not os.path.exists(location_map_path):
+        print(f"Location map not found at {location_map_path}. Check if the location map was saved correctly.")
+        exit(1)
+
+    # Load the location map
+    location_map = np.load(location_map_path)
+    
     # Initialize variables
-    extracted_payload = []  # Initialize the list to collect payload from all channels
-    restoredImg = np.zeros_like(stegoImg)  # Initialize the restored image
+    extracted_payload = []  # This needs to be before its first use.
     img_hsv = cv2.cvtColor(stegoImg, cv2.COLOR_BGR2HSV)
     saturation = img_hsv[:, :, 1].mean()
     saturation_threshold = 30
 
+    # Determine if the image is color or grayscale
     if saturation > saturation_threshold:  # Color Image
         print("COLOR IMAGE")
-        channels = ['B', 'G', 'R']
-        for idx, channel in enumerate(channels):
-            location_map_path = f"./DE/location_map/{imgName}_{channel}_location_map.npy"
-            if not os.path.exists(location_map_path):
-                print(f"Location map for {channel} channel not found at {location_map_path}.")
-                exit(1)  # Exit the program if the location map could not be loaded
-            
-            location_map = np.load(location_map_path)
-            # Create a copy of the channel data to modify
-            channel_data = stegoImg[:, :, idx].copy()
-            process_image_channel_for_decoding(channel_data, extracted_payload, location_map, idx)
-            restoredImg[:, :, idx] = channel_data  # Update with the restored channel data
-
+        # No need to iterate over the color names since they are not used.
+        for idx in range(3):  # There are 3 color channels: B, G, R
+            process_image_channel_for_decoding(stegoImg[:, :, idx], extracted_payload, location_map, idx)
+        restoredImg = stegoImg  # No need to convert since it's already in color
     else:  # Grayscale Image
         print("GRAYSCALE IMAGE")
-        location_map_path = f"./DE/location_map/{imgName}_location_map.npy"
-        if not os.path.exists(location_map_path):
-            print(f"Location map not found at {location_map_path}.")
-            exit(1)  # Exit the program if the location map could not be loaded
+        stegoImg_gray = cv2.cvtColor(stegoImg, cv2.COLOR_BGR2GRAY)
+        dummy_idx = 0  # A dummy index since it's not used in grayscale
+        process_image_channel_for_decoding(stegoImg_gray, extracted_payload, location_map, dummy_idx)
+        restoredImg = cv2.cvtColor(stegoImg_gray, cv2.COLOR_GRAY2BGR)  # Convert back to BGR for consistent PSNR and SSIM
 
-        location_map = np.load(location_map_path)
-        process_image_channel_for_decoding(stegoImg[:, :, 0], extracted_payload, location_map, 0)
-        restoredImg_gray = stegoImg[:, :, 0].copy()  # Create a copy of the processed grayscale channel
-        restoredImg = cv2.cvtColor(restoredImg_gray, cv2.COLOR_GRAY2BGR)  # Convert back to BGR
-
-    # Ask the user for the original image for comparison
+    # Convert extracted payload to array for further operations if necessary
+    extracted_payload = np.array(extracted_payload)
+    
     origImgName = input("Enter the name of the original file for comparison (from ./DE/images): ")
     origImg = cv2.imread(f"./DE/images/{origImgName}.png")
     
     if origImg is None:
         print("Failed to load the original image. Check the file path.")
-        exit(1)  # Exit the program if the original image could not be loaded
+        exit(1)
     
-    # Calculate PSNR and SSIM between the original and restored images
+    # Calculate PSNR and SSIM between original and restored images
     psnr = cv2.PSNR(origImg, restoredImg)
     ssim_score = calculate_ssim(origImg, restoredImg)
 
