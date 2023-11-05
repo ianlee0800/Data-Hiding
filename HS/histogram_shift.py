@@ -50,15 +50,16 @@ def embed_data_with_histogram_shifting(orig_img, payload_bits):
 
     return stego_img, map_shifted
 
-# Load the original image
-imgName = input("Image name: ")
-fileType = "png"
+def hs_encoding():
+    # Load the original image
+    imgName = input("Image name: ")
+    fileType = "png"
 
-# File existence check
-if not os.path.exists(f"./HS/images/{imgName}.{fileType}"):
-    print("Image file does not exist. Please check the file path.")
-else:
-    origImg = cv2.imread(f"./HS/images/{imgName}.{fileType}")
+    # File existence check
+    if not os.path.exists(f"./HS/images/{imgName}.{fileType}"):
+        print("Image file does not exist. Please check the file path.")
+    else:
+        origImg = cv2.imread(f"./HS/images/{imgName}.{fileType}")
     
     if origImg is not None:
         # Convert to HSV to check saturation
@@ -152,3 +153,10 @@ else:
 
     else:
         print("Failed to load the image. Check the file path.")
+
+def main():
+    # Call your hs_encoding function here
+    hs_encoding()
+
+if __name__ == "__main__":
+    main()
