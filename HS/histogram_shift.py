@@ -1,6 +1,5 @@
 import cv2
 import numpy as np
-import math
 import random
 import matplotlib.pyplot as plt
 from skimage.metrics import structural_similarity as ssim
