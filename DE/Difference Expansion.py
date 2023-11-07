@@ -214,16 +214,17 @@ def perform_decoding(imgName):
     # If 'imgName' already ends with '_marked', do not append another '_marked'
     if not imgName.endswith("_marked"):
         imgName += "_marked"
-    stegoImgPath = f"./DE/outcome/{imgName}.{fileType}"
+    stegoImgPath = f"./DE/outcome/{imgName}_marked.{fileType}"
     stegoImg = cv2.imread(stegoImgPath)
 
     if stegoImg is None:
         print(f"Failed to load the stego image from {stegoImgPath}. Check the file path.")
-        exit(1)  # Exit the program if the stego image could not be loaded
+        exit(1)
 
-    # Initialize variables
-    extracted_payload = []  # Initialize the list to collect payload from all channels
-    restoredImg = np.zeros_like(stegoImg)  # Initialize the restored image
+    extracted_payload = []  
+    restoredImg = np.zeros_like(stegoImg)
+    
+    # Assuming the existence of a cv2.COLOR_BGR2HSV operation and a threshold to determine color or grayscale
     img_hsv = cv2.cvtColor(stegoImg, cv2.COLOR_BGR2HSV)
     saturation = img_hsv[:, :, 1].mean()
     saturation_threshold = 30
@@ -242,6 +243,8 @@ def perform_decoding(imgName):
             channel_data = stegoImg[:, :, idx].copy()
             process_image_channel_for_decoding(channel_data, extracted_payload, location_map, idx)
             restoredImg[:, :, idx] = channel_data  # Update with the restored channel data
+            
+        pass
 
     else:  # Grayscale Image
         print("GRAYSCALE IMAGE")
@@ -263,6 +266,10 @@ def perform_decoding(imgName):
         print("Failed to load the original image. Check the file path.")
         exit(1)  # Exit the program if the original image could not be loaded
     
+    # The extracted_payload should now be filled with bits
+    binary_payload = ''.join(str(bit) for bit in extracted_payload)
+    print(f"Extracted binary payload: {binary_payload}")
+    
     # Calculate PSNR and SSIM between the original and restored images
     psnr = cv2.PSNR(origImg, restoredImg)
     ssim_score = calculate_ssim(origImg, restoredImg)
@@ -281,6 +288,9 @@ def perform_decoding(imgName):
     # Save the restored image
     cv2.imwrite(restored_img_path, restoredImg)
     print(f"Restored image saved to {restored_img_path}")
+
+    # Optionally, return the binary payload
+    return binary_payload
 
 
 def main():
