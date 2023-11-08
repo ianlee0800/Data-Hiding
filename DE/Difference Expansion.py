@@ -214,7 +214,7 @@ def perform_decoding(imgName):
     # If 'imgName' already ends with '_marked', do not append another '_marked'
     if not imgName.endswith("_marked"):
         imgName += "_marked"
-    stegoImgPath = f"./DE/outcome/{imgName}_marked.{fileType}"
+    stegoImgPath = f"./DE/outcome/{imgName}.{fileType}"
     stegoImg = cv2.imread(stegoImgPath)
 
     if stegoImg is None:
