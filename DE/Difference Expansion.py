@@ -15,8 +15,8 @@ def integer_transform(x, y):
 def inverse_integer_transform(l, h):
     x = l + (h + 1) // 2
     y = l - h // 2
-    x = np.clip(x, 0, 255)  # Ensure x is within the valid range
-    y = np.clip(y, 0, 255)  # Ensure y is within the valid range
+    x = np.clip(x, 0, 255)  # Clipping to the valid range
+    y = np.clip(y, 0, 255)
     return x, y
 
 def is_expandable(l, h):
@@ -42,32 +42,35 @@ def split_payload(payload, num_channels):
 
 def difference_expansion_embed(x, y, bit, location_map, i, j):
     l, h = integer_transform(x, y)
-    if i < location_map.shape[0] and j < location_map.shape[1]:  # 檢查索引是否在有效範圍內
+    embedded = False  # Flag to indicate if a bit was embedded
+    if i < location_map.shape[0] and j < location_map.shape[1]:
         if is_expandable(l, h):
             h_prime = 2 * h + bit
-            location_map[i, j] = 1  # 更新位置地圖
+            location_map[i, j] = 1
+            embedded = h_prime != h  # Update flag based on change
         elif is_changeable(l, h):
             h_prime = 2 * (h // 2) + bit
+            embedded = h_prime != h
         else:
             h_prime = h
         x_prime, y_prime = inverse_integer_transform(l, h_prime)
-        return x_prime, y_prime
+        return x_prime, y_prime, embedded
     else:
-        print(f"Warning: Index ({i}, {j}) is out of bounds.")
-        return x, y  # 返回原始值
+        return x, y, embedded
 
-def difference_expansion_extract(x_prime, y_prime):
-    # Calculate integer average 'l_prime' and new difference 'h_prime'
-    l_prime = (x_prime + y_prime) // 2
-    h_prime = x_prime - y_prime
-    # Extract the least significant bit (LSB) from 'h_prime'
-    bit = h_prime % 2
-    # Calculate the original difference value 'h'
-    h = h_prime // 2
-    # Calculate the original values x and y
-    x = l_prime + (h + 1) // 2
-    y = l_prime - h // 2
-    return x, y, bit
+def difference_expansion_extract(x_prime, y_prime, location_map, i, j):
+    if location_map[i, j]:
+        # Only proceed with extraction if the location map indicates embedding
+        l_prime = (x_prime + y_prime) // 2
+        h_prime = x_prime - y_prime
+        bit = h_prime % 2  # Extract LSB
+        h = h_prime // 2
+        x = l_prime + (h + 1) // 2
+        y = l_prime - h // 2
+        return x, y, bit
+    else:
+        # If not used for embedding, return the original values
+        return x_prime, y_prime, None
 
 def calculate_ssim(img1, img2):
     # Set a default window size
@@ -98,36 +101,24 @@ def split_payload(payload, num_channels):
     split_size = len(payload) // num_channels
     return [payload[i * split_size:(i + 1) * split_size] for i in range(num_channels)]
 
-def process_image_channel(channel_data, payload, bit_index, max_payload_size, location_map, original_lsbs, actual_payload_size):
-    # Debug: Counters to keep track of the number of times conditions are met or not met
-    count_expandable = 0
-    count_not_expandable = 0
+def process_image_channel(channel_data, payload, bit_index, max_payload_size, location_map):
     for i in range(0, channel_data.shape[0], 2):
         for j in range(0, channel_data.shape[1], 2):
             if bit_index >= len(payload):  # Check if bit_index is out of bounds
-                break
+                return  # Exit the function as all bits are processed
             if bit_index < max_payload_size:
-                count_expandable += 1  # Debug: Update counter
                 bit = payload[bit_index]
                 x, y = channel_data[i, j], channel_data[i, j+1]
-                x_prime, y_prime = difference_expansion_embed(x, y, bit, location_map, i//2, j//2)
+                x_prime, y_prime, _ = difference_expansion_embed(x, y, bit, location_map, i//2, j//2)  # Unpack three values
                 channel_data[i, j], channel_data[i, j+1] = x_prime, y_prime
-                bit_index += 1
-                actual_payload_size += 1
-            else:
-                l, h = integer_transform(channel_data[i, j], channel_data[i, j+1])
-                if not is_expandable(l, h):
-                    count_not_expandable += 1  # Debug: Update counter
-                    original_lsbs.append(h % 2)
-
-    return bit_index, actual_payload_size
+            bit_index += 1
 
 def process_image_channel_for_decoding(channel_data, extracted_payload, location_map, idx):
     for i in range(0, channel_data.shape[0], 2):
         for j in range(0, channel_data.shape[1], 2):
             if location_map[i//2, j//2]:  # Check if the pixel was used for embedding
                 x_prime, y_prime = channel_data[i, j], channel_data[i, j+1]
-                x, y, bit = difference_expansion_extract(x_prime, y_prime)
+                x, y, bit = difference_expansion_extract(x_prime, y_prime, location_map, i, j)
                 channel_data[i, j], channel_data[i, j+1] = x, y
                 extracted_payload.append(bit)
 
@@ -156,6 +147,7 @@ def perform_encoding():
     saturation_threshold = 30
 
     # Inside perform_encoding, under the COLOR IMAGE section
+    # Inside perform_encoding, under the COLOR IMAGE section
     if saturation > saturation_threshold:  # Color Image
         print("COLOR IMAGE")
         channels = ['B', 'G', 'R']
@@ -165,19 +157,16 @@ def perform_encoding():
         max_payload_size = origImg.shape[0] * origImg.shape[1] // 2
         location_maps = [np.zeros(origImg.shape[:2], dtype=np.uint8) for _ in channels]
         original_lsbs = [[] for _ in channels]  # List to store LSBs for each channel
-        actual_payload_sizes = [0] * len(channels)
         bit_indexes = [0] * len(channels)  # Starting index for each payload
 
         for idx, channel in enumerate(channels):
-            # Call the process_image_channel function with all required arguments
-            bit_indexes[idx], actual_payload_sizes[idx] = process_image_channel(
+            # Call the process_image_channel function with adjusted arguments
+            process_image_channel(
                 stegoImg[:, :, idx],
                 payloads[idx],
                 bit_indexes[idx],
                 max_payload_size,
-                location_maps[idx],
-                original_lsbs[idx],
-                actual_payload_sizes[idx]
+                location_maps[idx]
             )
             # Save location map for this channel
             np.save(f"./DE/location_map/{imgName}_marked_{channel}_location_map.npy", location_maps[idx])
@@ -186,17 +175,20 @@ def perform_encoding():
         print("GRAYSCALE IMAGE")
         stegoImg_gray = cv2.cvtColor(stegoImg, cv2.COLOR_BGR2GRAY)
         location_map_gray = np.zeros((stegoImg_gray.shape[0]//2, stegoImg_gray.shape[1]//2), dtype=np.uint8)
-        original_lsbs_gray = []
-        bit_index, actual_payload_size = process_image_channel(stegoImg_gray, payload, bit_index, max_payload_size, location_map_gray, original_lsbs_gray, actual_payload_size)
+
+        # Call the process_image_channel function for grayscale image with adjusted arguments
+        process_image_channel(stegoImg_gray, payload, bit_index, max_payload_size, location_map_gray)
         stegoImg = cv2.cvtColor(stegoImg_gray, cv2.COLOR_GRAY2BGR)  # Convert back to BGR for consistent PSNR and SSIM
 
     # Calculate PSNR and SSIM using the stego image
     psnr = cv2.PSNR(origImg, stegoImg)
-    ssim_score = calculate_ssim(origImg, stegoImg)
-    payload_size = actual_payload_size
-    bpp = payload_size / (origImg.shape[0] * origImg.shape[1] / 4)   
+    ssim_score = calculate_ssim(origImg, stegoImg)  
     
-    print("Image Size:", origImg.shape[0], "x" , origImg.shape[1])
+    # Use the length of the payload array for calculations
+    payload_size = len(payload)
+    bpp = payload_size / (origImg.shape[0] * origImg.shape[1] / 4)  # Bits per pixel calculation
+
+    print("Image Size:", origImg.shape[0], "x", origImg.shape[1])
     print("Payload Size:", payload_size)
     print("Bits Per Pixel (bpp):", bpp)
     print("PSNR:", psnr)
@@ -268,7 +260,7 @@ def perform_decoding(imgName):
     
     # The extracted_payload should now be filled with bits
     binary_payload = ''.join(str(bit) for bit in extracted_payload)
-    print(f"Extracted binary payload: {binary_payload}")
+    #print(f"Extracted binary payload: {binary_payload}")
     
     # Calculate PSNR and SSIM between the original and restored images
     psnr = cv2.PSNR(origImg, restoredImg)
@@ -316,7 +308,3 @@ def main():
 
 if __name__ == '__main__':
     main()
-
-
-
-
