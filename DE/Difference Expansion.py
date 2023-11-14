@@ -13,8 +13,8 @@ def integer_transform(x, y):
     return l, h
 
 def inverse_integer_transform(l, h):
-    x = l + (h + 1) // 2
-    y = l - h // 2
+    x = l + (h + (1 if h >= 0 else -1)) // 2
+    y = l - (h // 2)
     x = np.clip(x, 0, 255)  # Clipping to the valid range
     y = np.clip(y, 0, 255)
     return x, y
@@ -43,30 +43,37 @@ def split_payload(payload, num_channels):
 def difference_expansion_embed(x, y, bit, location_map, i, j):
     l, h = integer_transform(x, y)
     embedded = False  # Flag to indicate if a bit was embedded
+
     if i < location_map.shape[0] and j < location_map.shape[1]:
         if is_expandable(l, h):
             h_prime = 2 * h + bit
-            location_map[i, j] = 1
-            embedded = h_prime != h  # Update flag based on change
+            location_map[i, j] = 1  # Marking the location as used for embedding
+            embedded = True
         elif is_changeable(l, h):
             h_prime = 2 * (h // 2) + bit
-            embedded = h_prime != h
+            embedded = True
         else:
             h_prime = h
+
         x_prime, y_prime = inverse_integer_transform(l, h_prime)
+        x_prime = np.clip(x_prime, 0, 255)  # Clipping to prevent overflow/underflow
+        y_prime = np.clip(y_prime, 0, 255)
         return x_prime, y_prime, embedded
     else:
         return x, y, embedded
 
 def difference_expansion_extract(x_prime, y_prime, location_map, i, j):
     if location_map[i, j]:
-        # Only proceed with extraction if the location map indicates embedding
-        l_prime = (x_prime + y_prime) // 2
-        h_prime = x_prime - y_prime
-        bit = h_prime % 2  # Extract LSB
-        h = h_prime // 2
-        x = l_prime + (h + 1) // 2
-        y = l_prime - h // 2
+        l_prime, h_prime = integer_transform(x_prime, y_prime)
+        
+        # Extract the bit and reverse the expansion
+        bit = h_prime % 2
+        h = (h_prime - bit) // 2 if h_prime >= 0 else (h_prime - bit + 1) // 2
+
+        # Calculate the original values x and y using the inverse transform
+        x, y = inverse_integer_transform(l_prime, h)
+        x = np.clip(x, 0, 255)  # Clipping to ensure values are within valid range
+        y = np.clip(y, 0, 255)
         return x, y, bit
     else:
         # If not used for embedding, return the original values
@@ -251,10 +258,10 @@ def perform_decoding(imgName):
         restoredImg = cv2.cvtColor(restoredImg_gray, cv2.COLOR_GRAY2BGR)  # Convert back to BGR
 
     # Ask the user for the original image for comparison
-    origImgName = input("Enter the name of the original file for comparison (from ./DE/images): ")
-    origImg = cv2.imread(f"./DE/images/{origImgName}.png")
+    origin_imgName = input("Enter the name of the original file for comparison (from ./DE/images): ")
+    origin_img = cv2.imread(f"./DE/images/{origin_imgName}.png")
     
-    if origImg is None:
+    if origin_img is None:
         print("Failed to load the original image. Check the file path.")
         exit(1)  # Exit the program if the original image could not be loaded
     
@@ -263,8 +270,8 @@ def perform_decoding(imgName):
     #print(f"Extracted binary payload: {binary_payload}")
     
     # Calculate PSNR and SSIM between the original and restored images
-    psnr = cv2.PSNR(origImg, restoredImg)
-    ssim_score = calculate_ssim(origImg, restoredImg)
+    psnr = cv2.PSNR(origin_img, restoredImg)
+    ssim_score = calculate_ssim(origin_img, restoredImg)
 
     print("PSNR:", psnr)
     print("SSIM:", ssim_score)
