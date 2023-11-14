@@ -6,6 +6,33 @@ import os
 def number_to_bits(number, length):
     return np.array([int(bit) for bit in format(number, '0' + str(length) + 'b')])
 
+def integer_transform_block(block):
+    """
+    Transform a 2x2 block of pixels using integer transform.
+    :param block: 2x2 numpy array representing a block of pixels.
+    :return: Transformed block (l, h1, h2, h3).
+    """
+    block = np.int16(block)  # Convert to larger integer type
+    l = np.mean(block)  # Average of all pixels in the block
+    h1 = block[0, 0] - block[0, 1]
+    h2 = block[0, 0] - block[1, 0]
+    h3 = block[0, 0] - block[1, 1]
+    return l, h1, h2, h3
+
+def inverse_integer_transform_block(l, h1, h2, h3):
+    """
+    Inverse transform for a 2x2 block of pixels.
+    :param l, h1, h2, h3: Transformed components.
+    :return: Original 2x2 block.
+    """
+    x0 = l + (h1 + h2 + h3) / 3
+    x1 = x0 - h1
+    x2 = x0 - h2
+    x3 = x0 - h3
+    block = np.array([[x0, x1], [x2, x3]])
+    block = np.clip(block, 0, 255)  # Clipping to the valid range
+    return block
+
 def integer_transform(x, y):
     x, y = np.int16(x), np.int16(y)  # Convert to larger integer type
     l = (x + y) // 2
