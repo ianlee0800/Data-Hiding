@@ -32,6 +32,9 @@ def load_metadata_for_channel(imgName, metadata_dir="./HS/metadata"):
 def embed_data_with_histogram_shifting(orig_img, payload_bits):
     height, width = orig_img.shape[:2]  # Safeguard for both grayscale and color
     levels = 256
+    
+    # Initialize map_shifted
+    map_shifted = np.zeros_like(orig_img, dtype=np.uint8)
 
     # Calculate the histogram and find the peak
     hist = cv2.calcHist([orig_img], [0], None, [levels], [0, levels]).flatten()
@@ -46,7 +49,12 @@ def embed_data_with_histogram_shifting(orig_img, payload_bits):
     # Embed the payload
     payload_index = 0
     max_payload_size = hist[peak]  # The max number of bits we can embed is the count of the peak level
-    map_shifted = np.zeros_like(orig_img, dtype=np.uint8)  # Map of shifted pixels
+
+    # Edge case handling for peak at 0 or 255
+    if peak == 0:
+        shift = 1
+    elif peak == 255:
+        shift = -1
 
     # Make sure the payload does not exceed the number of pixels at the peak level
     if len(payload_bits) > hist[peak]:
@@ -55,14 +63,17 @@ def embed_data_with_histogram_shifting(orig_img, payload_bits):
     for y in range(height):
         for x in range(width):
             if stego_img[y, x] == peak:
+                map_shifted[y, x] = 1  # Mark pixel as used for embedding
                 if payload_index < len(payload_bits):
-                    print(f"Embedding bit {payload_bits[payload_index]} at ({y}, {x})")
                     if payload_bits[payload_index] == 1:
-                        stego_img[y, x] += shift
-                    map_shifted[y, x] = 1
+                        # Check for potential overflow or underflow
+                        if (shift == 1 and stego_img[y, x] < 255) or (shift == -1 and stego_img[y, x] > 0):
+                            stego_img[y, x] += shift
                     payload_index += 1
-            elif (shift == 1 and stego_img[y, x] > peak and stego_img[y, x] < 255) or \
-                 (shift == -1 and stego_img[y, x] < peak and stego_img[y, x] > 0):
+
+            # Shift pixels adjacent to the peak value
+            elif ((shift == 1 and stego_img[y, x] > peak and stego_img[y, x] < 255) or
+                  (shift == -1 and stego_img[y, x] < peak and stego_img[y, x] > 0)):
                 stego_img[y, x] += shift
 
     # Check if all bits were embedded
@@ -82,14 +93,12 @@ def extract_data_with_histogram_shifting(stego_img, map_shifted, peak, shift):
         for x in range(width):
             # Check if the pixel was used for embedding
             if map_shifted[y, x] == 1:
-                # Shift pixel back to its original value
+                # Check if the pixel was shifted
                 if (shift == 1 and stego_img[y, x] == peak + 1) or \
                    (shift == -1 and stego_img[y, x] == peak - 1):
                     restored_img[y, x] -= shift
-                    # The pixel was shifted to embed a '1'
                     extracted_payload.append(1)
                 else:
-                    # The pixel is at the peak value and was not shifted, hence it represents a '0'
                     extracted_payload.append(0)
 
     return extracted_payload, restored_img
@@ -132,6 +141,7 @@ def hs_encoding():
     saturation = img_hsv[:,:,1].mean()
     saturation_threshold = 30
     metadata = {'peak_values': [], 'payload_sizes': [], 'shifts': []}
+    original_payload_bits = []
 
     if saturation > saturation_threshold:
         print("COLOR IMAGE")
@@ -145,6 +155,7 @@ def hs_encoding():
             peak = int(np.argmax(hist))
             shift = -1 if peak == 255 else 1
             payload_bits = [random.randint(0, 1) for _ in range(int(hist[peak]))]
+            original_payload_bits.extend(payload_bits)
             print(f"Payload bits (before embedding): {payload_bits}")
 
             stego_channel, map_shifted = embed_data_with_histogram_shifting(channel_img, payload_bits)
@@ -161,7 +172,6 @@ def hs_encoding():
         # Save the combined map for all channels after processing all channels
         np.save(f"{maps_dir}/{imgName}_map_shifted.npy", map_shifted_all)
 
-
     else:
         print("GRAYSCALE IMAGE")
         if origImg.ndim == 3:
@@ -171,6 +181,7 @@ def hs_encoding():
         peak = int(np.argmax(hist))
         shift = -1 if peak == 255 else 1
         payload_bits = [random.randint(0, 1) for _ in range(int(hist[peak]))]
+        original_payload_bits = payload_bits
 
         stego_img, map_shifted = embed_data_with_histogram_shifting(origImg, payload_bits)
 
@@ -202,9 +213,10 @@ def hs_encoding():
     print(f"Stego image saved at {outcome_path}{imgName}_marked_histogram.{fileType}")
     
     save_metadata_for_channel(metadata, imgName)
-    return imgName
+    
+    return imgName, original_payload_bits
 
-def hs_decoding(imgName):
+def hs_decoding(imgName, original_payload_bits):
     fileType = "png"
     stego_img_path = f"./HS/outcome/{imgName}_marked_histogram.{fileType}"
     map_shifted_path = f"./HS/maps/{imgName}_map_shifted.npy"
@@ -226,28 +238,33 @@ def hs_decoding(imgName):
     # Check the dimensions of map_shifted to determine if the image is color or grayscale
     is_grayscale = map_shifted.ndim == 2 and stego_img.ndim == 2
     
+    extracted_payload_bits = []
+
     if is_grayscale:
         print("Decoding GRAYSCALE IMAGE")
         extracted_data, restored_img = extract_data_with_histogram_shifting(
             stego_img, map_shifted, peak_values[0], shifts[0]
         )
+        extracted_payload_bits.extend(extracted_data)
     else:
         print("Decoding COLOR IMAGE")
         restored_img = stego_img.copy()
-        extracted_data = []  # Initialize an empty list to hold data from all channels
-        for ch in range(3):
+        for ch in range(3):  # Assuming BGR format
             channel_extracted_data, restored_channel = extract_data_with_histogram_shifting(
                 stego_img[:, :, ch], map_shifted, peak_values[ch], shifts[ch]
             )
             restored_img[:, :, ch] = restored_channel
-            extracted_data.extend(channel_extracted_data)
+            extracted_payload_bits.extend(channel_extracted_data)
 
     # Extract binary data to string without assuming it represents ASCII characters
-    # Ensure this is within the same scope where `extracted_payload` is defined
-    binary_payload = ''.join(map(str, extracted_data))
+    binary_payload = ''.join(map(str, extracted_payload_bits))
     print(f"Extracted binary payload: {binary_payload}")
 
-
+    # Payload comparison
+    if original_payload_bits == extracted_payload_bits:
+        print("Success: The embedded data and the extracted data are identical.")
+    else:
+        print("Error: The embedded data and the extracted data differ.")
     # Calculate PSNR
     psnr_value = cv2.PSNR(original_img, restored_img)
     print(f"PSNR: {psnr_value:.4f}")
@@ -282,19 +299,25 @@ def main():
     choice = input("Would you like to encode or decode? (E/D): ").upper()
 
     if choice == 'E':
-        imgName = hs_encoding()  # Ensure this returns the image name upon successful encoding
-        if imgName:
-            post_encode_choice = input("Would you like to continue with decoding? (Y/N): ").upper()
-            if post_encode_choice == 'Y':
-                hs_decoding(imgName)  # Pass the image name to the decoding function
-            else:
-                print("Encoding complete. Exiting the program.")
+        imgName, original_payload_bits = hs_encoding()  # This returns the image name and the payload bits
+        post_encode_choice = input("Would you like to continue with decoding? (Y/N): ").upper()
+        if post_encode_choice == 'Y':
+            hs_decoding(imgName, original_payload_bits)  # Pass the image name and the payload bits for decoding
         else:
-            print("Encoding failed. Exiting the program.")
+            print("Encoding complete. Exiting the program.")
 
     elif choice == 'D':
         imgName = input("Enter the name of the stego image: ")
-        hs_decoding(imgName)  # Make sure hs_decoding is adjusted to take imgName as an argument
+        # For standalone decoding, you need a method to provide or calculate original payload bits
+        # One possible approach is to read them from a file or user input
+        # For example:
+        # original_payload_bits = load_original_payload_bits()  # Implement this function as needed
+        # hs_decoding(imgName, original_payload_bits)
+
+        # Alternatively, if original payload bits are not needed for standalone decoding, adjust hs_decoding accordingly
+        # hs_decoding(imgName)
+
+        print("Note: Standalone decoding currently requires access to original payload bits.")
 
     else:
         print("Invalid choice. Please restart the program and select either E or D.")
