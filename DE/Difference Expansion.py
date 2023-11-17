@@ -23,17 +23,19 @@ def inverse_integer_transform(l, h):
     :param l, h: Transformed components (average and difference).
     :return: Original pixel values.
     """
-    x = l + (h + (1 if h >= 0 else -1)) // 2
+    x = l + (h + 1) // 2
     y = l - (h // 2)
     x = np.clip(x, 0, 255)  # Clipping to the valid range
     y = np.clip(y, 0, 255)
     return x, y
 
 def is_expandable(l, h):
-    return abs(2 * h + 0) <= min(2 * (255 - l), 2 * l + 1) and abs(2 * h + 1) <= min(2 * (255 - l), 2 * l + 1)
+    max_h = min(255 - l, l)
+    return -max_h <= h <= max_h and -max_h <= 2*h + 1 <= max_h
 
 def is_changeable(l, h):
-    return abs(2 * (h // 2) + 0) <= min(2 * (255 - l), 2 * l + 1) and abs(2 * (h // 2) + 1) <= min(2 * (255 - l), 2 * l + 1)
+    max_h = min(255 - l, l)
+    return -max_h <= h // 2 <= max_h and -max_h <= 2*(h // 2) + 1 <= max_h
 
 def split_payload(payload, num_channels):
     """
@@ -42,59 +44,64 @@ def split_payload(payload, num_channels):
     :param num_channels: The number of channels to split the payload into.
     :return: A list of payloads, one for each channel.
     """
-    # Calculate the size of each split payload
-    split_size = len(payload) // num_channels
-    
     # Split the payload using numpy array_split which allows for uneven splits if necessary
-    split_payloads = np.array_split(payload, num_channels)
-    
-    return split_payloads
+    return np.array_split(payload, num_channels)
 
 def difference_expansion_embed(x, y, bit, location_map, changeable_map, i, j):
     l, h = integer_transform(x, y)
-    embedded = False  # Flag to indicate if a bit was embedded
+    embedded = False
 
     if is_changeable(l, h):
-        changeable_map[i // 2, j // 2] = 1  # Mark as changeable
+        changeable_map[i // 2, j // 2] = 1
         if is_expandable(l, h):
             h_prime = 2 * h + bit
-            location_map[i // 2, j // 2] = 1  # Mark as used for embedding
+            location_map[i // 2, j // 2] = 1
             embedded = True
         else:
-            h_prime = 2 * (h // 2) + bit
-            embedded = True
+            # Modify the embedding logic for non-expandable but changeable pixels
+            # Here, we embed the bit only if it does not alter the pixel value beyond the acceptable limit
+            proposed_h_prime = 2 * (h // 2) + bit
+            if -255 <= proposed_h_prime <= 255:
+                h_prime = proposed_h_prime
+                embedded = True
+            else:
+                h_prime = h
     else:
         h_prime = h
-        changeable_map[i // 2, j // 2] = 0  # Mark as not changeable
+        changeable_map[i // 2, j // 2] = 0
 
     x_prime, y_prime = inverse_integer_transform(l, h_prime)
-    x_prime = np.clip(x_prime, 0, 255)  # Clipping to prevent overflow/underflow
+    x_prime = np.clip(x_prime, 0, 255)
     y_prime = np.clip(y_prime, 0, 255)
     return x_prime, y_prime, embedded
-
 
 def difference_expansion_extract(x_prime, y_prime, location_map, changeable_map, i, j):
     l_prime, h_prime = integer_transform(x_prime, y_prime)
 
-    # Determine if the current pixel is changeable or expanded based on the maps
+    # Adjust indices to match the map dimensions
+    i, j = i // 2, j // 2
+
     if changeable_map[i, j]:
-        # For changeable difference values
         if location_map[i, j]:
-            # If expanded, divide by 2 to get the original value
+            # For expanded values, divide by 2 to get the original value
             h = h_prime // 2
         else:
-            # For non-expanded but changeable values, restore the original LSB
-            h = (h_prime // 2) if h_prime % 2 == 0 else (h_prime // 2 + 1)
+            # For non-expanded but changeable values, restore the original value
+            # Using similar logic as in the embedding function
+            proposed_h = (h_prime - bit) // 2
+            max_h = min(255 - l_prime, l_prime)
+            if -max_h <= proposed_h <= max_h:
+                h = proposed_h
+            else:
+                h = h_prime  # If the proposed h is out of range, keep the h_prime
     else:
         # For non-changeable values, keep the difference as is
         h = h_prime
 
-    # Calculate the original values x and y using the inverse transform
     x, y = inverse_integer_transform(l_prime, h)
     x = np.clip(x, 0, 255)  # Clipping to ensure values are within valid range
     y = np.clip(y, 0, 255)
 
-    # Extract the bit only if the pixel was used for embedding
     bit = None
     if location_map[i, j]:
         bit = h_prime % 2
@@ -126,35 +133,28 @@ def calculate_ssim(img1, img2):
         # Color image, we need to specify the channel_axis
         return ssim(img1, img2, win_size=win_size, channel_axis=2)
 
-def split_payload(payload, num_channels):
-    split_size = len(payload) // num_channels
-    return [payload[i * split_size:(i + 1) * split_size] for i in range(num_channels)]
-
 def process_image_channel(channel_data, payload, bit_index, max_payload_size, location_map, changeable_map):
     for i in range(0, channel_data.shape[0], 2):
         for j in range(0, channel_data.shape[1], 2):
             if bit_index >= len(payload):  # Check if bit_index is out of bounds
-                return  # Exit the function as all bits are processed
+                return
             if bit_index < max_payload_size:
                 bit = payload[bit_index]
                 x, y = channel_data[i, j], channel_data[i, j + 1]
-                x_prime, y_prime, embedded = difference_expansion_embed(x, y, bit, location_map, changeable_map, i // 2, j // 2)
-                if embedded:
-                    print(f"Bit {bit} embedded at ({i//2}, {j//2})")
+                # Correctly unpack the three returned values
+                x_prime, y_prime, embedded = difference_expansion_embed(x, y, bit, location_map, changeable_map, i, j)
                 channel_data[i, j], channel_data[i, j + 1] = x_prime, y_prime
-            bit_index += 1
+                bit_index += 1
 
-def process_image_channel_for_decoding(channel_data, extracted_payload, location_map, changeable_map):
+def process_image_channel_for_decoding(channel_data, location_map, changeable_map, extracted_payload):
     for i in range(0, channel_data.shape[0], 2):
         for j in range(0, channel_data.shape[1], 2):
             if location_map[i // 2, j // 2]:  # Check if the pixel was used for embedding
                 x_prime, y_prime = channel_data[i, j], channel_data[i, j + 1]
-                x, y, bit = difference_expansion_extract(x_prime, y_prime, location_map, changeable_map, i // 2, j // 2)
-                if location_map[i // 2, j // 2]:
-                    print(f"Bit {bit} extracted from ({i//2}, {j//2})")
+                x, y, bit = difference_expansion_extract(x_prime, y_prime, location_map, changeable_map, i, j)
                 channel_data[i, j], channel_data[i, j + 1] = x, y
                 extracted_payload.append(bit)
-
+    return extracted_payload
 
 def perform_encoding():
     imgName = input("Image name: ")
@@ -167,7 +167,6 @@ def perform_encoding():
 
     stegoImg = origImg.copy()
     location_map = np.zeros(origImg.shape[:2], dtype=np.uint8)
-    changeable_map = np.zeros_like(location_map, dtype=np.uint8)  # Initialize changeable_map
     payload_size = origImg.shape[0] * origImg.shape[1] // 2
     payload = np.random.randint(0, 2, payload_size).astype(np.uint8)
     img_hsv = cv2.cvtColor(stegoImg, cv2.COLOR_BGR2HSV)
@@ -224,7 +223,8 @@ def perform_encoding():
 
     print("Encoding completed.")
     binary_payload = ''.join(str(bit) for bit in payload)
-    return imgName, stegoImg, binary_payload
+
+    return imgName, binary_payload
 
 def perform_decoding(imgName, original_payload):
     fileType = "png"
@@ -246,32 +246,37 @@ def perform_decoding(imgName, original_payload):
     if saturation > saturation_threshold:  # Color Image
         print("COLOR IMAGE")
         channels = ['B', 'G', 'R']
+        extracted_payloads = [[] for _ in channels]  # Initialize for each channel
+
         for idx, channel in enumerate(channels):
             location_map_path = f"./DE/location_map/{imgName}_{channel}_location_map.npy"
-            changeable_map_path = f"./DE/changeable_map/{imgName}_{channel}_changeable_map.npy"  # Path for changeable map
+            changeable_map_path = f"./DE/changeable_map/{imgName}_{channel}_changeable_map.npy"
 
             if not os.path.exists(location_map_path) or not os.path.exists(changeable_map_path):
                 print(f"Location map or changeable map for {channel} channel not found.")
                 exit(1)
 
             location_map = np.load(location_map_path)
-            changeable_map = np.load(changeable_map_path)  # Load the changeable map
+            changeable_map = np.load(changeable_map_path)
             channel_data = stegoImg[:, :, idx].copy()
-            process_image_channel_for_decoding(channel_data, extracted_payload, location_map, changeable_map)
+            process_image_channel_for_decoding(channel_data, location_map, changeable_map, extracted_payloads[idx])
             restoredImg[:, :, idx] = channel_data
+
+        # Combine payloads from all channels
+        extracted_payload = [bit for payload in extracted_payloads for bit in payload]
 
     else:  # Grayscale Image
         print("GRAYSCALE IMAGE")
         location_map_path = f"./DE/location_map/{imgName}_location_map.npy"
-        changeable_map_path = f"./DE/changeable_map/{imgName}_changeable_map.npy"  # Path for changeable map
+        changeable_map_path = f"./DE/changeable_map/{imgName}_changeable_map.npy"
 
         if not os.path.exists(location_map_path) or not os.path.exists(changeable_map_path):
             print("Location map or changeable map not found.")
             exit(1)
 
         location_map = np.load(location_map_path)
-        changeable_map = np.load(changeable_map_path)  # Load the changeable map
-        process_image_channel_for_decoding(stegoImg[:, :, 0], extracted_payload, location_map, changeable_map)
+        changeable_map = np.load(changeable_map_path)
+        process_image_channel_for_decoding(stegoImg[:, :, 0], location_map, changeable_map, extracted_payload)
         restoredImg_gray = stegoImg[:, :, 0].copy()
         restoredImg = cv2.cvtColor(restoredImg_gray, cv2.COLOR_GRAY2BGR)
 
@@ -281,12 +286,11 @@ def perform_decoding(imgName, original_payload):
     
     if origin_img is None:
         print("Failed to load the original image. Check the file path.")
-        exit(1)  # Exit the program if the original image could not be loaded
+        exit(1)
     
     # Convert the extracted payload to a binary string
     extracted_binary_payload = ''.join(str(bit) if bit is not None else 'None' for bit in extracted_payload)
-    print(f"Extracted binary payload: {extracted_binary_payload}")
-    
+
     # Compare with the original payload
     if extracted_binary_payload == original_payload:
         print("Success: Extracted payload matches the original payload.")
@@ -312,14 +316,13 @@ def perform_decoding(imgName, original_payload):
     cv2.imwrite(restored_img_path, restoredImg)
     print(f"Restored image saved to {restored_img_path}")
 
-    # Optionally, return the binary payload
     return extracted_binary_payload
 
 def main():
     choice = input("Would you like to encode or decode? (E/D): ").upper()
 
     if choice == 'E':
-        imgName, stegoImg, original_payload = perform_encoding()
+        imgName, original_payload = perform_encoding()
         post_encode_choice = input("Would you like to continue with decoding? (Y/N): ").upper()
 
         if post_encode_choice == 'Y':
