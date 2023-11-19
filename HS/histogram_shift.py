@@ -28,11 +28,58 @@ def load_metadata_for_channel(imgName, metadata_dir="./HS/metadata"):
         metadata = json.load(f)
     return metadata
 
-# New function for histogram shifting and data embedding
-def embed_data_with_histogram_shifting(orig_img, payload_bits):
-    height, width = orig_img.shape[:2]  # Safeguard for both grayscale and color
+def save_stego_histogram(stego_img, img_name, bins=256, save_dir="./HS/stego_histogram"):
+    # Create the directory if it doesn't exist
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+
+    # Check if the image is color or grayscale
+    if len(stego_img.shape) == 3 and stego_img.shape[2] == 3:  # Color image
+        color = ('b', 'g', 'r')
+        plt.figure()
+        plt.title(f"{img_name} - RGB Histogram")
+        plt.xlabel("Bins")
+        plt.ylabel("# of Pixels")
+
+        for i, col in enumerate(color):
+            hist = cv2.calcHist([stego_img], [i], None, [bins], [0, 256])
+            plt.plot(hist, color=col)
+            plt.xlim([0, bins])
+
+        plt.savefig(f"{save_dir}/{img_name}_RGB_histogram.png")
+    else:  # Grayscale image
+        hist = cv2.calcHist([stego_img], [0], None, [bins], [0, 256])
+        plt.figure()
+        plt.title(f"{img_name} - Grayscale Histogram")
+        plt.xlabel("Bins")
+        plt.ylabel("# of Pixels")
+        plt.plot(hist)
+        plt.xlim([0, bins])
+
+        plt.savefig(f"{save_dir}/{img_name}_grayscale_histogram.png")
+
+def is_low_impact_pixel(img, y, x, peak, threshold=10):
+    # Example criteria for low impact: pixel is in a darker region
+    # or its value is close to the neighboring pixels
+    height, width = img.shape[:2]
+    pixel_value = img[y, x]
+
+    # Check if pixel is in a darker region
+    if pixel_value < threshold:
+        return True
+
+    # Check the similarity with neighboring pixels
+    for dy in [-1, 0, 1]:
+        for dx in [-1, 0, 1]:
+            if 0 <= y + dy < height and 0 <= x + dx < width:
+                if abs(int(img[y + dy, x + dx]) - pixel_value) > threshold:
+                    return False
+    return True
+
+def embed_data_with_histogram_shifting(orig_img, payload_bits, low_impact_threshold=15, hybrid_mode=True):
+    height, width = orig_img.shape[:2]
     levels = 256
-    
+
     # Initialize map_shifted
     map_shifted = np.zeros_like(orig_img, dtype=np.uint8)
 
@@ -48,7 +95,7 @@ def embed_data_with_histogram_shifting(orig_img, payload_bits):
 
     # Embed the payload
     payload_index = 0
-    max_payload_size = hist[peak]  # The max number of bits we can embed is the count of the peak level
+    max_payload_size = hist[peak]
 
     # Edge case handling for peak at 0 or 255
     if peak == 0:
@@ -56,29 +103,35 @@ def embed_data_with_histogram_shifting(orig_img, payload_bits):
     elif peak == 255:
         shift = -1
 
-    # Make sure the payload does not exceed the number of pixels at the peak level
-    if len(payload_bits) > hist[peak]:
-        raise ValueError("Payload exceeds the maximum size that can be embedded.")
-
+    # First, try embedding using only low-impact pixels
     for y in range(height):
         for x in range(width):
-            if stego_img[y, x] == peak:
-                map_shifted[y, x] = 1  # Mark pixel as used for embedding
+            if orig_img[y, x] == peak and is_low_impact_pixel(orig_img, y, x, peak, low_impact_threshold):
+                map_shifted[y, x] = 1
                 if payload_index < len(payload_bits):
                     if payload_bits[payload_index] == 1:
-                        # Check for potential overflow or underflow
                         if (shift == 1 and stego_img[y, x] < 255) or (shift == -1 and stego_img[y, x] > 0):
                             stego_img[y, x] += shift
                     payload_index += 1
 
-            # Shift pixels adjacent to the peak value
-            elif ((shift == 1 and stego_img[y, x] > peak and stego_img[y, x] < 255) or
-                  (shift == -1 and stego_img[y, x] < peak and stego_img[y, x] > 0)):
-                stego_img[y, x] += shift
+    # Hybrid mode embedding
+    if payload_index < len(payload_bits) and hybrid_mode:
+        print("Switching to hybrid embedding mode.")
+        for y in range(height):
+            for x in range(width):
+                # Use other pixels if low-impact pixels are exhausted
+                if orig_img[y, x] == peak and map_shifted[y, x] == 0:  # Not previously used for embedding
+                    map_shifted[y, x] = 1  # Mark this pixel as used for embedding in hybrid mode
+                    if payload_index < len(payload_bits):
+                        if payload_bits[payload_index] == 1:
+                            if (shift == 1 and stego_img[y, x] < 255) or (shift == -1 and stego_img[y, x] > 0):
+                                stego_img[y, x] += shift
+                        payload_index += 1
 
     # Check if all bits were embedded
     if payload_index < len(payload_bits):
-        raise ValueError("Not all payload bits were embedded.")
+        print(f"Payload index: {payload_index}, Total Payload Bits: {len(payload_bits)}")
+        raise ValueError("Not all payload bits were embedded, even in hybrid mode.")
 
     return stego_img, map_shifted
 
@@ -91,11 +144,10 @@ def extract_data_with_histogram_shifting(stego_img, map_shifted, peak, shift):
 
     for y in range(height):
         for x in range(width):
-            # Check if the pixel was used for embedding
             if map_shifted[y, x] == 1:
-                # Check if the pixel was shifted
-                if (shift == 1 and stego_img[y, x] == peak + 1) or \
-                   (shift == -1 and stego_img[y, x] == peak - 1):
+                was_shifted = ((shift == 1 and stego_img[y, x] == peak + 1) or
+                            (shift == -1 and stego_img[y, x] == peak - 1))
+                if was_shifted:
                     restored_img[y, x] -= shift
                     extracted_payload.append(1)
                 else:
@@ -143,10 +195,10 @@ def hs_encoding():
     metadata = {'peak_values': [], 'payload_sizes': [], 'shifts': []}
     original_payload_bits = []
 
+    total_embedded_bits = 0  # Track the total number of bits actually embedded
+
     if saturation > saturation_threshold:
         print("COLOR IMAGE")
-
-        # Initialize a 2D map for the color image, assuming the last dimension is for color channels
         map_shifted_all = np.zeros(origImg.shape[:2], dtype=np.uint8)
 
         for i in range(3):  # Assuming BGR format
@@ -154,11 +206,12 @@ def hs_encoding():
             hist = cv2.calcHist([channel_img], [0], None, [256], [0, 256]).flatten()
             peak = int(np.argmax(hist))
             shift = -1 if peak == 255 else 1
-            payload_bits = [random.randint(0, 1) for _ in range(int(hist[peak]))]
+            payload_capacity = int(hist[peak])  # Capacity of this channel
+            payload_bits = [random.randint(0, 1) for _ in range(payload_capacity)]
             original_payload_bits.extend(payload_bits)
-            print(f"Payload bits (before embedding): {payload_bits}")
 
             stego_channel, map_shifted = embed_data_with_histogram_shifting(channel_img, payload_bits)
+            total_embedded_bits += np.sum(map_shifted)  # Count the bits actually embedded
 
             # Update the stego image and combine the map_shifted arrays
             stego_img[:, :, i] = stego_channel
@@ -171,6 +224,8 @@ def hs_encoding():
 
         # Save the combined map for all channels after processing all channels
         np.save(f"{maps_dir}/{imgName}_map_shifted.npy", map_shifted_all)
+        save_stego_histogram(stego_img, imgName)  # Call to save histogram of the stego image
+
 
     else:
         print("GRAYSCALE IMAGE")
@@ -180,10 +235,12 @@ def hs_encoding():
         hist = cv2.calcHist([origImg], [0], None, [256], [0, 256]).flatten()
         peak = int(np.argmax(hist))
         shift = -1 if peak == 255 else 1
-        payload_bits = [random.randint(0, 1) for _ in range(int(hist[peak]))]
+        payload_capacity = int(hist[peak])
+        payload_bits = [random.randint(0, 1) for _ in range(payload_capacity)]
         original_payload_bits = payload_bits
 
         stego_img, map_shifted = embed_data_with_histogram_shifting(origImg, payload_bits)
+        total_embedded_bits += np.sum(map_shifted)  # Count the bits actually embedded
 
         # Save metadata for grayscale image
         metadata['peak_values'].append(peak)
@@ -192,6 +249,8 @@ def hs_encoding():
         
         # After embedding data into the image
         np.save(f"./HS/maps/{imgName}_map_shifted.npy", map_shifted)
+        save_stego_histogram(stego_img, imgName)  # Call to save histogram for grayscale as well
+
             
     # Calculate metrics for the grayscale image
     psnr_value = cv2.PSNR(origImg, stego_img)
@@ -202,8 +261,8 @@ def hs_encoding():
           
     print(f"Payload Size (bits): {len(payload_bits)}")
     print(f"Bits Per Pixel (bpp): {bpp}")
-    print(f"PSNR: {psnr_value:.4f}")
-    print(f"SSIM: {ssim_score:.4f}")
+    print(f"PSNR: {psnr_value:.2f}")
+    print(f"SSIM: {ssim_score:.5f}")
 
     # Save the stego image
     outcome_path = "./HS/outcome/"
@@ -214,7 +273,11 @@ def hs_encoding():
     
     save_metadata_for_channel(metadata, imgName)
     
+    if total_embedded_bits != len(original_payload_bits):
+        raise ValueError("Mismatch in total payload size and embedded payload size.")
+
     return imgName, original_payload_bits
+
 
 def hs_decoding(imgName, original_payload_bits):
     fileType = "png"
@@ -249,25 +312,31 @@ def hs_decoding(imgName, original_payload_bits):
     else:
         print("Decoding COLOR IMAGE")
         restored_img = stego_img.copy()
+        extracted_payload_bits_per_channel = []  # List to store extracted bits per channel
+
         for ch in range(3):  # Assuming BGR format
             channel_extracted_data, restored_channel = extract_data_with_histogram_shifting(
                 stego_img[:, :, ch], map_shifted, peak_values[ch], shifts[ch]
             )
             restored_img[:, :, ch] = restored_channel
-            extracted_payload_bits.extend(channel_extracted_data)
+            extracted_payload_bits_per_channel.append(channel_extracted_data)
+        
+        for i in range(len(extracted_payload_bits_per_channel[0])):
+            for ch in range(3):
+                if i < len(extracted_payload_bits_per_channel[ch]):
+                    extracted_payload_bits.append(extracted_payload_bits_per_channel[ch][i])
 
-    # Extract binary data to string without assuming it represents ASCII characters
-    binary_payload = ''.join(map(str, extracted_payload_bits))
-    print(f"Extracted binary payload: {binary_payload}")
-
-    # Payload comparison
-    if original_payload_bits == extracted_payload_bits:
-        print("Success: The embedded data and the extracted data are identical.")
-    else:
+    # Payload comparison and size validation
+    if len(extracted_payload_bits) != len(original_payload_bits):
+        print(f"Error: Mismatch in payload sizes. Extracted: {len(extracted_payload_bits)}, Original: {len(original_payload_bits)}")
+    elif extracted_payload_bits != original_payload_bits:
         print("Error: The embedded data and the extracted data differ.")
+    else:
+        print("Success: The embedded data and the extracted data are identical.")
+    
     # Calculate PSNR
     psnr_value = cv2.PSNR(original_img, restored_img)
-    print(f"PSNR: {psnr_value:.4f}")
+    print(f"PSNR: {psnr_value:.2f}")
 
     # Before SSIM calculation
     min_dimension = min(original_img.shape[0], original_img.shape[1])
@@ -284,7 +353,7 @@ def hs_decoding(imgName, original_payload_bits):
             multichannel=(original_img.ndim == 3),
             channel_axis=-1 if (original_img.ndim == 3) else None
         )
-        print(f"SSIM: {ssim_value:.4f}")
+        print(f"SSIM: {ssim_value:.5f}")
     except ValueError as e:
         print(f"SSIM calculation failed with error: {e}")
 
