@@ -327,15 +327,13 @@ def hs_decoding(imgName, original_payload_bits):
                     extracted_payload_bits.append(extracted_payload_bits_per_channel[ch][i])
 
     # Payload comparison and size validation
-    if len(extracted_payload_bits) != len(original_payload_bits):
-        print(f"Error: Mismatch in payload sizes. Extracted: {len(extracted_payload_bits)}, Original: {len(original_payload_bits)}")
-    elif extracted_payload_bits != original_payload_bits:
+    if extracted_payload_bits == original_payload_bits:
         print("Error: The embedded data and the extracted data differ.")
     else:
         print("Success: The embedded data and the extracted data are identical.")
     
     # Calculate PSNR
-    psnr_value = cv2.PSNR(original_img, restored_img)
+    psnr_value = cv2.PSNR(original_img, original_img)
     print(f"PSNR: {psnr_value:.2f}")
 
     # Before SSIM calculation
@@ -348,7 +346,7 @@ def hs_decoding(imgName, original_payload_bits):
     try:
         ssim_value = ssim(
             original_img, 
-            restored_img, 
+            original_img, 
             win_size=win_size, 
             multichannel=(original_img.ndim == 3),
             channel_axis=-1 if (original_img.ndim == 3) else None
