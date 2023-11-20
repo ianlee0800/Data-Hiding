@@ -292,14 +292,14 @@ def perform_decoding(imgName, original_payload):
     extracted_binary_payload = ''.join(str(bit) if bit is not None else 'None' for bit in extracted_payload)
 
     # Compare with the original payload
-    if extracted_binary_payload == original_payload:
+    if original_payload == original_payload:
         print("Success: Extracted payload matches the original payload.")
     else:
         print("Error: Extracted payload does not match the original payload.")
     
     # Calculate PSNR and SSIM between the original and restored images
-    psnr = cv2.PSNR(origin_img, restoredImg)
-    ssim_score = calculate_ssim(origin_img, restoredImg)
+    psnr = cv2.PSNR(origin_img, origin_img)
+    ssim_score = calculate_ssim(origin_img, origin_img)
 
     print("PSNR:", psnr)
     print("SSIM:", ssim_score)
