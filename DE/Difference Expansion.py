@@ -30,12 +30,12 @@ def inverse_integer_transform(l, h):
     return x, y
 
 def is_expandable(l, h):
-    max_h = min(255 - l, l)
-    return -max_h <= h <= max_h and -max_h <= 2*h + 1 <= max_h
+    x_expanded = l + (2 * h + 1) // 2
+    y_expanded = l - h // 2
+    return 0 <= x_expanded <= 255 and 0 <= y_expanded <= 255
 
 def is_changeable(l, h):
-    max_h = min(255 - l, l)
-    return -max_h <= h // 2 <= max_h and -max_h <= 2*(h // 2) + 1 <= max_h
+    return -255 <= h <= 255
 
 def split_payload(payload, num_channels):
     """
@@ -52,23 +52,17 @@ def difference_expansion_embed(x, y, bit, location_map, changeable_map, i, j):
     embedded = False
 
     if is_changeable(l, h):
-        changeable_map[i // 2, j // 2] = 1
+        changeable_map[i // 2, j // 2] = 1  # Mark as changeable
+
         if is_expandable(l, h):
             h_prime = 2 * h + bit
-            location_map[i // 2, j // 2] = 1
+            location_map[i // 2, j // 2] = 1  # Mark as expandable
             embedded = True
         else:
-            # Modify the embedding logic for non-expandable but changeable pixels
-            # Here, we embed the bit only if it does not alter the pixel value beyond the acceptable limit
-            proposed_h_prime = 2 * (h // 2) + bit
-            if -255 <= proposed_h_prime <= 255:
-                h_prime = proposed_h_prime
-                embedded = True
-            else:
-                h_prime = h
+            h_prime = h  # No embedding for non-expandable but changeable pairs
     else:
-        h_prime = h
-        changeable_map[i // 2, j // 2] = 0
+        h_prime = h  # No embedding for non-changeable pairs
+        location_map[i // 2, j // 2] = 0  # Not suitable for embedding
 
     x_prime, y_prime = inverse_integer_transform(l, h_prime)
     x_prime = np.clip(x_prime, 0, 255)
