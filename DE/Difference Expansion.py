@@ -77,34 +77,23 @@ def difference_expansion_embed(x, y, bit, location_map, changeable_map, i, j):
 
 def difference_expansion_extract(x_prime, y_prime, location_map, changeable_map, i, j):
     l_prime, h_prime = integer_transform(x_prime, y_prime)
-
-    # Adjust indices to match the map dimensions
     i, j = i // 2, j // 2
 
     if changeable_map[i, j]:
         if location_map[i, j]:
-            # For expanded values, divide by 2 to get the original value
             h = h_prime // 2
+            bit = h_prime % 2
         else:
-            # For non-expanded but changeable values, restore the original value
-            # Using similar logic as in the embedding function
-            proposed_h = (h_prime - bit) // 2
-            max_h = min(255 - l_prime, l_prime)
-            if -max_h <= proposed_h <= max_h:
-                h = proposed_h
-            else:
-                h = h_prime  # If the proposed h is out of range, keep the h_prime
+            # Correcting the logic for non-expandable but changeable values
+            h = h_prime
+            bit = None
     else:
-        # For non-changeable values, keep the difference as is
         h = h_prime
+        bit = None
 
     x, y = inverse_integer_transform(l_prime, h)
-    x = np.clip(x, 0, 255)  # Clipping to ensure values are within valid range
+    x = np.clip(x, 0, 255)
     y = np.clip(y, 0, 255)
-
-    bit = None
-    if location_map[i, j]:
-        bit = h_prime % 2
 
     return x, y, bit
 
@@ -136,7 +125,7 @@ def calculate_ssim(img1, img2):
 def process_image_channel(channel_data, payload, bit_index, max_payload_size, location_map, changeable_map):
     for i in range(0, channel_data.shape[0], 2):
         for j in range(0, channel_data.shape[1], 2):
-            if bit_index >= len(payload):  # Check if bit_index is out of bounds
+            if bit_index >= len(payload):
                 return
             if bit_index < max_payload_size:
                 bit = payload[bit_index]
@@ -292,14 +281,14 @@ def perform_decoding(imgName, original_payload):
     extracted_binary_payload = ''.join(str(bit) if bit is not None else 'None' for bit in extracted_payload)
 
     # Compare with the original payload
-    if original_payload == original_payload:
+    if original_payload == extracted_payload:
         print("Success: Extracted payload matches the original payload.")
     else:
         print("Error: Extracted payload does not match the original payload.")
     
     # Calculate PSNR and SSIM between the original and restored images
-    psnr = cv2.PSNR(origin_img, origin_img)
-    ssim_score = calculate_ssim(origin_img, origin_img)
+    psnr = cv2.PSNR(origin_img, restoredImg)
+    ssim_score = calculate_ssim(origin_img, restoredImg)
 
     print("PSNR:", psnr)
     print("SSIM:", ssim_score)
