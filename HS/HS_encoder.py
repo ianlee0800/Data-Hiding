@@ -11,7 +11,6 @@ HS_MARKED_PATH = "./HS/marked/"
 PEAK_PATH = "./HS/peak/"
 HS_HIDE_DATA_PATH = "./HS/hide_data/"
 
-
 def draw_histogram_gray(img_name, img, save_path):
     height, width, _ = img.shape
     q = 256
@@ -93,21 +92,57 @@ def calculate_ssim(img1, img2):
     return ssim_total / channels
 
 def count_levels(img, levels=256):
-    if len(img.shape) == 2:  # Grayscale image has no channel dimension
-        height, width = img.shape
-        channels = 1
-    else:
-        height, width, channels = img.shape
-
     level_counts = np.zeros(levels, dtype=int)
-
-    for channel in range(channels):
-        for level in range(levels):
-            level_counts[level] += np.sum(img[:, :, channel] == level) if channels > 1 else np.sum(img == level)
-
+    for channel in range(img.shape[2]):
+        channel_data = img[:, :, channel].flatten()
+        level_counts += np.bincount(channel_data, minlength=levels)
     return level_counts
 
-# Main Logic
+def count_levels_color(img):
+    count = [np.bincount(img[:, :, channel].flatten(), minlength=256) for channel in range(3)]
+    return count
+
+def hide_data_in_grayscale_image(marked_img, peak, shift, hide_array):
+    height, width = marked_img.shape[:2]
+    i = 0
+
+    # 遍歷圖像的每個像素
+    for y in range(height):
+        for x in range(width):
+            if i >= len(hide_array):  # 檢查是否所有的隱藏數據都已處理
+                break
+
+            pixel = marked_img[y, x, 0]
+            if (shift == 1 and pixel >= peak and pixel != 255) or \
+               (shift == -1 and pixel <= peak and pixel != 0):
+                if pixel == peak and hide_array[i] == 1:
+                    marked_img[y, x, 0] += shift
+                    i += 1
+                elif pixel != peak:
+                    marked_img[y, x, 0] += shift
+
+    return marked_img
+
+def hide_data_in_color_channel(channel_img, peak, shift, hide_array):
+    height, width = channel_img.shape
+    i = 0
+
+    for y in range(height):
+        for x in range(width):
+            if i >= len(hide_array):  # 检查是否所有的隐藏数据都已处理
+                break
+
+            pixel = channel_img[y, x]
+            if (shift == 1 and pixel >= peak and pixel != 255) or \
+               (shift == -1 and pixel <= peak and pixel != 0):
+                if pixel == peak and hide_array[i] == 1:
+                    channel_img[y, x] += shift
+                    i += 1
+                elif pixel != peak:
+                    channel_img[y, x] += shift
+
+    return channel_img
+
 def main():
     img_name = input("Image name: ")
     orig_img = cv2.imread(HS_IMAGES_PATH + f"{img_name}.{FILE_TYPE}")
@@ -122,99 +157,62 @@ def main():
 def process_image(img_name, orig_img):
     height, width, channels = orig_img.shape
     size = height * width
-    marked_img = None  # Renaming marked_img to marked_img
+    marked_img = orig_img.copy()
 
-    # Determine if the image is Grayscale or Color
-    if np.allclose(orig_img[:,:,0], orig_img[:,:,1]) and np.allclose(orig_img[:,:,1], orig_img[:,:,2]):
+    if channels == 1 or (np.allclose(orig_img[:,:,0], orig_img[:,:,1]) and np.allclose(orig_img[:,:,1], orig_img[:,:,2])):
         print(f"{img_name} is a Grayscale image")
+        count = count_levels(marked_img)
+        peak = np.argmax(count)
+        shift = -1 if peak == 255 else 1
 
+        eligible_pixels = np.sum(marked_img[:, :, 0] == peak)
+        hide_array = [np.random.choice([0, 1], p=[0.5, 0.5]) for _ in range(eligible_pixels)]
+        np.save(HS_HIDE_DATA_PATH + f"{img_name}_HS_hide_data.npy", hide_array)
+
+        marked_img = hide_data_in_grayscale_image(marked_img, peak, shift, hide_array)
         draw_histogram_gray(f"{img_name}", orig_img, HISTOGRAM_PATH)
-        marked_img = orig_img.copy()
-        count = count_levels(marked_img)  # Calculate levels
-
-    # Find peak level
-    peak = np.argmax(count)
-    np.save(PEAK_PATH + f"{img_name}_peak.npy", peak)
-
-    # Determine shift direction
-    shift = -1 if peak == 255 else 1
-    map = np.zeros((height, width))
-
-    # Hide data
-    # 現在只為等於peak的像素生成隨機數據
-    eligible_pixels = np.sum(marked_img[:, :, 0] == peak)
-    hide_array = [np.random.choice([0, 1], p=[0.5, 0.5]) for _ in range(eligible_pixels)]
-    np.save(HS_HIDE_DATA_PATH + f"{img_name}_HS_hide_data.npy", hide_array)
-    i = 0
-
-    # Data hiding logic for grayscale image
-    for y in range(height):
-        for x in range(width):
-            if (shift == 1 and marked_img[y, x, 0] >= peak and marked_img[y, x, 0] != 255) or \
-            (shift == -1 and marked_img[y, x, 0] <= peak and marked_img[y, x] != 0):
-                if marked_img[y, x, 0] == peak and i < len(hide_array) and hide_array[i] == 1:
-                    marked_img[y, x, 0] += shift
-                    i += 1
-                elif marked_img[y, x, 0] != peak:
-                    marked_img[y, x, 0] += shift
-
-        # Draw histogram for processed grayscale image
         draw_histogram_gray(f"{img_name}_marked", marked_img, HISTOGRAM_PATH)
+
+        # 保存灰度图像的峰值信息
+        np.save(PEAK_PATH + f"{img_name}_peak.npy", peak)
+        print(f"Peak level = {peak}")
 
     else:
         print(f"{img_name} is a Color image")
+        peak_levels = []
+        for c in range(3):
+            channel_img = marked_img[:, :, c]
+            channel_count = np.bincount(channel_img.flatten(), minlength=256)
+            peak = np.argmax(channel_count)
+            peak_levels.append(peak)
+            shift = -1 if peak == 255 else 1
+
+            eligible_pixels = np.sum(channel_img == peak)
+            hide_array = [np.random.choice([0, 1], p=[0.5, 0.5]) for _ in range(eligible_pixels)]
+            marked_img[:, :, c] = hide_data_in_color_channel(channel_img, peak, shift, hide_array)
 
         draw_histogram_color(f"{img_name}", orig_img, HISTOGRAM_PATH)
-        marked_img = orig_img.copy()
-        count = count_levels(marked_img)  # Calculate levels
-
-        # Find peak level
-        peak = np.argmax(count)
-        np.save(PEAK_PATH + f"{img_name}_peak.npy", peak)
-
-        # Determine shift direction
-        shift = -1 if peak == 255 else 1
-        map = np.zeros((height, width, channels))
-
-        # Hide data
-        payload = count[peak]
-        hide_array = [np.random.choice([0, 1], p=[0.5, 0.5]) for _ in range(payload)]
-        i = 0
-        np.save(HS_HIDE_DATA_PATH + f"{img_name}_HS_hide_data.npy", hide_array)
-
-        # Data hiding logic for color image
-        for y in range(height):
-            for x in range(width):
-                for c in range(channels):
-                    if (shift == 1 and marked_img[y, x, c] >= peak and marked_img[y, x, c] != 255) or \
-                       (shift == -1 and marked_img[y, x, c] <= peak and marked_img[y, x, c] != 0):
-                        if marked_img[y, x, c] == peak and hide_array[i] == 1:
-                            marked_img[y, x, c] += shift
-                            i += 1
-                        else:
-                            marked_img[y, x, c] += shift
-
-        # Draw histogram for processed color image
         draw_histogram_color(f"{img_name}_marked", marked_img, HISTOGRAM_PATH)
 
-    # Calculate and print metrics
-    psnr = cv2.PSNR(orig_img, marked_img)
+        # 保存彩色图像的峰值信息
+        np.save(PEAK_PATH + f"{img_name}_peak.npy", peak_levels)
+        print(f"Peak levels = [Red: {peak_levels[2]}, Green: {peak_levels[1]}, Blue: {peak_levels[0]}]")
+
+    # 计算和打印度量标准
+    psnr = calculate_psnr(orig_img, marked_img)
     ssim = calculate_ssim(orig_img, marked_img)
-    bpp = payload / size
-    
+    bpp = len(hide_array) / size
+
     print(f"{img_name} marked size = {height} x {width}")
-    print(f"Peak level = {peak}")
-    print(f"Payload = {payload}")
+    print(f"Payload = {len(hide_array)}")
     print(f"Bits per pixel (bpp) = {bpp:.4f}")
     print(f"PSNR = {psnr:.2f}") 
     print(f"SSIM = {ssim:.6f}") 
 
-    # Save processed image and info
+    # 保存处理过的图像
     cv2.imwrite(HS_MARKED_PATH + f"{img_name}_markedImg.{FILE_TYPE}", marked_img)
-    with open(HS_MARKED_PATH + f"{img_name}_info.txt", "w") as f:
-        f.write("Grayscale" if np.allclose(orig_img[:,:,0], orig_img[:,:,1]) and np.allclose(orig_img[:,:,1], orig_img[:,:,2]) else "Color")
 
-    # Save and display messages (optional)
+    # 可选的显示和保存嵌入数据
     question_for_showing_embedding_data = input("Show embedding data? (y/n): ")
     if question_for_showing_embedding_data == "y":
         print(f"Message = {hide_array}")
