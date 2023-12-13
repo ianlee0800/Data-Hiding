@@ -7,92 +7,133 @@ import os
 # Constants
 FILE_TYPE = "png"
 LEVELS = 256
-HISTOGRAM_PATH = "./HS/histogram/"
-HS_IMAGES_PATH = "./HS/images/"
-HS_MARKED_PATH = "./HS/marked/"
-PEAK_PATH = "./HS/peak/"
-HS_HIDE_DATA_PATH = "./HS/hide_data/"
+HISTOGRAM_PATH = "./DTLE/histogram/"
+DTLE_IMAGES_PATH = "./DTLE/images/"
+DTLE_MARKED_PATH = "./DTLE/marked/"
+PEAK_PATH = "./DTLE/data_for_embedding/peak/"
+DTLE_HIDE_DATA_PATH = "./DTLE/data_for_embedding/hide_data/"
+DTLE_LSB_PATH = "./DTLE/data_for_embedding/lsb_plane/"
+DTLE_HSB_PATH = "./DTLE/data_for_embedding/hsb_plane/"
+DTLE_PREDICTED_PATH = "./DTLE/data_for_embedding/predicted_img/"
+DTLE_ADJUSTED_PATH = "./DTLE/data_for_embedding/diff_img_adjusted/"
+DTLE_EMIN_PATH = "./DTLE/data_for_embedding/e_min/"
+DTLE_LOCATION_MAP_PATH = "./DTLE/data_for_embedding/location_map/"
 
-def calculate_predicted_values(pixel_values):
-    # 根据邻近像素值计算 p1 和 p2
-    sorted_values = sorted(pixel_values)
-    p1 = sum(sorted_values[:6]) // 6
-    p2 = sum(sorted_values[2:8]) // 6
+def med_predictor(img):
+    height, width = img.shape
+    predicted_img = np.zeros((height, width), dtype=np.int32)
+    diff_img = np.zeros((height, width), dtype=np.int32)
+
+    for y in range(1, height):
+        for x in range(1, width):
+            a = int(img[y, x - 1])
+            b = int(img[y - 1, x])
+            c = int(img[y - 1, x - 1])
+
+            if c <= min(a, b):
+                predicted_val = max(a, b)
+            elif c >= max(a, b):
+                predicted_val = min(a, b)
+            else:
+                predicted_val = a + b - c
+
+            predicted_img[y, x] = np.clip(predicted_val, 0, 255)
+            diff_img[y, x] = img[y, x] - predicted_img[y, x]
+
+    e_min = np.min(diff_img)
+    diff_img_adjusted = diff_img + abs(e_min)
+
+    return predicted_img.astype(np.uint8), diff_img_adjusted.astype(np.uint8), e_min
+
+def decompose_bit_planes(img, hsb_bits):
+    # 檢查 hsb_bits 的有效性
+    if not (1 <= hsb_bits <= 7):
+        raise ValueError("hsb_bits must be between 1 and 7")
+
+    height, width = img.shape
+    hsb_plane = np.zeros((height, width), dtype=np.uint8)
+    lsb_plane = np.zeros((height, width), dtype=np.uint8)
+
+    # HSB 和 LSB 的遮罩
+    hsb_mask = 0xFF << (8 - hsb_bits)  # e.g., 若 hsb_bits = 3, 則 hsb_mask = 0b11100000
+    lsb_mask = 0xFF >> hsb_bits       # e.g., 若 hsb_bits = 3, 則 lsb_mask = 0b00011111
+
+    # 使用位操作提取 HSB 和 LSB
+    hsb_plane = (img & hsb_mask) >> (8 - hsb_bits)
+    lsb_plane = img & lsb_mask
+
+    return hsb_plane, lsb_plane
+
+def create_location_map(hsb_img):
+    height, width = hsb_img.shape
+    location_map = np.zeros((height, width), dtype=np.uint8)
+
+    # 論文中的特定條件
+    location_map[(hsb_img == 63)] = 1  # 最大值
+    location_map[(hsb_img == 0)] = 1   # 最小值
+    location_map[(hsb_img == 62)] = 1  # 最大值減 1
+    location_map[(hsb_img == 1)] = 1   # 最小值加 1
+
+    # 根據位置地圖進行像素調整
+    hsb_img_adjusted = np.copy(hsb_img)
+    hsb_img_adjusted[hsb_img == 63] -= 2
+    hsb_img_adjusted[hsb_img == 62] -= 1
+    hsb_img_adjusted[hsb_img == 0] += 2
+    hsb_img_adjusted[hsb_img == 1] += 1
+
+    return location_map, hsb_img_adjusted
+
+def extract_neighbors(img, x, y):
+    height, width = img.shape[:2]
+    
+    # 定义邻近像素的相对位置
+    dx = np.array([-1, -1, -1, 0, 0, 1, 1, 1])
+    dy = np.array([-1, 0, 1, -1, 1, -1, 0, 1])
+
+    # 计算邻近像素的坐标
+    nx = x + dx
+    ny = y + dy
+
+    # 确保邻近像素在图像范围内
+    valid = (nx >= 0) & (nx < width) & (ny >= 0) & (ny < height)
+    nx = nx[valid]
+    ny = ny[valid]
+
+    # 提取邻近像素的值
+    neighbors = img[ny, nx]
+
+    return neighbors
+
+def calculate_predicted_values(img, x, y):
+    # 使用 extract_neighbors 函数获取邻居像素
+    neighbors = extract_neighbors(img, x, y)
+
+    # 检查是否有8个邻居像素值
+    if len(neighbors) != 8:
+        raise ValueError("必须提供8个邻居像素值")
+
+    # 根据论文中的描述计算 p1 和 p2
+    sorted_values = sorted(neighbors)
+    p1 = sum(sorted_values[:6]) // 6  # 前6个邻居像素的平均值
+    p2 = sum(sorted_values[2:8]) // 6  # 第3到第8个邻居像素的平均值
     return p1, p2
 
 def embed_bit(pixel, bit, error):
     # 根据预测误差和秘密数据位更新像素值
     if error == 1:
-        return pixel + bit
+        new_pixel = pixel + bit  # 如果误差为1，加上秘密数据位
     elif error > 1:
-        return pixel + 1
+        new_pixel = pixel + 1  # 如果误差大于1，加1
     elif error == 0:
-        return pixel - bit
+        new_pixel = pixel - bit  # 如果误差为0，减去秘密数据位
     elif error < 0:
-        return pixel - 1
+        new_pixel = pixel - 1  # 如果误差小于0，减1
     else:
-        return pixel
+        new_pixel = pixel  # 其他情况保持像素不变
 
-def extract_neighbors(img, x, y):
-    height, width = img.shape[:2]
-    neighbors = []
-
-    # 定义邻近像素的相对位置
-    neighbor_offsets = [
-        (-1, -1), (-1, 0), (-1, 1),
-        (0, -1),           (0, 1),
-        (1, -1),  (1, 0),  (1, 1)
-    ]
-
-    for dx, dy in neighbor_offsets:
-        nx, ny = x + dx, y + dy
-
-        # 确保邻近像素在图像范围内
-        if 0 <= nx < width and 0 <= ny < height:
-            neighbors.append(img[ny, nx, 0])  # 假设是灰度图像
-
-    return neighbors
-
-def prepare_embedding_information(orig_img):
-    height, width, channels = orig_img.shape
-    pre_embedding_info = {}
-
-    # Histogram analysis and peak detection
-    if channels == 1 or (np.allclose(orig_img[:,:,0], orig_img[:,:,1]) and np.allclose(orig_img[:,:,1], orig_img[:,:,2])):
-        # Grayscale image
-        histogram = count_levels(orig_img)
-        peak = np.argmax(histogram)
-        pre_embedding_info['histogram'] = histogram.tolist()
-        pre_embedding_info['peak'] = int(peak)
-    else:
-        # Color image
-        histogram = count_levels_color(orig_img)
-        peak = [np.argmax(channel_histogram) for channel_histogram in histogram]
-        pre_embedding_info['histogram'] = [hist.tolist() for hist in histogram]
-        pre_embedding_info['peak'] = [int(p) for p in peak]
-
-    # Calculate predictor values for each pixel
-    predictors_p1 = np.zeros((height, width), dtype=int)  # Store p1 for each pixel
-    predictors_p2 = np.zeros((height, width), dtype=int)  # Store p2 for each pixel
-    for y in range(height):
-        for x in range(width):
-            neighbors = extract_neighbors(orig_img, x, y)
-            p1, p2 = calculate_predicted_values(neighbors)
-            predictors_p1[y, x] = p1
-            predictors_p2[y, x] = p2
-
-    pre_embedding_info['predictors_p1'] = predictors_p1.tolist()
-    pre_embedding_info['predictors_p2'] = predictors_p2.tolist()
-
-    return pre_embedding_info
-
-def save_pre_embedding_info(info, img_name, save_directory):
-    if not os.path.exists(save_directory):
-        os.makedirs(save_directory)
-    save_path = os.path.join(save_directory, f"{img_name}_pre_embedding_info.json")
-    with open(save_path, 'w') as file:
-        json.dump(info, file)
-    print(f"Pre-embedding information saved to {save_path}")
+    # 确保像素值在0到255的范围内
+    new_pixel = np.clip(new_pixel, 0, 255)
+    return new_pixel
 
 def draw_histogram_gray(img_name, img, save_path):
     height, width, _ = img.shape
@@ -185,29 +226,42 @@ def count_levels_color(img):
     count = [np.bincount(img[:, :, channel].flatten(), minlength=256) for channel in range(3)]
     return count
 
-def hide_data_in_grayscale_image(marked_img, hide_array):
-    height, width = marked_img.shape[:2]
-    i = 0
+def hide_data_in_grayscale_image(marked_img, hide_array, threshold):
+    print("First few elements of hide_array:", hide_array[:10])  # 打印前10个元素
+
+    # 确保图像是二维的
+    if len(marked_img.shape) != 2:
+        raise ValueError("图像必须是灰度图像（二维数组）")
+
+    height, width = marked_img.shape
+    i = 0  # hide_array的索引
 
     for y in range(height):
         for x in range(width):
-            if i >= len(hide_array):  # 检查是否所有的隐藏数据都已处理
+            # 检查是否所有的隐藏数据都已处理
+            if i >= len(hide_array):
                 break
 
-            # 提取邻近像素并计算 p1 和 p2
-            neighbors = extract_neighbors(marked_img, x, y)
-            p1, p2 = calculate_predicted_values(neighbors)
+            # 检查像素是否符合嵌入条件（例如，亮度超过某个阈值）
+            if marked_img[y, x] > threshold:
+                # 提取邻近像素并计算 p1 和 p2
+                neighbors = extract_neighbors(marked_img, x, y)
+                p1, p2 = calculate_predicted_values(neighbors)
 
-            # 计算预测误差 e1 和 e2
-            e1 = marked_img[y, x, 0] - p1
-            e2 = marked_img[y, x, 0] - p2
+                # 计算预测误差 e1 和 e2
+                e1 = marked_img[y, x] - p1
+                e2 = marked_img[y, x] - p2
 
-            # 嵌入数据
-            b1, b2 = hide_array[i]  # 假设 hide_array 是一个元组列表，每个元素包含两个比特 (b1, b2)
-            marked_img[y, x, 0] = embed_bit(marked_img[y, x, 0], b1, e1)  # 第一层嵌入
-            marked_img[y, x, 0] = embed_bit(marked_img[y, x, 0], b2, e2)  # 第二层嵌入
+                # 嵌入数据
+                b1, b2 = hide_array[i]
+                marked_img[y, x] = embed_bit(marked_img[y, x], b1, e1)  # 第一层嵌入
+                marked_img[y, x] = embed_bit(marked_img[y, x], b2, e2)  # 第二层嵌入
 
-            i += 1
+                i += 1
+
+    # 确保处理了所有的隐藏数据
+    if i < len(hide_array):
+        raise ValueError("未能嵌入所有数据，隐藏数据数组可能太长")
 
     return marked_img
 
@@ -233,7 +287,7 @@ def hide_data_in_color_channel(channel_img, peak, shift, hide_array):
 
 def main():
     img_name = input("Image name: ")
-    orig_img = cv2.imread(HS_IMAGES_PATH + f"{img_name}.{FILE_TYPE}")
+    orig_img = cv2.imread(DTLE_IMAGES_PATH + f"{img_name}.{FILE_TYPE}")
 
     if orig_img is None:
         print("Error reading original image file")
@@ -245,9 +299,21 @@ def main():
 def process_image(img_name, orig_img):
     height, width, channels = orig_img.shape
     size = height * width
+    
+    threshold = 128  # 例如，设置阈值为128
+    
+    # 调用MED预处理器
+    predicted_img, diff_img_adjusted, e_min = med_predictor(orig_img[:,:,0])  # 假设是灰度图像
+
+    # 调用位平面分解函数
+    hsb_bits = 2  # 或者根据您的需求选择其他位数
+    hsb_plane, lsb_plane = decompose_bit_planes(diff_img_adjusted, hsb_bits)
+    # 在主函数或其他适当的位置调用创建位置图的函数
+    location_map = create_location_map(hsb_plane)  # 假设hsb_plane是处理后的图像平面
+    
     marked_img = orig_img.copy()
     pre_embedding_info = prepare_embedding_information(orig_img)
-    save_pre_embedding_info(pre_embedding_info, img_name, "./HS/pre_embed_info")
+    save_pre_embedding_info(pre_embedding_info, img_name, "./DTLE/pre_embed_info")
 
     if channels == 1 or (np.allclose(orig_img[:,:,0], orig_img[:,:,1]) and np.allclose(orig_img[:,:,1], orig_img[:,:,2])):
         print(f"{img_name} is a Grayscale image")
@@ -256,10 +322,11 @@ def process_image(img_name, orig_img):
         shift = -1 if peak == 255 else 1
 
         eligible_pixels = np.sum(marked_img[:, :, 0] == peak)
-        hide_array = [np.random.choice([0, 1], p=[0.5, 0.5]) for _ in range(eligible_pixels)]
-        np.save(HS_HIDE_DATA_PATH + f"{img_name}_HS_hide_data.npy", hide_array)
+        hide_array = [(np.random.choice([0, 1], p=[0.5, 0.5]), np.random.choice([0, 1], p=[0.5, 0.5])) for _ in range(eligible_pixels)]
+        np.save(DTLE_HIDE_DATA_PATH + f"{img_name}_DTLE_hide_data.npy", hide_array)
 
-        marked_img = hide_data_in_grayscale_image(marked_img, peak, shift, hide_array)
+        marked_img = hide_data_in_grayscale_image(marked_img, hide_array, threshold)
+        
         draw_histogram_gray(f"{img_name}", orig_img, HISTOGRAM_PATH)
         draw_histogram_gray(f"{img_name}_marked", marked_img, HISTOGRAM_PATH)
 
@@ -278,7 +345,7 @@ def process_image(img_name, orig_img):
             shift = -1 if peak == 255 else 1
 
             eligible_pixels = np.sum(channel_img == peak)
-            hide_array = [np.random.choice([0, 1], p=[0.5, 0.5]) for _ in range(eligible_pixels)]
+            hide_array = [(np.random.choice([0, 1], p=[0.5, 0.5]), np.random.choice([0, 1], p=[0.5, 0.5])) for _ in range(eligible_pixels)]
             marked_img[:, :, c] = hide_data_in_color_channel(channel_img, peak, shift, hide_array)
 
         draw_histogram_color(f"{img_name}", orig_img, HISTOGRAM_PATH)
@@ -298,9 +365,21 @@ def process_image(img_name, orig_img):
     print(f"Bits per pixel (bpp) = {bpp:.4f}")
     print(f"PSNR = {psnr:.2f}") 
     print(f"SSIM = {ssim:.6f}") 
+    
+    # 保存位置图
+    np.save(DTLE_LOCATION_MAP_PATH + f"{img_name}_location_map.npy", location_map)
+    
+    # 保存HSB和LSB平面
+    np.save(DTLE_HSB_PATH + f"{img_name}_hsb_plane.npy", hsb_plane)
+    np.save(DTLE_LSB_PATH + f"{img_name}_lsb_plane.npy", lsb_plane)
+    
+    # 保存差值图像和其他信息
+    np.save(DTLE_PREDICTED_PATH + f"{img_name}_predicted_img.npy", predicted_img)
+    np.save(DTLE_ADJUSTED_PATH + f"{img_name}_diff_img_adjusted.npy", diff_img_adjusted)
+    np.save(DTLE_EMIN_PATH + f"{img_name}_e_min.npy", e_min)
 
     # 保存处理过的图像
-    cv2.imwrite(HS_MARKED_PATH + f"{img_name}_markedImg.{FILE_TYPE}", marked_img)
+    cv2.imwrite(DTLE_MARKED_PATH + f"{img_name}_markedImg.{FILE_TYPE}", marked_img)
 
     # 可选的显示和保存嵌入数据
     question_for_showing_embedding_data = input("Show embedding data? (y/n): ")
