@@ -1,0 +1,116 @@
+Table 1 Summary of notations.
+I_o = Original image
+I_e = Stego-image
+h, w = Length and width of the image
+k_w = Data hiding key
+x(i, j) = Pixels with row i and column j
+p_x(i, j) = Predicted value in MED phase
+D(i, j) = Prediction error in MED phase
+p_1, p_2 = Predicted value in embedding phase
+e_1, e_2 = Prediction error in embedding phase
+e_min = Smallest value of D(i, j)
+"A" = Auxiliary information in MED phase
+LM = Location map
+C_LM = Compressed location map
+L_CLM = Length of compressed location map
+LSBs = Least significant bit sequence during embedding phase
+"S" = Secret data
+
+eq (3): l_i,j =∑(k=0 to n-1) c_k × 2^k    
+eq (4): h_i,j = ∑(k=n to 7) c_k × 2^k)∕2^n    
+
+3.1. Image pre-processing
+
+3.1.1. MED processing
+For an original image I_o of size M × 𝑁, the pixel values can be predicted by the MED predictor [38] where the first row and column of pixels remain unchanged. Fig. 3 shows the context of a pixel x(i, j) and three neighboring pixels for MED, for which the predicted value p_x(i,j) is given by
+
+eq (7): p_x(i,j) =  max(a, b), if c ≤ min(a, b)     
+                 = min(a, b), if c ≥ max(a, b)
+                 = a + b − c, otherwise.   
+
+The difference value D(i,j) between the current pixel x(i, j) and the predicted value p_x(i,j) is
+
+eq (8): D(i, j) = x(i, j) − p_x(i, j), 2 ≤ i ≤ M, 2 ≤ j ≤ 𝑁. 
+
+Since there are usually positive and negative values in the difference image (matrix) D_I from Eq. (8), we denote the smallest value of D(i,j) by e_min and express the absolute value in 8-bits. A histogram shift of D_I gives a new difference image D′_I whose pixel values are all nonnegative as
+
+eq(9): D′(i, j) = D(i, j) + |e_min|, 2 ≤ i ≤ M, 2 ≤ j ≤ 𝑁.
+
+While the first row and column are critical to the recovery of the original image I_o after MED pre-processing, they stay unchanged. We use an 1-bit flag to record whether there are any overflow pixels in the image D′_I . If the pixel is greater than or equal to 255, we set the pixel value to 255, record the excess with 8 bits and take the flag as 1, otherwise, 0. All the above auxiliary information is recorded as "A" that contains 8-bits e_min, all overflow pixels, and 1-bit flag.
+
+3.1.2. Decomposition of bit planes
+The new difference image D′_I is decomposed into the I_HSB and I_LSB planes by Eqs. (3) and (4). In our scenario, since the maximum changes of I_HSB for pixels are ±2 in data embedding, the image pixels need processing accordingly. We select the higher six-bit planes as the HSB plane which will be explained in Section 4. We denote the pixel values of plane I_HSB as I_H . The maximum value of I_HSB is max = 2^6 − 1 = 63 while the minimum value min = 0 can be calculated by setting n = 2 in Eq. (4).
+
+3.1.3. Building location map
+We modify pixel values and create a location map LM to mark possible overflow pixels,
+eq (10): I_H (i, j) = I_H (i, j)−2, if I_H (i, j) = 63,
+                    = I_H (i, j)+2, if I_H (i, j) = 0,
+                    = I_H (i, j)−1, if I_H (i, j) = 62,
+                    = I_H (i, j)+1, if I_H (i, j) = 1,
+                    = I_H (i, j), otherwise.
+
+Note that the location map LM is defined in three cases whose values are represented in the decimal base rather than the binary system. C_LM is obtained by lossless compression that uses arithmetic coding with a compressed length L_CLM . 
+As shown in Fig. 4, the HSB plane of original image has a large number of possible overflow pixels that need to be marked by the location map LM. In the image D′_I produced by MED pre-processing, the pixels are more concentrated in the middle of the histogram and the number of possible overflow pixels is significantly reduced.
+
+
+
+
+3.2. Data embedding
+This section introduces the embedding process of the DTLE in detail and makes a comparative analysis with TLE [37].
+
+3.2.1. Calculation of predicted values
+The predictor pair, p_1 and p_2, are obtained for embedding by eight neighboring pixel values on each pixel I_H (i, j), as shown in Fig. 5. The sequence in ascending order is obtained by sorting the neighbors and denoted by (z_1, z_2,…, z_7, z_8) , then we define
+
+eq (11): p_1 = ⌊ (z_1 + z_2 + z_3 + z_4 + z_5 + z_6)/6⌋
+eq (12): p_2 = ⌊ (z_3 + z_4 + z_5 + z_6 + z_7 + z_8)/6⌋
+
+where ⌊⋅⌋ denotes the floor operator that gives the largest integer no more than the given value.
+
+3.2.2. Processing two-layer embeddings
+As shown in Fig. 6, the HSB plane is scanned in the chessboard method that starts from left to right and top to bottom for secret data embedding. The blue-colored pixels are first used for embedding followed by white ones. To be specific, the blue-colored pixels are divided into two groups that consisting of all the odd rows and even rows, respectively. The secret data are first embedded in odd rows (ordered x_1,…, x_9) and secondly in even rows (ordered x_10,…, x_18). The white-colored pixels are processed in the same manner, while the first and last row/columns remain unchanged to store auxiliary information like the location map.
+As shown in Fig. 7, the histograms of prediction error statistics emphasize the peak and sub-peak values, 1 and 0, in two layers. This inspires us to embed data also on the pixel values with the sub-peak error. The two-layer embeddings are performed on each pixel by the pair (p_1, p_2). In the first layer, the prediction error is e_1 = I_H (i,j) − p_1, and the secret data bit b_1 ∈ {0, 1} is embedded
+with renewing the pixel value,
+
+eq (13): I′_H (i, j) = I_H (i, j) + b_1, if e_2 = 1,
+                  = I_H (i, j) + 1, if e_1 > 1,
+                  = I_H (i, j) − b_1, if e_1 = 0,
+                  = I_H (i, j) − 1, if e_1 < 0
+
+Similarly in the second-layer embedding, the prediction error is e_2 = I′_H (i,j) − p_2 while the secret data bit b_2 ∈ {0, 1} is embedded with renewing
+
+eq (14): I′′_H (i, j) = I_H (i, j) + b_2, if e_2 = 1,
+                      = I_H (i, j) + 1, if e_2 > 1,
+                      = I_H (i, j) − b_2, if e_2 = 0,
+                      = I_H (i, j) − 1, if e_2 < 0
+
+The basic embedding steps are given in Algorithm 1.
+
+3.2.3. Auxiliary information
+We summarize the auxiliary information for the pre-processing and embedding phases as follows:
+• auxiliary information of pre-processing phase: "A", including e_min, all overflow pixels during MED and flag;
+• auxiliary information of embedding phase: compressed location map C_LM , length of compressed location map L_CLM , the index
+location of the last pixel used for the secret data embedding 𝐾_end and the predefined least significant bits of the first and last
+row and column sequence LSBs.
+
+Algorithm 1: Basic steps of data embedding.
+
+Input: Original image I_o
+
+1: Perform MED predictor and histogram shift on original image I_o to obtain image D′_I and auxiliary information "A".
+2: Decompose the D′_I into the planes HSB and LSB with n = 2, by Eqs. (3) and (4).
+3: Process the I_HSB plane using Eq. (10) to obtain the location map LM. Compress the LM using arithmetic coding to obtain the compressed location map C_LM with length L_CLM .
+4: Extract the predefined sequence of LSBs and add it to the end of secret data "S" along with C_LM and "A".
+5: Embed secret data for blue-colored pixels firstly and white-colored pixels secondly, by Eqs. (13) and (14).
+6: Replace the LSBs sequence in the first and last rows/columns by the position information 𝐾_end of the last secret data-carrying pixel and the length of the compressed location map L_CLM in order.
+7: return Stego-image I_e by combining the plane I′′_HSB and the plane I_LSB.
+
+Output: Stego-image I_e
+
+3.2.4. Embedding example
+This part takes an embedding example to illustrate our DTLE scheme with comparisons to TLE by Kumar et al. [37], as shown in Fig. 8. We consider to embed the secret (b_1 b_2) = (11) on the central pixel with value 163 by both schemes.
+Firstly, the HSB and LSB planes are obtained by the decomposition of each pixel. The first six binary numbers in red stand for the HSB plane in DTLE while the first five binary numbers in TLE, and the later blue numbers represent the respective LSB plane. The TLE method takes the higher five-bit planes as the embedding plane, while DTLE selects the higher six-bit planes. We choose the
+higher bit planes in this way to highlight the performance advantage of the DTLE algorithm more fully.
+Secondly in the embedding process, TLE utilizes the neighboring pixels from four directions in HSB and one peak value in either layer. Averaging the smallest three values of neighboring pixels gives p_1 while the largest three values present p_2. In the first-layer embedding, e_1 = I_H (i,j) − p_1 = 1, and the value of I′H (i,j) is 21 due to the embedding of b_1 = 1. However, in the second-layer
+embedding, since e_2 = I′_H (i,j) − p_2 = 1 does not allow the embedding, the pixel remains unchanged and I′′_H (i,j) = 21. The HSB and LSB planes are combined to obtain a pixel value of 171, and the pixel value is changed with difference 171− 163 = 8. As for our DTLE, p_1 and p_2 are calculated by Eqs. (11) and (12), respectively, with 6 neighbors. In the first-layer embedding, e_1 = 1, and I′_H (i,j) are calculated by Eq. (13) with embedding data b_1 = 1. In the second-layer embedding, e_2 = 1 and I′′_H (i,j) are calculated by Eq. (14) with allowing the embedding of b_2 = 1. Afterwards, the pixel value is changed also with difference 171 − 163 = 8. 
+Given the above example, the TLE method modifies the pixel with difference 2^3 = 8 per bit after embedding in the higher five-bit planes while DTLE embeds in the higher six-bit planes with pixel difference 2^2 = 4 indeed. This leads to less distortion and higher quality of stego-image for ETLE. Moreover, TLE allows embedding only one bit of secret data while our proposed DTLE embeds two bits. Similar examples take place often in embeddings.
+On the contrary, there are a small minority of cases in complex images that DTLE (without MED) can not directly perform embedding in some layer while TLE achieves embedding. For instance, assume that a (central) pixel can be embedded by both schemes due to its normal distributed neighbors. However, if its corner neighbors change greatly on pixel values, DTLE (without MED) would fail to perform embedding while TLE succeeds since the four direct neighbors remain unchanged. By taking an example as shown in Fig.9, we explain why sometimes DTLE without MED does not enable embedding at a certain layer. The 3 ×3pixel block in the upper left corner isdirectly intercepted from the Lenaimage (without preprocessed) while the block in the lower left corner is obtained by its MED preprocessing. It can be seen that the upper processing is not able to embed secret data, while the lower processing (after MED) embeds 1bit of secret data successfully. Therefore, for those images with large texture fluctuations, embedding at some layers may be invalid without MED preprocessing. To solve such issues, the MED pre-processing helps greatly avoid the curse, which will be illustrated in experimental Section4.
