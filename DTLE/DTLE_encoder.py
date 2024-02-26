@@ -135,10 +135,10 @@ def calculate_predicted_values(img, x, y):
     p2 = sum(sorted_values[2:8]) // 6  # 第3到第8个邻居像素的平均值
     return p1, p2
 
-def create_hide_array(image):
+def create_hide_array(image, location_map):
     height, width = image.shape
-    # 计算可以用于嵌入的像素数量，即图像大小的一半
-    payload_size = (height * width) // 2
+    # 可用于嵌入的像素数量等于未标记为溢出的像素数量
+    payload_size = ((height * width) - np.sum(location_map)) // 2
 
     # 直接生成指定数量的隐藏数据对
     hide_array = [(np.random.choice([0, 1]), np.random.choice([0, 1])) for _ in range(payload_size)]
@@ -333,7 +333,8 @@ def process_image(img_name, orig_img):
     location_map, hsb_plane = create_location_map(hsb_plane)
 
     # 创建隐藏数据数组
-    hide_array = create_hide_array(hsb_plane)
+    hide_array = create_hide_array(hsb_plane, location_map)
+
     # 使用棋盘式嵌入方法
     marked_img = hide_data_in_grayscale_image_chessboard(hsb_plane, hide_array)
 
