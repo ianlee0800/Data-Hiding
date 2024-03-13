@@ -121,19 +121,19 @@ def save_label_map(label_map, directory="./HDR/label map", filename="label_map.n
     print(f"Label map saved to {file_path}")
 
 def main():
-    image_name = input("请输入HDR图像的名称（包含文件扩展名，例如：image.hdr）: ")
+    image_name = input("請輸入HDR圖像的名稱（包含副檔名，例如：image.hdr）: ")
     image_path = os.path.join('./HDR/HDR images', image_name)
 
     if not os.path.exists(image_path):
-        print("文件不存在，请确认文件名称和路径是否正确。")
+        print("檔案不存在，請確認檔案名稱和路徑是否正確。")
         return
 
     # 读取HDR影像作为浮点数图像
     hdr_image = cv2.imread(image_path, flags=cv2.IMREAD_ANYDEPTH | cv2.IMREAD_COLOR)
     if hdr_image is None:
-        print("未能读取HDR图像。")
+        print("未能讀取HDR圖像。")
         return
-    print("HDR图像读取完成。")
+    print("HDR圖像讀取完成。")
 
     # 在这里添加对hdr_image进行信息隐藏或其他处理的代码
     # 示例：直接复制hdr_image作为处理后的图像，实际应用中应有具体的处理逻辑
@@ -144,8 +144,8 @@ def main():
     psnr_score = pu21_quality_assessment(hdr_image, hdr_image, metric='PSNR')
     ssim_score = pu21_quality_assessment(hdr_image, hdr_image, metric='SSIM')
 
-    print(f"图像质量评分（PSNR）: {psnr_score}")
-    print(f"图像质量评分（SSIM）: {ssim_score}")
+    print(f"PSNR: {psnr_score}")
+    print(f"SSIM: {ssim_score}")
 
 if __name__ == "__main__":
     main()
