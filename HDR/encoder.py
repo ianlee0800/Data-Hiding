@@ -123,6 +123,7 @@ def save_label_map(label_map, directory="./HDR/label map", filename="label_map.n
 def main():
     image_name = input("請輸入HDR圖像的名稱（包含副檔名，例如：image.hdr）: ")
     image_path = os.path.join('./HDR/HDR images', image_name)
+    
 
     if not os.path.exists(image_path):
         print("檔案不存在，請確認檔案名稱和路徑是否正確。")
@@ -134,6 +135,8 @@ def main():
         print("未能讀取HDR圖像。")
         return
     print("HDR圖像讀取完成。")
+    
+    
 
     # 在这里添加对hdr_image进行信息隐藏或其他处理的代码
     # 示例：直接复制hdr_image作为处理后的图像，实际应用中应有具体的处理逻辑
@@ -146,6 +149,8 @@ def main():
 
     print(f"PSNR: {psnr_score}")
     print(f"SSIM: {ssim_score}")
+    
+    cv2.imshow('HDR Image', read_and_convert_hdr_to_rgbe(image_path))
 
 if __name__ == "__main__":
     main()
