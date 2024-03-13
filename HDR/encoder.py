@@ -1,8 +1,10 @@
 import cv2
 import numpy as np
-import math
 import os
 import matplotlib.pyplot as plt
+# 导入自定义的图像质量评估函数
+# 注意：如果这些函数位于PU21.py中，确保从该文件导入
+from PU21 import pu21_quality_assessment
 
 def float_to_rgbe(hdr_image):
     rgbe_image = np.zeros((*hdr_image.shape[:2], 4), dtype=np.uint8)
@@ -20,6 +22,23 @@ def float_to_rgbe(hdr_image):
     rgbe_image[:, :, 3][valid_mask] = exp
 
     return rgbe_image
+
+def rgbe_to_float(rgbe_image):
+    """
+    将RGBE格式的图像转换回浮点数格式的HDR图像。
+    """
+    # 分离RGB和E通道
+    rgb = rgbe_image[:, :, :3].astype(np.float32)
+    e = rgbe_image[:, :, 3].astype(np.float32)
+
+    # 将指数E转换回浮点数的比例因子
+    scale = 2.0 ** (e - 128.0)
+    scale = np.expand_dims(scale, axis=-1)  # 使其形状与rgb数组匹配
+
+    # 逆向计算原始的浮点数RGB值
+    hdr_image = rgb * scale / 255.0
+
+    return hdr_image
 
 def read_and_convert_hdr_to_rgbe(image_path):
     if not os.path.exists(image_path):
@@ -101,28 +120,32 @@ def save_label_map(label_map, directory="./HDR/label map", filename="label_map.n
     np.save(file_path, label_map)
     print(f"Label map saved to {file_path}")
 
-# 讓用戶輸入圖像名稱
-image_name = input("請輸入HDR圖像的名稱（包含檔案擴展名，例如：image.hdr）: ")
-image_path = os.path.join('./HDR/HDR images', image_name)
+def main():
+    image_name = input("请输入HDR图像的名称（包含文件扩展名，例如：image.hdr）: ")
+    image_path = os.path.join('./HDR/HDR images', image_name)
 
-# 讀取並轉換HDR影像
-rgbe_image = read_and_convert_hdr_to_rgbe(image_path)
+    if not os.path.exists(image_path):
+        print("文件不存在，请确认文件名称和路径是否正确。")
+        return
 
-if rgbe_image is not None:
-    print("HDR圖像讀取和轉換為RGBE格式完成。")
-    
-    # Calculate the predicted E values for the image
-    predicted_E = predict_e_values(rgbe_image)
-    
-    # Calculate the prediction error for each pixel (absolute difference)
-    prediction_error = np.abs(rgbe_image[:, :, 3] - predicted_E)
-    
-    # Create an intermediate prediction error image (except for the first row and column)
-    prediction_error_image = np.copy(rgbe_image)
-    prediction_error_image[1:, 1:, 3] = prediction_error[1:, 1:]
-    
-    # Now you have the prediction error image that can be used for further processing
-    
-    plot_histogram_of_e_values(rgbe_image)
-else:
-    print("未能進行轉換。")
+    # 读取HDR影像作为浮点数图像
+    hdr_image = cv2.imread(image_path, flags=cv2.IMREAD_ANYDEPTH | cv2.IMREAD_COLOR)
+    if hdr_image is None:
+        print("未能读取HDR图像。")
+        return
+    print("HDR图像读取完成。")
+
+    # 在这里添加对hdr_image进行信息隐藏或其他处理的代码
+    # 示例：直接复制hdr_image作为处理后的图像，实际应用中应有具体的处理逻辑
+    processed_hdr = hdr_image.copy()
+
+    # 对原始HDR图像和处理后的HDR图像进行PU21质量评估
+    # 注意：此处我们直接使用HDR浮点数图像进行评估
+    psnr_score = pu21_quality_assessment(hdr_image, hdr_image, metric='PSNR')
+    ssim_score = pu21_quality_assessment(hdr_image, hdr_image, metric='SSIM')
+
+    print(f"图像质量评分（PSNR）: {psnr_score}")
+    print(f"图像质量评分（SSIM）: {ssim_score}")
+
+if __name__ == "__main__":
+    main()
