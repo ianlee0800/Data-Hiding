@@ -55,7 +55,7 @@ def calculate_psnr(img1, img2, max_pixel=255):
     if mse == 0:
         return float('inf')
 
-    psnr = 10 * np.log10(max_pixel / np.sqrt(mse))
+    psnr = 20 * np.log10(max_pixel / np.sqrt(mse))
     return psnr
 
 def calculate_ssim(img1, img2):
