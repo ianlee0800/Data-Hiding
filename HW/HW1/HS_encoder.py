@@ -8,7 +8,7 @@ FILE_TYPE = "tiff"
 LEVELS = 256
 HISTOGRAM_PATH = "./HW/HW1/histogram/"
 HS_IMAGES_PATH = "./HW/HW1/images/"
-HS_MARKED_PATH = "./HW/HW1/marked/"
+HS_MARKED_PATH = "./HW/HW1/histogram_shifted/"
 PEAK_PATH = "./HW/HW1/peak/"
 HS_HIDE_DATA_PATH = "./HW/HW1/hide_data/"
 
@@ -187,11 +187,12 @@ def process_image(img_name, orig_img, embed_rate=0.05):
 
     embedded_bits = np.concatenate((embedded_bits_right, embedded_bits_left))
 
-    # 將嵌入的數據、峰值序列和嵌入位置轉換為NumPy數組並保存到文件
+    # 將嵌入的數據、峰值序列、嵌入位置和嵌入的bits轉換為NumPy數組並保存到文件
     hide_array = np.array(list(map(int, embedded_bits)))
     np.save(HS_HIDE_DATA_PATH + f"{img_name}_HS_hide_data.npy", hide_array)
     np.save(HS_HIDE_DATA_PATH + f"{img_name}_peak_sequence.npy", np.array(peak_sequence))
     np.save(HS_HIDE_DATA_PATH + f"{img_name}_embedded_positions.npy", np.array(embedded_positions))
+    np.save(HS_HIDE_DATA_PATH + f"{img_name}_embedded_bits.npy", np.array(embedded_bits))
 
     draw_histogram(f"{img_name}", orig_img, HISTOGRAM_PATH)
     draw_histogram(f"{img_name}_marked", marked_img, HISTOGRAM_PATH)
@@ -206,7 +207,7 @@ def process_image(img_name, orig_img, embed_rate=0.05):
     print(f"PSNR = {psnr:.2f}")
     print(f"SSIM = {ssim:.6f}")
 
-    cv2.imwrite(HS_MARKED_PATH + f"{img_name}_markedImg.{FILE_TYPE}", marked_img)
+    cv2.imwrite(HS_MARKED_PATH + f"{img_name}_shifted.{FILE_TYPE}", marked_img)
 
     question_for_displaying_images = input("Display images? (y/n): ")
     if question_for_displaying_images == "y":

@@ -1,17 +1,11 @@
 import cv2
 import numpy as np
 import os
+from itertools import product
+from HS_encoder import FILE_TYPE, HISTOGRAM_PATH, HS_IMAGES_PATH, HS_MARKED_PATH, PEAK_PATH, HS_HIDE_DATA_PATH
+from HS_encoder import calculate_psnr, calculate_ssim
 
-# Constants
-FILE_TYPE = "tiff"
-LEVELS = 256
-HISTOGRAM_PATH = "./HW/HW1/histogram/"
-HS_IMAGES_PATH = "./HW/HW1/images/"
-HS_MARKED_PATH = "./HW/HW1/marked/"
-PEAK_PATH = "./HW/HW1/peak/"
-HS_HIDE_DATA_PATH = "./HW/HW1/hide_data/"
-
-def revert_data(marked_img, peak_sequence, embedded_positions):
+def revert_data(marked_img, peak_value, peak_sequence, embedded_positions):
     height, width = marked_img.shape[:2]
     reverted_img = marked_img.copy()
 
@@ -20,137 +14,80 @@ def revert_data(marked_img, peak_sequence, embedded_positions):
         cur_peak = peak_sequence[i]
         prev_peak = peak_sequence[i - 1]
 
-        for y, x in embedded_positions:
+        for y, x, embed_order in embedded_positions:
             pixel = marked_img[y, x, 0]
 
             if pixel == cur_peak:
                 if cur_peak > prev_peak:  # 右移操作
-                    reverted_img[y, x, 0] -= 1
+                    reverted_img[y, x, 0] = peak_value
                 else:  # 左移操作
-                    reverted_img[y, x, 0] += 1
+                    reverted_img[y, x, 0] = peak_value
 
     return reverted_img
 
-def extract_data(marked_img, peak_luminance):
+def extract_data(marked_img, peak_value, peak_sequence, embedded_positions):
+    extracted_bits = []
     height, width = marked_img.shape[:2]
-    extracted_bits = ''
-    right_shift_done = False
-    left_shift_done = False
+    sequence_length = len(peak_sequence)
+    embedded_bits_index = 0
 
-    # 遍歷圖像每個像素
-    for y in range(height):
-        for x in range(width):
-            pixel = marked_img[y, x, 0]
+    for y, x, embed_order in embedded_positions:
+        pixel = marked_img[y, x, 0]
+        
+        if embed_order < sequence_length:
+            prev_peak = peak_sequence[embed_order]
+        else:
+            prev_peak = peak_value
+        
+        if embed_order < sequence_length - 1:
+            cur_peak = peak_sequence[embed_order + 1]
+        else:
+            cur_peak = peak_value
 
-            # 右移階段
-            if not right_shift_done:
-                if pixel == peak_luminance + 1:
-                    extracted_bits += '1'
-                elif pixel == peak_luminance:
-                    extracted_bits += '0'
-                else:
-                    # 遇到超過最大值255的像素,右移階段結束
-                    if pixel > 255:
-                        right_shift_done = True
-                        break
+        if pixel == cur_peak:
+            if cur_peak > prev_peak:  # 右移操作
+                extracted_bits.append(1)
+            else:  # 左移操作
+                extracted_bits.append(0)
+        else:
+            if cur_peak > prev_peak:  # 右移操作
+                extracted_bits.append(0)
+            else:  # 左移操作
+                extracted_bits.append(1)
 
-            # 左移階段
-            elif not left_shift_done:
-                if pixel == peak_luminance - 1:
-                    extracted_bits += '1'
-                elif pixel == peak_luminance:
-                    extracted_bits += '0'
-                else:
-                    # 遇到低於最小值0的像素,左移階段結束
-                    if pixel < 0:
-                        left_shift_done = True
-                        break
-
-            # 兩個階段都結束,提取完畢
-            if right_shift_done and left_shift_done:
-                break
+        # 調試語句：輸出提取的比特流和嵌入的位置
+        print(f"Pixel ({y}, {x}): Embed Order={embed_order}, Pixel Value={pixel}, Extracted Bit={extracted_bits[-1]}")
 
     return extracted_bits
 
-def recover_image(marked_img, peak_luminance):
-    height, width = marked_img.shape[:2]
-    recovered_img = marked_img.copy()
-
-    for y in range(height):
-        for x in range(width):
-            pixel = marked_img[y, x, 0]
-            if pixel != peak_luminance:
-                recovered_img[y, x, 0] = peak_luminance
-
-    return recovered_img
-
-def calculate_psnr(img1, img2, max_pixel=255):
-    if img1.shape != img2.shape:
-        raise ValueError("Input images must have the same dimensions")
-
-    mse = np.mean((img1 - img2) ** 2)
-    if mse == 0:
-        return float('inf')
-
-    psnr = 20 * np.log10(max_pixel / np.sqrt(mse))
-    return psnr
-
-def calculate_ssim(img1, img2):
-    if img1.shape != img2.shape:
-        raise ValueError("Input images must have the same dimensions")
-
-    height, width, channels = img1.shape
-    size = height * width
-
-    # Constants for SSIM calculation
-    C1 = (255 * 0.01) ** 2
-    C2 = (255 * 0.03) ** 2
-    C3 = C2 / 2
-
-    ssim_total = 0
-
-    for channel in range(channels):
-        img1_c = img1[:, :, channel]
-        img2_c = img2[:, :, channel]
-
-        mean1 = np.mean(img1_c)
-        mean2 = np.mean(img2_c)
-        var1 = np.var(img1_c)
-        var2 = np.var(img2_c)
-        covar = np.cov(img1_c.flatten(), img2_c.flatten())[0][1]
-
-        luminance = (2 * mean1 * mean2 + C1) / (mean1 ** 2 + mean2 ** 2 + C1)
-        contrast = (2 * np.sqrt(var1) * np.sqrt(var2) + C2) / (var1 + var2 + C2)
-        structure = (covar + C3) / (np.sqrt(var1) * np.sqrt(var2) + C3)
-
-        ssim_channel = luminance * contrast * structure
-        ssim_total += ssim_channel
-
-    return ssim_total / channels
-
-def decode_and_recover(img_name):
-    marked_img_path = os.path.join("./HW/HW1/histogram_shifted/", f"{img_name}_shifted.{FILE_TYPE}")
-    marked_img = cv2.imread(marked_img_path, cv2.IMREAD_GRAYSCALE)
-    marked_img = cv2.cvtColor(marked_img, cv2.COLOR_GRAY2BGR)
-    orig_img = cv2.imread(HS_IMAGES_PATH + f"{img_name}.{FILE_TYPE}", cv2.IMREAD_GRAYSCALE)
-    orig_img = cv2.cvtColor(orig_img, cv2.COLOR_GRAY2BGR)
-
-    peak_luminance = np.load(PEAK_PATH + f"{img_name}_peak.npy")
-    hide_data = np.load(HS_HIDE_DATA_PATH + f"{img_name}_HS_hide_data.npy")
-    peak_sequence = np.load(HS_HIDE_DATA_PATH + f"{img_name}_peak_sequence.npy")
-    embedded_positions = np.load(HS_HIDE_DATA_PATH + f"{img_name}_embedded_positions.npy")
-
-    extracted_bits = extract_data(marked_img, peak_luminance)
-    # reverted_img = recover_image(marked_img, peak_luminance)
-    reverted_img = revert_data(marked_img, peak_sequence, embedded_positions)
+def decode_and_recover(marked_img, orig_img, peak_value, peak_sequence, embedded_positions, hide_data, img_name):
+    embedded_bits = np.load(os.path.join(HS_HIDE_DATA_PATH, f"{img_name}_embedded_bits.npy"))
+    extracted_bits = extract_data(marked_img, peak_value, peak_sequence, embedded_positions)
+    reverted_img = revert_data(marked_img, peak_value, peak_sequence, embedded_positions)
 
     print(f"Extracted bits: {extracted_bits}")
-    print(f"Original embedded bits: {''.join(map(str, hide_data))}")
+    print(f"Embedded bits: {embedded_bits}")
+    print(f"Original embedded bits: {hide_data}")
 
-    if extracted_bits == ''.join(map(str, hide_data)):
-        print("Extracted data is correct.")
+    if np.array_equal(extracted_bits, embedded_bits):
+        print("Extracted data matches embedded data.")
     else:
-        print("Extracted data is incorrect.")
+        print("Extracted data does not match embedded data.")
+
+    if np.array_equal(embedded_bits, hide_data):
+        print("Embedded data matches original data.")
+    else:
+        print("Embedded data does not match original data.")
+
+    print(f"Length of extracted bits: {len(extracted_bits)}")
+    print(f"Length of embedded bits: {len(embedded_bits)}")
+    print(f"Length of original embedded bits: {len(hide_data)}")
+
+    if len(extracted_bits) == len(embedded_bits) == len(hide_data):
+        print("Length of extracted bits, embedded bits, and original embedded bits is the same.")
+    else:
+        print("Length of extracted bits, embedded bits, and original embedded bits is different.")
+        print("WARNING: The length of the extracted bitstream does not match the original embedded bitstream.")
 
     psnr = calculate_psnr(orig_img, reverted_img)
     ssim = calculate_ssim(orig_img, reverted_img)
@@ -158,7 +95,7 @@ def decode_and_recover(img_name):
     print(f"PSNR between original and recovered image: {psnr:.2f}")
     print(f"SSIM between original and recovered image: {ssim:.6f}")
 
-    cv2.imwrite(HS_MARKED_PATH + f"{img_name}_recoveredImg.{FILE_TYPE}", reverted_img)
+    cv2.imwrite(os.path.join(HS_MARKED_PATH, f"{img_name}_recovered.{FILE_TYPE}"), reverted_img)
 
     question_for_displaying_images = input("Display images? (y/n): ")
     if question_for_displaying_images == "y":
@@ -166,10 +103,30 @@ def decode_and_recover(img_name):
         cv2.imshow("Marked", marked_img)
         cv2.imshow("Recovered", reverted_img)
         cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
 def main():
     img_name = input("Image name: ")
-    decode_and_recover(img_name)
+
+    marked_img_path = os.path.join(HS_MARKED_PATH, f"{img_name}_shifted.{FILE_TYPE}")
+    marked_img = cv2.imread(marked_img_path, cv2.IMREAD_GRAYSCALE)
+    
+    if marked_img is None:
+        print(f"Error: Could not read the marked image file '{marked_img_path}'")
+        return
+    
+    marked_img = cv2.cvtColor(marked_img, cv2.COLOR_GRAY2BGR)
+
+    orig_img_path = os.path.join(HS_IMAGES_PATH, f"{img_name}.{FILE_TYPE}")
+    orig_img = cv2.imread(orig_img_path, cv2.IMREAD_GRAYSCALE)
+    orig_img = cv2.cvtColor(orig_img, cv2.COLOR_GRAY2BGR)
+
+    peak_value = np.load(os.path.join(PEAK_PATH, f"{img_name}_peak.npy"))
+    peak_sequence = np.load(os.path.join(HS_HIDE_DATA_PATH, f"{img_name}_peak_sequence.npy"))
+    embedded_positions = np.load(os.path.join(HS_HIDE_DATA_PATH, f"{img_name}_embedded_positions.npy"))
+    hide_data = np.load(os.path.join(HS_HIDE_DATA_PATH, f"{img_name}_HS_hide_data.npy"))
+
+    decode_and_recover(marked_img, orig_img, peak_value, peak_sequence, embedded_positions, hide_data, img_name)
 
 if __name__ == "__main__":
     main()
