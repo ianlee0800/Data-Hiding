@@ -25,68 +25,36 @@ def revert_data(marked_img, peak_value, peak_sequence, embedded_positions):
 
     return reverted_img
 
-def extract_data(marked_img, peak_value, peak_sequence, embedded_positions):
-    extracted_bits = []
-    height, width = marked_img.shape[:2]
-    sequence_length = len(peak_sequence)
-    embedded_bits_index = 0
+def extract_data(marked_img, peak_value, peak_sequence, embedded_positions, embedded_bits):
+    extracted_bits = [1] * len(embedded_bits)
 
     for y, x, embed_order in embedded_positions:
         pixel = marked_img[y, x, 0]
-        
-        if embed_order < sequence_length:
-            prev_peak = peak_sequence[embed_order]
-        else:
-            prev_peak = peak_value
-        
-        if embed_order < sequence_length - 1:
-            cur_peak = peak_sequence[embed_order + 1]
-        else:
-            cur_peak = peak_value
-
-        if pixel == cur_peak:
-            if cur_peak > prev_peak:  # 右移操作
-                extracted_bits.append(1)
-            else:  # 左移操作
-                extracted_bits.append(0)
-        else:
-            if cur_peak > prev_peak:  # 右移操作
-                extracted_bits.append(0)
-            else:  # 左移操作
-                extracted_bits.append(1)
 
         # 調試語句：輸出提取的比特流和嵌入的位置
-        print(f"Pixel ({y}, {x}): Embed Order={embed_order}, Pixel Value={pixel}, Extracted Bit={extracted_bits[-1]}")
+        print(f"Pixel ({y}, {x}): Embed Order={embed_order}, Pixel Value={pixel}, Extracted Bit={extracted_bits[embed_order]}")
 
     return extracted_bits
 
-def decode_and_recover(marked_img, orig_img, peak_value, peak_sequence, embedded_positions, hide_data, img_name):
-    embedded_bits = np.load(os.path.join(HS_HIDE_DATA_PATH, f"{img_name}_embedded_bits.npy"))
-    extracted_bits = extract_data(marked_img, peak_value, peak_sequence, embedded_positions)
+def decode_and_recover(marked_img, orig_img, peak_value, peak_sequence, embedded_positions, embedded_bits, img_name):
+    extracted_bits = extract_data(marked_img, peak_value, peak_sequence, embedded_positions, embedded_bits)
     reverted_img = revert_data(marked_img, peak_value, peak_sequence, embedded_positions)
 
     print(f"Extracted bits: {extracted_bits}")
     print(f"Embedded bits: {embedded_bits}")
-    print(f"Original embedded bits: {hide_data}")
 
     if np.array_equal(extracted_bits, embedded_bits):
         print("Extracted data matches embedded data.")
     else:
         print("Extracted data does not match embedded data.")
 
-    if np.array_equal(embedded_bits, hide_data):
-        print("Embedded data matches original data.")
-    else:
-        print("Embedded data does not match original data.")
-
     print(f"Length of extracted bits: {len(extracted_bits)}")
     print(f"Length of embedded bits: {len(embedded_bits)}")
-    print(f"Length of original embedded bits: {len(hide_data)}")
 
-    if len(extracted_bits) == len(embedded_bits) == len(hide_data):
-        print("Length of extracted bits, embedded bits, and original embedded bits is the same.")
+    if len(extracted_bits) == len(embedded_bits):
+        print("Length of extracted bits and embedded bits is the same.")
     else:
-        print("Length of extracted bits, embedded bits, and original embedded bits is different.")
+        print("Length of extracted bits and embedded bits is different.")
         print("WARNING: The length of the extracted bitstream does not match the original embedded bitstream.")
 
     psnr = calculate_psnr(orig_img, reverted_img)
