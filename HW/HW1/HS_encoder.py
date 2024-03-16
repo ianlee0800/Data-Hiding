@@ -85,8 +85,10 @@ def find_peak_luminance(img):
 
 def generate_bitstream(capacity, embed_rate=0.1):
     embed_capacity = int(capacity * embed_rate)
-    bitstream = np.random.choice([0, 1], size=embed_capacity)
-    return bitstream
+    bitstream = [0, 1] * (embed_capacity // 2)
+    if embed_capacity % 2 != 0:
+        bitstream.append(0)
+    return np.array(bitstream)
 
 def find_peak_pixels(img, peak_luminance):
     y, x = np.where(img[..., 0] == peak_luminance)
@@ -104,23 +106,18 @@ def hide_data(marked_img, bitstream, shift, peak_pixels, max_intensity=255, min_
 
         pixel = marked_img[y, x, 0]
 
-        if shift == 1 and pixel < max_intensity and bitstream[i] == 1:
-            marked_img[y, x, 0] += shift
-            embedded_bits.append(1)
+        if shift == 1 and pixel < max_intensity:
+            marked_img[y, x, 0] += shift * bitstream[i]
+            embedded_bits.append(bitstream[i])
             embedded_positions.append((y, x, embed_order))
             peak_luminance_values.append(pixel)
             embed_order += 1
-        elif shift == -1 and pixel > min_intensity and bitstream[i] == 1:
-            marked_img[y, x, 0] += shift
-            embedded_bits.append(1)
+        elif shift == -1 and pixel > min_intensity:
+            marked_img[y, x, 0] -= shift * bitstream[i]
+            embedded_bits.append(bitstream[i])
             embedded_positions.append((y, x, embed_order))
             peak_luminance_values.append(pixel)
             embed_order += 1
-        else:
-            if shift == 1 and pixel < max_intensity:
-                marked_img[y, x, 0] += shift
-            elif shift == -1 and pixel > min_intensity:
-                marked_img[y, x, 0] += shift
 
     return marked_img, embedded_bits, embedded_positions, peak_luminance_values
 

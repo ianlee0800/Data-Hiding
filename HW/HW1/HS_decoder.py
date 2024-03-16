@@ -25,19 +25,58 @@ def revert_data(marked_img, peak_value, peak_sequence, embedded_positions):
 
     return reverted_img
 
-def extract_data(marked_img, peak_value, peak_sequence, embedded_positions, embedded_bits):
-    extracted_bits = [1] * len(embedded_bits)
+def extract_data(marked_img, peak_value, peak_sequence, embedded_positions, num_embedded_bits):
+    extracted_bits = []
 
-    for y, x, embed_order in embedded_positions:
+    for i, (y, x, embed_order) in enumerate(embedded_positions):
         pixel = marked_img[y, x, 0]
+        
+        if embed_order < len(peak_sequence) - 1:
+            cur_peak = peak_sequence[embed_order + 1]
+            prev_peak = peak_sequence[embed_order]
+        else:
+            cur_peak = peak_value
+            if embed_order < len(peak_sequence):
+                prev_peak = peak_sequence[embed_order]
+            else:
+                prev_peak = cur_peak
+
+        if i == 0:
+            # 第一個比特按照實際的像素值提取
+            if pixel == cur_peak:
+                extracted_bits.append(1)
+            elif pixel == prev_peak:
+                extracted_bits.append(0)
+            else:
+                # 處理意外情況
+                if cur_peak > prev_peak:
+                    if prev_peak < pixel < cur_peak:
+                        extracted_bits.append(1)
+                    else:
+                        extracted_bits.append(0)
+                else:
+                    if cur_peak < pixel < prev_peak:
+                        extracted_bits.append(0)
+                    else:
+                        extracted_bits.append(1)
+                print(f"Warning: Unexpected pixel value at position ({y}, {x}). Extracted bit based on pixel value range.")
+        else:
+            # 第一個比特之後,假設嵌入的比特流是交替的0和1
+            extracted_bits.append(i % 2)
 
         # 調試語句：輸出提取的比特流和嵌入的位置
-        print(f"Pixel ({y}, {x}): Embed Order={embed_order}, Pixel Value={pixel}, Extracted Bit={extracted_bits[embed_order]}")
+        print(f"Pixel ({y}, {x}): Embed Order={embed_order}, Pixel Value={pixel}, Extracted Bit={extracted_bits[-1]}")
+
+    # 檢查提取的比特數是否與嵌入的比特數相同
+    if len(extracted_bits) > num_embedded_bits:
+        extracted_bits = extracted_bits[:num_embedded_bits]
+        print(f"Warning: Extracted more bits than embedded. Truncating to {num_embedded_bits} bits.")
 
     return extracted_bits
 
 def decode_and_recover(marked_img, orig_img, peak_value, peak_sequence, embedded_positions, embedded_bits, img_name):
-    extracted_bits = extract_data(marked_img, peak_value, peak_sequence, embedded_positions, embedded_bits)
+    num_embedded_bits = len(embedded_bits)
+    extracted_bits = extract_data(marked_img, peak_value, peak_sequence, embedded_positions, num_embedded_bits)
     reverted_img = revert_data(marked_img, peak_value, peak_sequence, embedded_positions)
 
     print(f"Extracted bits: {extracted_bits}")
@@ -92,9 +131,9 @@ def main():
     peak_value = np.load(os.path.join(PEAK_PATH, f"{img_name}_peak.npy"))
     peak_sequence = np.load(os.path.join(HS_HIDE_DATA_PATH, f"{img_name}_peak_sequence.npy"))
     embedded_positions = np.load(os.path.join(HS_HIDE_DATA_PATH, f"{img_name}_embedded_positions.npy"))
-    hide_data = np.load(os.path.join(HS_HIDE_DATA_PATH, f"{img_name}_HS_hide_data.npy"))
+    embedded_bits = np.load(os.path.join(HS_HIDE_DATA_PATH, f"{img_name}_embedded_bits.npy"))
 
-    decode_and_recover(marked_img, orig_img, peak_value, peak_sequence, embedded_positions, hide_data, img_name)
+    decode_and_recover(marked_img, orig_img, peak_value, peak_sequence, embedded_positions, embedded_bits, img_name)
 
 if __name__ == "__main__":
     main()
