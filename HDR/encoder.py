@@ -2,9 +2,30 @@ import cv2
 import numpy as np
 import os
 import matplotlib.pyplot as plt
+import imageio.v2 as imageio
+
 # 导入自定义的图像质量评估函数
 # 注意：如果这些函数位于PU21.py中，确保从该文件导入
 from PU21 import pu21_quality_assessment
+
+def adaptive_tonemap(hdr_image):
+    # 將HDR影像轉換為浮點數格式
+    hdr_image = hdr_image.astype(np.float32)
+
+    # 計算HDR影像的亮度值
+    luminance = 0.2126 * hdr_image[:, :, 2] + 0.7152 * hdr_image[:, :, 1] + 0.0722 * hdr_image[:, :, 0]
+
+    # 計算亮度值的對數平均值
+    log_mean_luminance = np.exp(np.mean(np.log(luminance + 1e-6)))
+
+    # 根據對數平均亮度值自適應調整gamma值
+    gamma = 1.0 / (1.0 + np.log10(log_mean_luminance))
+
+    # 使用自適應gamma值進行tone mapping
+    tonemap = cv2.createTonemap(gamma=gamma)
+    ldr_image = tonemap.process(hdr_image)
+
+    return ldr_image
 
 def float_to_rgbe(hdr_image):
     rgbe_image = np.zeros((*hdr_image.shape[:2], 4), dtype=np.uint8)
@@ -121,36 +142,38 @@ def save_label_map(label_map, directory="./HDR/label map", filename="label_map.n
     print(f"Label map saved to {file_path}")
 
 def main():
-    image_name = input("請輸入HDR圖像的名稱（包含副檔名，例如：image.hdr）: ")
+    image_name = input("請輸入HDR圖像的名稱（預設副檔名為.hdr）: ")
+    
+    # 檢查使用者輸入的圖像名稱是否包含副檔名
+    if '.' not in image_name:
+        # 如果使用者沒有輸入副檔名,則預設為.hdr
+        image_name += '.hdr'
+    
     image_path = os.path.join('./HDR/HDR images', image_name)
     
-
     if not os.path.exists(image_path):
-        print("檔案不存在，請確認檔案名稱和路徑是否正確。")
+        print("檔案不存在,請確認檔案名稱和路徑是否正確。")
         return
 
-    # 读取HDR影像作为浮点数图像
-    hdr_image = cv2.imread(image_path, flags=cv2.IMREAD_ANYDEPTH | cv2.IMREAD_COLOR)
+    # 使用OpenCV的cv2.imread()函數讀取HDR影像
+    hdr_image = cv2.imread(image_path, flags=cv2.IMREAD_ANYDEPTH)
+    
     if hdr_image is None:
-        print("未能讀取HDR圖像。")
+        print("無法讀取HDR圖像。")
         return
+    
     print("HDR圖像讀取完成。")
-    
-    
 
-    # 在这里添加对hdr_image进行信息隐藏或其他处理的代码
-    # 示例：直接复制hdr_image作为处理后的图像，实际应用中应有具体的处理逻辑
-    processed_hdr = hdr_image.copy()
+    # 使用自適應tone mapping優化顯示效果
+    ldr_image = adaptive_tonemap(hdr_image)
 
-    # 对原始HDR图像和处理后的HDR图像进行PU21质量评估
-    # 注意：此处我们直接使用HDR浮点数图像进行评估
-    psnr_score = pu21_quality_assessment(hdr_image, hdr_image, metric='PSNR')
-    ssim_score = pu21_quality_assessment(hdr_image, hdr_image, metric='SSIM')
+    # 將LDR影像轉換為8位整數格式
+    ldr_image_8bit = np.clip(ldr_image * 255, 0, 255).astype(np.uint8)
 
-    print(f"PSNR: {psnr_score}")
-    print(f"SSIM: {ssim_score}")
-    
-    cv2.imshow('HDR Image', read_and_convert_hdr_to_rgbe(image_path))
+    # 顯示自適應tone mapping後的LDR影像
+    cv2.imshow('Adaptive Tone Mapped HDR Image', ldr_image_8bit)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     main()
