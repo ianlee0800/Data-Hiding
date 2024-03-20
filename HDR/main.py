@@ -1,11 +1,10 @@
 import cv2
 import numpy as np
 import os
-import matplotlib.pyplot as plt
-
-# 导入自定义的图像质量评估函数
-# 注意：如果这些函数位于PU21.py中，确保从该文件导入
-from PU21 import pu21_quality_assessment
+from matplotlib import pyplot as plt
+from encryption import encrypt_image, save_encrypted_image
+from utils import float_to_rgbe, rgbe_to_float
+from PU21 import *
 
 def adaptive_tonemap(hdr_image, gamma=2.2, saturation=1.0, bias=0.85):
     # 將HDR影像轉換為浮點數格式
@@ -23,40 +22,6 @@ def adjust_exposure(ldr_image, exposure=0):
     # 調整LDR影像的曝光
     ldr_image = cv2.pow(ldr_image, 2.0 ** exposure)
     return ldr_image
-
-def float_to_rgbe(hdr_image):
-    rgbe_image = np.zeros((*hdr_image.shape[:2], 4), dtype=np.uint8)
-    max_rgb = np.max(hdr_image[:, :, :3], axis=2)
-    valid_mask = max_rgb >= 1e-32  # 避免除以0
-
-    exp = np.floor(np.log2(max_rgb[valid_mask])) + 128
-    exp = np.clip(exp, 128 - 128, 128 + 127).astype(np.uint8)
-
-    scale_factor = (255.0 / max_rgb[valid_mask]) * (2.0 ** (exp - 128))
-    scaled_rgb = hdr_image[:, :, :3][valid_mask] * np.expand_dims(scale_factor, axis=-1)
-    scaled_rgb = np.clip(scaled_rgb, 0, 255).astype(np.uint8)
-
-    rgbe_image[:, :, :3][valid_mask] = scaled_rgb
-    rgbe_image[:, :, 3][valid_mask] = exp
-
-    return rgbe_image
-
-def rgbe_to_float(rgbe_image):
-    """
-    将RGBE格式的图像转换回浮点数格式的HDR图像。
-    """
-    # 分离RGB和E通道
-    rgb = rgbe_image[:, :, :3].astype(np.float32)
-    e = rgbe_image[:, :, 3].astype(np.float32)
-
-    # 将指数E转换回浮点数的比例因子
-    scale = 2.0 ** (e - 128.0)
-    scale = np.expand_dims(scale, axis=-1)  # 使其形状与rgb数组匹配
-
-    # 逆向计算原始的浮点数RGB值
-    hdr_image = rgb * scale / 255.0
-
-    return hdr_image
 
 def read_and_convert_hdr_to_rgbe(image_path):
     if not os.path.exists(image_path):
@@ -262,6 +227,27 @@ def main():
     
     # 儲存label map
     save_label_map(label_map, image_name)
+    
+    # 設置加密金鑰
+    encryption_key = 58  # 你可以使用任意整數作為加密金鑰
+    
+    # 加密影像
+    encrypted_image = encrypt_image(rgbe_image, encryption_key)
+    
+    # 儲存加密後的影像
+    save_encrypted_image(encrypted_image, image_name)
+    
+    # 將加密後的影像從RGBE格式轉換回HDR格式
+    encrypted_hdr_image = rgbe_to_float(encrypted_image)
+    
+    # 將HDR影像轉換為8位整數格式以顯示
+    encrypted_ldr_image = np.clip(encrypted_hdr_image, 0, 1)
+    encrypted_ldr_image = (encrypted_ldr_image * 255).astype(np.uint8)
+    
+    # 顯示加密後的影像
+    cv2.imshow('Encrypted Image', encrypted_ldr_image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     main()
