@@ -8,23 +8,21 @@ import imageio.v2 as imageio
 # 注意：如果这些函数位于PU21.py中，确保从该文件导入
 from PU21 import pu21_quality_assessment
 
-def adaptive_tonemap(hdr_image):
+def adaptive_tonemap(hdr_image, gamma=2.2, saturation=1.0, bias=0.85):
     # 將HDR影像轉換為浮點數格式
     hdr_image = hdr_image.astype(np.float32)
 
-    # 計算HDR影像的亮度值
-    luminance = 0.2126 * hdr_image[:, :, 2] + 0.7152 * hdr_image[:, :, 1] + 0.0722 * hdr_image[:, :, 0]
+    # 使用Drago tone mapping算法
+    tonemap = cv2.createTonemapDrago(gamma=gamma, saturation=saturation, bias=bias)
 
-    # 計算亮度值的對數平均值
-    log_mean_luminance = np.exp(np.mean(np.log(luminance + 1e-6)))
-
-    # 根據對數平均亮度值自適應調整gamma值
-    gamma = 1.0 / (1.0 + np.log10(log_mean_luminance))
-
-    # 使用自適應gamma值進行tone mapping
-    tonemap = cv2.createTonemap(gamma=gamma)
+    # 進行tone mapping
     ldr_image = tonemap.process(hdr_image)
 
+    return ldr_image
+
+def adjust_exposure(ldr_image, exposure=0):
+    # 調整LDR影像的曝光
+    ldr_image = cv2.pow(ldr_image, 2.0 ** exposure)
     return ldr_image
 
 def float_to_rgbe(hdr_image):
@@ -164,15 +162,35 @@ def main():
     
     print("HDR圖像讀取完成。")
 
-    # 使用自適應tone mapping優化顯示效果
+    # 使用Drago tone mapping算法進行tone mapping
     ldr_image = adaptive_tonemap(hdr_image)
 
-    # 將LDR影像轉換為8位整數格式
-    ldr_image_8bit = np.clip(ldr_image * 255, 0, 255).astype(np.uint8)
+    # 初始曝光值
+    exposure = 0
 
-    # 顯示自適應tone mapping後的LDR影像
-    cv2.imshow('Adaptive Tone Mapped HDR Image', ldr_image_8bit)
-    cv2.waitKey(0)
+    while True:
+        # 調整LDR影像的曝光
+        adjusted_ldr_image = adjust_exposure(ldr_image, exposure)
+
+        # 將LDR影像轉換為8位整數格式
+        adjusted_ldr_image_8bit = np.clip(adjusted_ldr_image * 255, 0, 255).astype(np.uint8)
+
+        # 顯示調整後的LDR影像
+        cv2.imshow('Adjusted LDR Image', adjusted_ldr_image_8bit)
+
+        # 等待按鍵事件
+        key = cv2.waitKey(1) & 0xFF
+
+        # 如果按下 'q' 鍵,則退出迴圈
+        if key == ord('q'):
+            break
+        # 如果按下 '+' 鍵,增加曝光值
+        elif key == ord('+'):
+            exposure += 0.5
+        # 如果按下 '-' 鍵,減少曝光值
+        elif key == ord('-'):
+            exposure -= 0.5
+
     cv2.destroyAllWindows()
 
 if __name__ == "__main__":
