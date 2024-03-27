@@ -1,10 +1,28 @@
 import cv2
 import numpy as np
 import os
+import sys
 from matplotlib import pyplot as plt
-from encryption import encrypt_image, save_encrypted_image
 from utils import float_to_rgbe, rgbe_to_float
 from PU21 import *
+
+sys.path.append('./DCT')  # 將 DCT2 目錄添加到 Python 模組搜尋路徑
+from image2RLE import *
+
+def read_hdr_image(image_name):
+    image_path = os.path.join("./HDR/HDR images", f"{image_name}.hdr")
+    if not os.path.exists(image_path):
+        print("檔案不存在,請確認檔案名稱和路徑是否正確。")
+        return None
+    hdr_image = cv2.imread(image_path, flags=cv2.IMREAD_ANYDEPTH)
+    return hdr_image
+
+def save_hdr_image(rgbe_image, filename):
+    # 將RGBE圖像轉換回浮點數格式
+    hdr_image = rgbe_to_float(rgbe_image)
+    
+    # 將浮點數格式的HDR圖像儲存為HDR檔案
+    cv2.imwrite(filename, hdr_image)
 
 def adaptive_tonemap(hdr_image, gamma=2.2, saturation=1.0, bias=0.85):
     # 將HDR影像轉換為浮點數格式
@@ -149,105 +167,88 @@ def save_label_map(label_map, image_name, directory="./HDR/label map"):
     np.save(file_path, label_map)
     print(f"Label map已儲存至 {file_path}")
 
-def main():
-    image_name = input("請輸入HDR圖像的名稱（預設副檔名為.hdr）: ")
-    
-    # 檢查使用者輸入的圖像名稱是否包含副檔名
-    if '.' not in image_name:
-        # 如果使用者沒有輸入副檔名,則預設為.hdr
-        image_name += '.hdr'
-    
-    image_path = os.path.join('./HDR/HDR images', image_name)
-    
+def read_hdr_image(image_name):
+    image_path = os.path.join("./HDR/HDR images", f"{image_name}.hdr")
     if not os.path.exists(image_path):
         print("檔案不存在,請確認檔案名稱和路徑是否正確。")
-        return
-
-    # 使用OpenCV的cv2.imread()函數讀取HDR影像
+        return None
     hdr_image = cv2.imread(image_path, flags=cv2.IMREAD_ANYDEPTH)
+    return hdr_image
+
+def save_hdr_image(image, filename):
+    cv2.imwrite(filename, image)
+
+def main():
+    # 詢問使用者要讀取的圖像名稱
+    image_name = input("請輸入要讀取的圖像名稱(不包含副檔名): ")
+    
+    # 讀取HDR圖像
+    hdr_image = read_hdr_image(image_name)
     
     if hdr_image is None:
-        print("無法讀取HDR圖像。")
         return
     
-    print("HDR圖像讀取完成。")
-
-    # 使用Drago tone mapping算法進行tone mapping
-    ldr_image = adaptive_tonemap(hdr_image)
-
-    # 初始曝光值
-    exposure = 0
-
-    while True:
-        # 調整LDR影像的曝光
-        adjusted_ldr_image = adjust_exposure(ldr_image, exposure)
-
-        # 將adjusted_ldr_image的值限制在[0, 1]範圍內
-        adjusted_ldr_image = np.clip(adjusted_ldr_image, 0, 1)
-
-        # 將LDR影像轉換為8位整數格式
-        adjusted_ldr_image_8bit = (adjusted_ldr_image * 255).astype(np.uint8)
-
-        # 顯示調整後的LDR影像
-        cv2.imshow('Adjusted LDR Image', adjusted_ldr_image_8bit)
-
-        # 等待按鍵事件
-        key = cv2.waitKey(1) & 0xFF
-
-        # 如果按下 'q' 鍵,則退出迴圈
-        if key == ord('q'):
-            break
-        # 如果按下 '+' 鍵,增加曝光值
-        elif key == ord('+'):
-            exposure += 0.1
-        # 如果按下 '-' 鍵,減少曝光值
-        elif key == ord('-'):
-            exposure -= 0.1
-
-    cv2.destroyAllWindows()
-
-    # 將HDR影像轉換為RGBE格式
+    # 將HDR圖像轉換為RGBE格式
     rgbe_image = float_to_rgbe(hdr_image)
     
-    # 繪製E值的直方圖並儲存
-    plot_e_value_histogram(rgbe_image, image_name)
+    # 從RGBE圖像中提取RGB通道的數值
+    r_channel = rgbe_image[:, :, 0].astype(np.float32)
+    g_channel = rgbe_image[:, :, 1].astype(np.float32)
+    b_channel = rgbe_image[:, :, 2].astype(np.float32)
     
-    # 預測RGBE格式影像中的E值
-    predicted_E = predict_e_values(rgbe_image)
+    # 對RGB通道進行DCT轉換
+    dct_r = cv2.dct(r_channel)
+    dct_g = cv2.dct(g_channel)
+    dct_b = cv2.dct(b_channel)
     
-    # 計算預測誤差
-    prediction_error = rgbe_image[:, :, 3].astype(np.int32) - predicted_E
+    # 將DCT係數組合成一個三通道圖像
+    dct_image = cv2.merge((dct_r, dct_g, dct_b))
     
-    # 將預測誤差合併到RGBE影像中
-    prediction_error_image = rgbe_image.copy()
-    prediction_error_image[:, :, 3] = prediction_error
+    # 將DCT係數轉換為RGBE格式
+    dct_rgbe = float_to_rgbe(dct_image)
     
-    # 生成label map和embedding capacity
-    label_map, embedding_capacity = generate_label_map(rgbe_image, predicted_E)
+    # 將RGBE格式的DCT係數轉換回浮點數格式
+    dct_float = rgbe_to_float(dct_rgbe)
     
-    # 儲存label map
-    save_label_map(label_map, image_name)
+    # 建立 ./HDR/dct 目錄(如果不存在)
+    os.makedirs("./HDR/dct", exist_ok=True)
     
-    # 設置加密金鑰
-    encryption_key = 58  # 你可以使用任意整數作為加密金鑰
+    # 儲存DCT係數為HDR格式
+    dct_filename = os.path.join("./HDR/dct", f"dct_{image_name}.hdr")
+    save_hdr_image(dct_float, dct_filename)
     
-    # 加密影像
-    encrypted_image = encrypt_image(rgbe_image, encryption_key)
+    # 顯示DCT係數圖像
+    cv2.imshow("DCT Image", dct_image / np.max(dct_image))
     
-    # 儲存加密後的影像
-    save_encrypted_image(encrypted_image, image_name)
+    # 對DCT係數進行Inverse DCT轉換
+    idct_r = cv2.idct(dct_r)
+    idct_g = cv2.idct(dct_g)
+    idct_b = cv2.idct(dct_b)
     
-    # 將加密後的影像從RGBE格式轉換回HDR格式
-    encrypted_hdr_image = rgbe_to_float(encrypted_image)
+    # 將Inverse DCT結果組合成一個三通道圖像
+    idct_image = cv2.merge((idct_r, idct_g, idct_b))
     
-    # 將HDR影像轉換為8位整數格式以顯示
-    encrypted_ldr_image = np.clip(encrypted_hdr_image, 0, 1)
-    encrypted_ldr_image = (encrypted_ldr_image * 255).astype(np.uint8)
+    # 將Inverse DCT結果轉換為RGBE格式
+    idct_rgbe = float_to_rgbe(idct_image)
     
-    # 顯示加密後的影像
-    cv2.imshow('Encrypted Image', encrypted_ldr_image)
+    # 將RGBE格式的Inverse DCT結果轉換回浮點數格式
+    idct_float = rgbe_to_float(idct_rgbe)
+    
+    # 建立 ./HDR/idct 目錄(如果不存在)
+    os.makedirs("./HDR/idct", exist_ok=True)
+    
+    # 儲存Inverse DCT結果為HDR格式
+    idct_filename = os.path.join("./HDR/idct", f"idct_{image_name}.hdr")
+    save_hdr_image(idct_float, idct_filename)
+    
+    # 顯示Inverse DCT結果圖像
+    cv2.imshow("IDCT Image", idct_image / np.max(idct_image))
+    
+    print("DCT係數已儲存為:", dct_filename)
+    print("Inverse DCT結果已儲存為:", idct_filename)
+    
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     main()

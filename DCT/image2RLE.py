@@ -19,7 +19,6 @@ QUANTIZATION_MAT = np.array([
 
 BLOCK_SIZE = 8
 
-
 def get_padded_image(image: np.ndarray) -> np.ndarray:
     """
     Pad the input image to a size that is a multiple of the block size.
@@ -129,8 +128,10 @@ def encode_image(image: np.ndarray) -> tuple[str, np.ndarray]:
             # Apply 2D discrete cosine transform
             dct_block = cv2.dct(block.astype(np.float32))
 
-            # Quantize the DCT coefficients
-            quantized_block = np.divide(dct_block, QUANTIZATION_MAT).astype(int)
+            # Keep only the top 8 coefficients by absolute value
+            abs_dct_block = np.abs(dct_block)
+            threshold = np.sort(abs_dct_block, axis=None)[-8]
+            quantized_block = np.where(abs_dct_block >= threshold, dct_block, 0)
 
             # Reorder DCT coefficients in zigzag order
             reordered_block = zigzag_scan(quantized_block)
@@ -150,7 +151,6 @@ def encode_image(image: np.ndarray) -> tuple[str, np.ndarray]:
     bitstream = f"{padded_image.shape[0]} {padded_image.shape[1]} {bitstream};"
 
     return bitstream, padded_image
-
 
 import os
 
