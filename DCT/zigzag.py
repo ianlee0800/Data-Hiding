@@ -1,6 +1,6 @@
 import numpy as np
 
-def zigzag_scan(matrix):
+def zigzag(matrix):
     """
     Perform a zigzag scan on the input matrix.
     
@@ -40,7 +40,7 @@ def zigzag_scan(matrix):
     
     return output
 
-def inverse_zigzag_scan(flattened, rows, cols):
+def inverse_zigzag(flattened, rows, cols):
     """
     Perform an inverse zigzag scan to reconstruct the matrix from the flattened array.
     
@@ -77,4 +77,4 @@ def inverse_zigzag_scan(flattened, rows, cols):
     
     return output
 
-__all__ = ['zigzag_scan', 'inverse_zigzag_scan']
+__all__ = ['zigzag', 'inverse_zigzag']
