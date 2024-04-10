@@ -16,10 +16,6 @@ def get_8x8_dct(block):
 def get_8x8_idct(coefficients):
     return fftpack.idct(fftpack.idct(coefficients.T, norm='ortho').T, norm='ortho')
 
-def zigzag_scan(coefficients):
-    zz = np.concatenate([np.diagonal(coefficients[::-1,:], i)[::(2*(i%2)-1)] for i in range(1-coefficients.shape[0], coefficients.shape[0])])
-    return zz
-
 def get_reconstructed_image(raw):
     img = raw.clip(0, 255)
     img = img.astype('uint8')
@@ -37,15 +33,9 @@ if __name__ == "__main__":
             block = pixels[i:i+block_size, j:j+block_size]
             dct_block = get_8x8_dct(block)
 
-            # Perform zigzag scan and keep top-k coefficients
-            zigzag_coeffs = zigzag_scan(dct_block)
-            k = 8  # Number of coefficients to keep
-            zigzag_coeffs[k:] = 0
-
-            # Reconstruct the block from zigzag coefficients
-            dct_block = np.zeros_like(dct_block)
-            sorted_indices = np.unravel_index(np.argsort(np.abs(dct_block), axis=None), dct_block.shape)
-            dct_block[sorted_indices[0][:k], sorted_indices[1][:k]] = zigzag_coeffs[:k]
+            # Keep top-left 8 coefficients, set others to 0
+            dct_block[8:, :] = 0
+            dct_block[:, 8:] = 0
 
             reconstructed_block = get_8x8_idct(dct_block)
             pixels[i:i+block_size, j:j+block_size] = reconstructed_block
