@@ -3,7 +3,9 @@ import pywt
 from skimage.transform import radon, iradon
 from scipy.fftpack import dct, idct
 from skimage.util import view_as_blocks
-import cv2
+from skimage import color
+import OpenEXR
+import Imath
 
 # 參數設置
 P = 32
@@ -12,10 +14,31 @@ C = 4
 alpha = 0.1
 wavelet = 'haar'
 
+def read_exr_image(file_path):
+    exr_file = OpenEXR.InputFile(file_path)
+    header = exr_file.header()
+    
+    channels = header['channels'].keys()
+    dataWindow = header['dataWindow']
+    size = (dataWindow.max.x - dataWindow.min.x + 1, dataWindow.max.y - dataWindow.min.y + 1)
+    
+    float_type = Imath.PixelType(Imath.PixelType.FLOAT)
+    
+    images = []
+    for channel in channels:
+        buffer = exr_file.channel(channel, float_type)
+        image = np.frombuffer(buffer, dtype=np.float32)
+        image = image.reshape(size[1], size[0])
+        images.append(image)
+    
+    exr_file.close()
+    
+    return np.stack(images, axis=-1)
+
 # 步驟1: HDR圖像預處理
 def preprocess(hdr_image):
     # 1.1 提取亮度分量Y並轉換到LogLuv域
-    Y = 0.2126 * hdr_image[:,:,0] + 0.7152 * hdr_image[:,:,1] + 0.0722 * hdr_image[:,:,2]
+    Y = 0.2126 * hdr_image[..., 0] + 0.7152 * hdr_image[..., 1] + 0.0722 * hdr_image[..., 2]
     L = np.log10(Y)
     
     # 1.2 線性縮放到[0,1]範圍內
@@ -52,41 +75,45 @@ def embed(block_dct, watermark, alpha):
     
     # 3.3 在每個選定方向上選C個係數並縮放
     C = 4
-    for idx in selected_indices:
-        coeffs = block_dct[:,idx][:C]
+    for idx, direction_idx in enumerate(selected_indices):
+        coeffs = block_dct[:,direction_idx][:C]
         coeffs_norm = (coeffs - coeffs.min()) / (coeffs.max() - coeffs.min())
+        
+        # 提取對應於當前方向的水印信息
+        watermark_direction = watermark[idx*C:(idx+1)*C]
         
         # 3.4 使用QIM嵌入水印
         delta = alpha * coeffs.max()
         quantized = (coeffs_norm / delta).astype(int)
-        watermarked = (quantized + watermark) * delta
-        block_dct[:,idx][:C] = watermarked
+        watermarked = (quantized + watermark_direction) * delta
+        block_dct[:,direction_idx][:C] = watermarked
         
     return block_dct
 
 # 步驟4: 水印圖像重構
 def combine_blocks(blocks):
-    n_rows, n_cols = blocks.shape[0], blocks.shape[1]
-    block_size = blocks.shape[2]
-    combined_image = np.zeros((n_rows * block_size, n_cols * block_size))
-    for i in range(n_rows):
-        for j in range(n_cols):
-            combined_image[i*block_size:(i+1)*block_size, j*block_size:(j+1)*block_size] = blocks[i, j]
+    num_rows = int(np.sqrt(len(blocks)))
+    num_cols = num_rows
+    
+    row_blocks = []
+    for i in range(num_rows):
+        row = np.hstack(blocks[i*num_cols:(i+1)*num_cols])
+        row_blocks.append(row)
+    
+    combined_image = np.vstack(row_blocks)
     return combined_image
 
-def reconstruct(watermarked_blocks, theta):
-    # 4.1 對嵌入水印的RDCT係數進行逆DCT和Radon變換
-    watermarked_dct_blocks = watermarked_blocks.reshape(-1, P, P)
+def reconstruct(watermarked_dct_blocks, theta):
     reconstructed_blocks = []
-    for block in watermarked_dct_blocks:
-        dct_coeffs = block
+    for block_dct in watermarked_dct_blocks:
+        dct_coeffs = block_dct
         sinogram = idct(dct_coeffs, axis=0, norm='ortho')
         block_recon = iradon(sinogram, theta=theta, circle=True)
         reconstructed_blocks.append(block_recon)
-    reconstructed_gamma = combine_blocks(reconstructed_blocks)
-    reconstructed_image = reconstructed_gamma  # 這裡需要根據實際的逆小波變換過程進行修改
+
+    # 将重建后的块拼接回图像
+    reconstructed_image = combine_blocks(reconstructed_blocks)
     
-    # 4.2 - 4.4 小波逆變換,指數運算,拼接色度分量(省略)
     return reconstructed_image
 
 # 步驟5: 水印提取
@@ -122,27 +149,35 @@ def extract(watermarked_image, alpha):
 
 # 主函數
 def main():
-    # 讀取HDR圖像
-    hdr_image = cv2.imread('./HDR/HDR images/nave.hdr', flags=cv2.IMREAD_ANYDEPTH)
-
-    # 計算圖像分塊後的塊數
+    # 读取HDR图像
+    hdr_image = read_exr_image('./Radon/images/snow.exr')
+    
+    # 计算图像分块后的块数
     height, width = hdr_image.shape[:2]
     B = (height // P) * (width // P)
-
+    
     # 生成水印信息
     watermark = np.random.randint(0, 2, size=(B*H*C,))
     
     # 嵌入水印
     blocks = preprocess(hdr_image)
-    dct_blocks = [rdct(block) for block in blocks]
+    dct_blocks = []
+    for block in blocks:
+        block_2d = block.reshape(-1, block.shape[-1])  # 将块转换为二维数组
+        dct_block = rdct(block_2d)
+        dct_blocks.append(dct_block)
+    
     watermarked_dct_blocks = [embed(block, watermark[i*H*C:(i+1)*H*C], alpha=0.1) for i, block in enumerate(dct_blocks)]
-    theta = np.linspace(0., 180., max(blocks[0].shape), endpoint=False)
+    
+    # 计算theta用于Radon逆变换
+    num_projections = watermarked_dct_blocks[0].shape[0]
+    theta = np.linspace(0., 180., num_projections, endpoint=False)
     watermarked_image = reconstruct(watermarked_dct_blocks, theta)
     
     # 提取水印
     extracted_watermark = extract(watermarked_image, alpha=0.1)
     
-    # 評估水印提取準確率
+    # 评估水印提取准确率
     accuracy = np.sum(extracted_watermark == watermark) / len(watermark)
     print(f'Watermark extraction accuracy: {accuracy:.2f}')
     
