@@ -4,7 +4,7 @@ import numpy as np
 from scipy import fftpack
 import skimage.metrics
 
-def get_image(image_path='./DCT-8/images/boat.png'):
+def get_image(image_path='./DCT-8/images/Airplane.png'):
     image = Image.open(image_path)
     img_grey = image.convert('L')
     img = np.array(img_grey, dtype=np.float64)
@@ -63,7 +63,7 @@ if __name__ == "__main__":
     if not os.path.exists(save_path):
         os.mkdir(save_path)
 
-    reconstructed_images[0].save(os.path.join(save_path, 'boat_reconstructed.jpg'))
+    reconstructed_images[0].save(os.path.join(save_path, 'Airplane_reconstructed.jpg'))
 
     # Calculate PSNR and SSIM
     original_image = np.array(original_image, dtype=np.uint8)
