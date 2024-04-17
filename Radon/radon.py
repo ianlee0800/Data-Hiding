@@ -2,6 +2,15 @@ import numpy as np
 import pywt
 from skimage.transform import radon, iradon
 from scipy.fftpack import dct, idct
+from skimage.util import view_as_blocks
+import cv2
+
+# 參數設置
+P = 32
+H = 8
+C = 4
+alpha = 0.1
+wavelet = 'haar'
 
 # 步驟1: HDR圖像預處理
 def preprocess(hdr_image):
@@ -56,6 +65,15 @@ def embed(block_dct, watermark, alpha):
     return block_dct
 
 # 步驟4: 水印圖像重構
+def combine_blocks(blocks):
+    n_rows, n_cols = blocks.shape[0], blocks.shape[1]
+    block_size = blocks.shape[2]
+    combined_image = np.zeros((n_rows * block_size, n_cols * block_size))
+    for i in range(n_rows):
+        for j in range(n_cols):
+            combined_image[i*block_size:(i+1)*block_size, j*block_size:(j+1)*block_size] = blocks[i, j]
+    return combined_image
+
 def reconstruct(watermarked_blocks):
     # 4.1 對嵌入水印的RDCT係數進行逆DCT和Radon變換
     watermarked_dct_blocks = watermarked_blocks.reshape(-1, P, P)
@@ -66,6 +84,7 @@ def reconstruct(watermarked_blocks):
         block_recon = iradon(sinogram, theta=theta, circle=True)
         reconstructed_blocks.append(block_recon)
     reconstructed_gamma = combine_blocks(reconstructed_blocks)
+    reconstructed_image = reconstructed_gamma  # 這裡需要根據實際的逆小波變換過程進行修改
     
     # 4.2 - 4.4 小波逆變換,指數運算,拼接色度分量(省略)
     return reconstructed_image
@@ -104,7 +123,7 @@ def extract(watermarked_image, alpha):
 # 主函數
 def main():
     # 讀取HDR圖像
-    hdr_image = read_hdr_image('input.hdr')
+    hdr_image = cv2.imread('./HDR/HDR images/nave.hdr', flags=cv2.IMREAD_ANYDEPTH)
     
     # 生成水印信息
     watermark = np.random.randint(0, 2, size=(B*H*C,))
