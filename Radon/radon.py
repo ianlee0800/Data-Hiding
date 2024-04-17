@@ -74,7 +74,7 @@ def combine_blocks(blocks):
             combined_image[i*block_size:(i+1)*block_size, j*block_size:(j+1)*block_size] = blocks[i, j]
     return combined_image
 
-def reconstruct(watermarked_blocks):
+def reconstruct(watermarked_blocks, theta):
     # 4.1 對嵌入水印的RDCT係數進行逆DCT和Radon變換
     watermarked_dct_blocks = watermarked_blocks.reshape(-1, P, P)
     reconstructed_blocks = []
@@ -124,7 +124,11 @@ def extract(watermarked_image, alpha):
 def main():
     # 讀取HDR圖像
     hdr_image = cv2.imread('./HDR/HDR images/nave.hdr', flags=cv2.IMREAD_ANYDEPTH)
-    
+
+    # 計算圖像分塊後的塊數
+    height, width = hdr_image.shape[:2]
+    B = (height // P) * (width // P)
+
     # 生成水印信息
     watermark = np.random.randint(0, 2, size=(B*H*C,))
     
@@ -132,7 +136,8 @@ def main():
     blocks = preprocess(hdr_image)
     dct_blocks = [rdct(block) for block in blocks]
     watermarked_dct_blocks = [embed(block, watermark[i*H*C:(i+1)*H*C], alpha=0.1) for i, block in enumerate(dct_blocks)]
-    watermarked_image = reconstruct(watermarked_dct_blocks)
+    theta = np.linspace(0., 180., max(blocks[0].shape), endpoint=False)
+    watermarked_image = reconstruct(watermarked_dct_blocks, theta)
     
     # 提取水印
     extracted_watermark = extract(watermarked_image, alpha=0.1)
