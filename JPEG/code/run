@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+
+set -ex
+
+
+matlab -nodisplay -r 'cd jpegtbx; mex jpeg_read.c -ljpeg ; mex jpeg_write.c -ljpeg'
+
+matlab -nodisplay -r "addpath('.', 'jpegtbx', '../data'); main"

@@ -1,0 +1,25 @@
+metadata_version: 1
+name: 'SI-MiPOD : Data Hiding (Steganography) in JPEG Image / Matlab implementation
+  v0'
+description: |-
+  Research code associated with the journal paper entitled:
+  "Efficient Steganography in JPEG Images by Minimizing Performance of Optimal Detector"
+  by : R. Cogranne, Q. Giboulot & P. Bas
+  Accepted in IEEE Transactions on Information Forensics and Security in Aug. 2021
+  Extension of the non-SI embedding JMiPOD scheme also available at codeOcean at : https://doi.org/10.24433/CO.2423893.v2
+tags:
+- steganography
+- steganalysis
+authors:
+- name: Rémi COGRANNE
+  affiliations:
+  - name: Troyes University of Technology
+- name: Quentin GIBOULOT
+  affiliations:
+  - name: Troyes University of Technology
+- name: Patrick BAS
+  affiliations:
+  - name: CNRS / CRIStAL / Lille University
+corresponding_contributor:
+  name: Rémi COGRANNE
+  email: remi.cogranne@utt.fr
