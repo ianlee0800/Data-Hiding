@@ -21,6 +21,8 @@ def SI_MiPOD_fastlog(preCover, C_STRUCT, Payload):
         preCover = cv2.imread(preCover, flags=cv2.IMREAD_UNCHANGED)
         preCover = preCover.astype(np.float64)  # Convert to np.double
     
+    print(f"preCover shape: {preCover.shape}")  # Add this line for debugging
+    
     if isinstance(C_STRUCT, dict) and 'quant_tables' in C_STRUCT:
         C_QUANT = C_STRUCT['quant_tables'][0]
     else:
