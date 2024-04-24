@@ -7,6 +7,7 @@ from jpegtbx import im2vec, vec2im
 import cv2
 
 def SI_MiPOD_fastlog(preCover, C_STRUCT, Payload):
+    print(f"preCover shape: {preCover.shape}")
     """
     SI_MiPOD Embedding
     
@@ -20,31 +21,60 @@ def SI_MiPOD_fastlog(preCover, C_STRUCT, Payload):
     if isinstance(preCover, str):
         preCover = cv2.imread(preCover, flags=cv2.IMREAD_UNCHANGED)
         preCover = preCover.astype(np.float64)  # Convert to np.double
-    
-    print(f"preCover shape: {preCover.shape}")  # Add this line for debugging
-    
+        
     if isinstance(C_STRUCT, dict) and 'quant_tables' in C_STRUCT:
-        C_QUANT = C_STRUCT['quant_tables'][0]
+        C_QUANT = C_STRUCT['quant_tables']
+        if isinstance(C_QUANT, dict):
+            if 0 in C_QUANT:
+                C_QUANT = C_QUANT[0]
+            else:
+                raise ValueError("Invalid quantization table in C_STRUCT.")
+        elif isinstance(C_QUANT, list):
+            valid_quant_tables = [quant_table for quant_table in C_QUANT if isinstance(quant_table, np.ndarray) and quant_table.shape == (8, 8)]
+            if len(valid_quant_tables) == 1:
+                C_QUANT = valid_quant_tables[0]
+            else:
+                raise ValueError("Quantization table must be a single 8x8 array.")
+        else:
+            if C_QUANT.shape != (8, 8):
+                raise ValueError("Quantization table must be 8x8.")
     else:
         raise ValueError("Invalid C_STRUCT. Expected a dictionary with 'quant_tables' key.")
     
+    print(f"C_QUANT shape: {C_QUANT.shape}")
+    
     # Get the DCT matrix
     MatDCT = RCgetJPEGmtx()
-    DCT_real = vec2im(np.dot(MatDCT, im2vec(preCover - 128, [8, 8])) / C_QUANT.flatten(), [0, 0], [8, 8])
+    print(f"MatDCT shape: {MatDCT.shape}")
+    
+    im2vec_result = im2vec(preCover - 128, [8, 8])
+    print(f"im2vec(preCover - 128, [8, 8]) shape: {im2vec_result[0].shape}")
+    
+    dct_coeffs = np.dot(MatDCT, im2vec_result[0])
+    dct_coeffs_scaled = dct_coeffs / C_QUANT.flatten()[:, None]
+    print(f"dct_coeffs_scaled shape: {dct_coeffs_scaled.shape}")
+
+    DCT_real = vec2im(dct_coeffs_scaled, [0, 0], [8, 8])
     DCT_rounded = np.round(DCT_real)
 
-    # Get SI, that is the real-valued DCT values from the uncompressed image
-    C_STRUCT['coef_arrays'][0] = DCT_rounded
+    # Initialize 'coef_arrays' key in C_STRUCT
+    if 'coef_arrays' not in C_STRUCT:
+        C_STRUCT['coef_arrays'] = []
+
+    # Create a new coef_arrays list with DCT_rounded as the first element
+    C_STRUCT['coef_arrays'] = [DCT_rounded]
+    
     e = DCT_rounded - DCT_real
     
     # Compute rounding error
     sgn_e = np.sign(e)
-    sgn_e[e == 0] = np.round(np.random.rand(np.sum(e.flatten() == 0), 1)) * 2 - 1
+    zero_indices = e.flatten() == 0
+    sgn_e.flat[zero_indices] = np.random.randint(2, size=np.sum(zero_indices)) * 2 - 1
     change = -sgn_e
     
     # Compute Variance in spatial domain
-    WienerResidual = preCover - wiener(preCover, [2, 2])
-    Variance = VarianceEstimationDCT2D(WienerResidual, 3, 3)
+    WienerResidual = preCover - wiener(preCover, [3, 3])  # Use a 3x3 window for Wiener filtering
+    Variance = VarianceEstimationDCT2D(WienerResidual, 3, 3)  # Use an odd block size of 3
     
     # Apply the covariance transformation to DCT domain
     MatDCTq = MatDCT ** 2
@@ -136,10 +166,10 @@ def RCgetJPEGmtx():
     return dct8_mtx
 
 def VarianceEstimationDCT2D(Image, BlockSize, Degree):
-    if BlockSize % 2 != 0:
+    if BlockSize % 2 == 0:
         raise ValueError('The block dimensions should be odd!!')
-    if Degree > BlockSize:
-        raise ValueError('Number of basis vectors exceeds block dimension!!')
+    
+    Degree = min(Degree, BlockSize)
     
     # number of parameters per block
     q = Degree * (Degree + 1) // 2
@@ -151,12 +181,14 @@ def VarianceEstimationDCT2D(Image, BlockSize, Degree):
     k = 0
     for xShift in range(1, Degree + 1):
         for yShift in range(1, Degree - xShift + 2):
-            G[:, k] = np.reshape(idct(idct(np.roll(np.roll(BaseMat, xShift - 1, axis=0), yShift - 1, axis=1)).T).T, (BlockSize ** 2, 1))
+            tmp = idct(idct(np.roll(np.roll(BaseMat, xShift - 1, axis=0), yShift - 1, axis=1)).T).T
+            G[:, k] = np.reshape(tmp, (BlockSize ** 2,))
             k += 1
     
     # Estimate the variance
     PadSize = BlockSize // 2
-    I2C = image2cols(np.pad(Image, ((PadSize, PadSize), (PadSize, PadSize)), mode='symmetric'), BlockSize)
+    padded_image = np.pad(Image, ((PadSize, PadSize), (PadSize, PadSize)), mode='symmetric')
+    I2C = image2cols(padded_image, BlockSize)
     PGorth = np.eye(BlockSize ** 2) - np.dot(G, np.linalg.solve(np.dot(G.T, G), G.T))
     EstimatedVariance = np.reshape(np.sum((np.dot(PGorth, I2C)) ** 2, axis=0) / (BlockSize ** 2 - q), Image.shape)
     
@@ -235,5 +267,26 @@ def hBinary(Probs):
     return Ht
 
 def image2cols(image, block_size):
-    rows, cols = image.shape
-    return image.reshape(rows // block_size[0], block_size[0], -1, block_size[1]).swapaxes(1, 2).reshape(-1, block_size[0] * block_size[1])
+    if isinstance(block_size, int):
+        block_size = (block_size, block_size)
+    else:
+        block_size = tuple(block_size)
+
+    image_rows, image_cols = image.shape
+    block_rows, block_cols = block_size
+
+    rows = (image_rows + block_rows - 1) // block_rows
+    cols = (image_cols + block_cols - 1) // block_cols
+
+    image_reshaped = np.lib.stride_tricks.as_strided(
+        image,
+        shape=(rows, block_rows, cols, block_cols),
+        strides=(
+            image.strides[0] * block_rows,
+            image.strides[0],
+            image.strides[1] * block_cols,
+            image.strides[1],
+        ),
+    )
+
+    return image_reshaped.reshape(-1, block_rows * block_cols)

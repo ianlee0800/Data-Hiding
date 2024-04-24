@@ -53,7 +53,11 @@ def im2vec(im, bsize, padsize=0):
         cols (int): Number of columns of blocks
     """
     bsize = np.array(bsize)
-    padsize = np.array(padsize)
+    
+    if isinstance(padsize, int):
+        padsize = np.array([padsize, padsize])
+    else:
+        padsize = np.array(padsize)
     
     if np.any(padsize < 0):
         raise ValueError("Pad size must not be negative.")
@@ -64,9 +68,12 @@ def im2vec(im, bsize, padsize=0):
     cols = int(np.floor((imsize[1] + padsize[1]) / x))
     
     t = np.zeros((y * rows, x * cols))
-    imy = y * rows - padsize[0]
-    imx = x * cols - padsize[1]
-    t[:imy, :imx] = im[:imy, :imx]
+    
+    # Ensure that the input image shape is compatible with the block size
+    im_rows = min(imsize[0], y * rows - padsize[0])
+    im_cols = min(imsize[1], x * cols - padsize[1])
+    
+    t[:im_rows, :im_cols] = im[:im_rows, :im_cols]
     
     t = t.reshape(y, rows, x, cols)
     t = t.transpose(0, 2, 1, 3).reshape(y, x, rows * cols)
@@ -90,14 +97,20 @@ def vec2im(v, padsize=0, bsize=None, rows=None, cols=None):
     Returns:
     numpy.ndarray: Output image
     """
-    m, n = v.shape
     padsize = np.array(padsize)
     
     if np.any(padsize < 0):
         raise ValueError("Pad size must not be negative.")
     
+    if v.ndim == 2:
+        m, n = v.shape
+    elif v.ndim == 3:
+        m, n, r = v.shape
+    else:
+        raise ValueError("Input array must be 2D or 3D.")
+    
     if bsize is None:
-        bsize = int(np.floor(np.sqrt(m)))
+        bsize = (int(np.floor(np.sqrt(m))), int(np.floor(np.sqrt(m))))
     bsize = np.array(bsize)
     
     if np.prod(bsize) != m:
@@ -110,7 +123,11 @@ def vec2im(v, padsize=0, bsize=None, rows=None, cols=None):
     
     y, x = bsize + padsize
     t = np.zeros((y, x, rows * cols))
-    t[:bsize[0], :bsize[1], :n] = v.reshape(bsize[0], bsize[1], n)
+    
+    if v.ndim == 2:
+        t[:bsize[0], :bsize[1], :] = v.reshape(bsize[0], bsize[1], n)
+    else:
+        t[:bsize[0], :bsize[1], :] = v.reshape(bsize[0], bsize[1], r, n).transpose(0, 1, 3, 2)
     
     t = t.reshape(y, x, rows, cols)
     t = t.transpose(0, 2, 1, 3).reshape(y * rows, x * cols)
