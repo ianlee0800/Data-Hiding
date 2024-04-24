@@ -5,6 +5,7 @@ from scipy.io import loadmat
 import os
 
 def SI_MiPODv0(preCover, C_STRUCT, Payload, Wie=2, BlkSz=3, Degree=3, F=None):
+    print("SI_MiPODv0 function called")
     if F is None:
         F = np.array([[1, 3, 1], [3, 2, 3], [1, 3, 1]])
         F = F / np.sum(F)
@@ -231,5 +232,10 @@ def hBinary(Probs):
     return Ht
 
 def image2cols(image, block_size):
+    if isinstance(block_size, int):
+        block_size = (block_size, block_size)
+    else:
+        block_size = tuple(block_size)
+
     rows, cols = image.shape
-    return image.reshape((rows // block_size[0], block_size[0], -1, block_size[1])).swapaxes(1, 2).reshape((-1, block_size[0] * block_size[1]))
+    return image.reshape(rows // block_size[0], block_size[0], -1, block_size[1]).swapaxes(1, 2).reshape(-1, block_size[0] * block_size[1])
