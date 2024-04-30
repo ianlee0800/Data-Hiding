@@ -7,7 +7,6 @@ from jpegtbx import im2vec, vec2im
 import cv2
 
 def SI_MiPOD_fastlog(preCover, C_STRUCT, Payload):
-    print(f"preCover shape: {preCover.shape}")
     """
     SI_MiPOD Embedding
     
@@ -21,40 +20,29 @@ def SI_MiPOD_fastlog(preCover, C_STRUCT, Payload):
     if isinstance(preCover, str):
         preCover = cv2.imread(preCover, flags=cv2.IMREAD_UNCHANGED)
         preCover = preCover.astype(np.float64)  # Convert to np.double
-        
-    if isinstance(C_STRUCT, dict) and 'quant_tables' in C_STRUCT:
-        C_QUANT = C_STRUCT['quant_tables']
-        if isinstance(C_QUANT, dict):
-            if 0 in C_QUANT:
-                C_QUANT = C_QUANT[0]
-            else:
-                raise ValueError("Invalid quantization table in C_STRUCT.")
-        elif isinstance(C_QUANT, list):
-            valid_quant_tables = [quant_table for quant_table in C_QUANT if isinstance(quant_table, np.ndarray) and quant_table.shape == (8, 8)]
-            if len(valid_quant_tables) == 1:
-                C_QUANT = valid_quant_tables[0]
-            else:
-                raise ValueError("Quantization table must be a single 8x8 array.")
+    
+    print(f"preCover shape: {preCover.shape}")  # Add this line for debugging
+    
+    if len(preCover.shape) == 3:
+        if preCover.shape[2] == 1:
+            preCover = preCover[:, :, 0]  # If single channel, remove the channel dimension
         else:
-            if C_QUANT.shape != (8, 8):
-                raise ValueError("Quantization table must be 8x8.")
+            raise ValueError("Multi-channel images are not supported.")
+    
+    if isinstance(C_STRUCT, dict) and 'quant_tables' in C_STRUCT:
+        C_QUANT = np.array(C_STRUCT['quant_tables'][0])  # Convert quant_tables to NumPy array
+        C_QUANT = C_QUANT.reshape((8, 8))  # Reshape C_QUANT to 8x8
     else:
         raise ValueError("Invalid C_STRUCT. Expected a dictionary with 'quant_tables' key.")
     
-    print(f"C_QUANT shape: {C_QUANT.shape}")
+    print(f"C_QUANT shape: {C_QUANT.shape}")  # Add this line for debugging
     
     # Get the DCT matrix
     MatDCT = RCgetJPEGmtx()
-    print(f"MatDCT shape: {MatDCT.shape}")
-    
-    im2vec_result = im2vec(preCover - 128, [8, 8])
-    print(f"im2vec(preCover - 128, [8, 8]) shape: {im2vec_result[0].shape}")
-    
-    dct_coeffs = np.dot(MatDCT, im2vec_result[0])
-    dct_coeffs_scaled = dct_coeffs / C_QUANT.flatten()[:, None]
-    print(f"dct_coeffs_scaled shape: {dct_coeffs_scaled.shape}")
-
-    DCT_real = vec2im(dct_coeffs_scaled, [0, 0], [8, 8])
+    C_QUANT_extended = np.tile(C_QUANT, (preCover.shape[0] // 8, preCover.shape[1] // 8))
+    DCT_coeffs = np.dot(MatDCT, im2vec(preCover - 128, [8, 8])) / C_QUANT_extended
+    DCT_coeffs = DCT_coeffs.reshape((-1, 8, 8))
+    DCT_real = vec2im(DCT_coeffs, [8, 8], [preCover.shape[0] // 8, preCover.shape[1] // 8])
     DCT_rounded = np.round(DCT_real)
 
     # Initialize 'coef_arrays' key in C_STRUCT

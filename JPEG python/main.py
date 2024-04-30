@@ -6,17 +6,20 @@ import cv2
 from PIL import Image
 from SI_MiPOD_fastlog import SI_MiPOD_fastlog
 from SI_MiPOD_v0 import SI_MiPODv0
-from SI_EBS import SI_EBS
-from SI_UNIWARD import SI_UNIWARD
-from jpegtbx import jpeg_qtable  # Assuming you have this function available
+# from SI_EBS import SI_EBS
+# from SI_UNIWARD import SI_UNIWARD
 
 def extract_quant_tables(jpg_file):
-    with open(jpg_file, 'rb') as file:
-        jpeg_data = file.read()
-        # Assuming you have a way to extract the quantization table(s) from the JPEG data
-        # For simplicity, we'll use the jpeg_qtable function from jpegtbx.py
-        quant_table = jpeg_qtable(quality=75)  # Assuming a quality factor of 75
-        return quant_table
+    with Image.open(jpg_file) as img:
+        if 'dpi' in img.info:
+            del img.info['dpi']  # Remove dpi information to avoid warning
+        img.save('temp.jpg', "JPEG", quality=100, optimize=True)
+    
+    with Image.open('temp.jpg') as img:
+        quant_tables = img.quantization
+    
+    os.remove('temp.jpg')
+    return quant_tables
 
 data_dir = "./JPEG python/data"
 
@@ -59,12 +62,12 @@ for imgIdx, imgPath in enumerate(imgList, start=1):
     tEnd = time.time()
     print(f"SI-MiPOD original (not so fast) runs in {tEnd - tStart:2.3f} sec.\t\tActual payload : {np.nansum(-pChange.flatten() * np.log2(pChange.flatten()) - (1 - pChange.flatten()) * np.log2(1 - pChange.flatten())):5.2f} bits = {np.nansum(-pChange.flatten() * np.log(pChange.flatten()) - (1 - pChange.flatten()) * np.log(1 - pChange.flatten())):5.2f} Nats (ternary entropy computed from pChanges)")
 
-    tStart = time.time()
-    stegoStruct, coverStruct, pChange = SI_EBS(preCover, dummyJPEGstruct, Payload)
-    tEnd = time.time()
-    print(f"SI-EBS runs in {tEnd - tStart:2.3f} sec. \t\t\t\t\tActual payload : {np.nansum(-pChange.flatten() * np.log2(pChange.flatten()) - (1 - pChange.flatten()) * np.log2(1 - pChange.flatten())):5.2f} bits = {np.nansum(-pChange.flatten() * np.log(pChange.flatten()) - (1 - pChange.flatten()) * np.log(1 - pChange.flatten())):5.2f} Nats (ternary entropy computed from pChanges)")
+    # tStart = time.time()
+    # stegoStruct, coverStruct, pChange = SI_EBS(preCover, dummyJPEGstruct, Payload)
+    # tEnd = time.time()
+    # print(f"SI-EBS runs in {tEnd - tStart:2.3f} sec. \t\t\t\t\tActual payload : {np.nansum(-pChange.flatten() * np.log2(pChange.flatten()) - (1 - pChange.flatten()) * np.log2(1 - pChange.flatten())):5.2f} bits = {np.nansum(-pChange.flatten() * np.log(pChange.flatten()) - (1 - pChange.flatten()) * np.log(1 - pChange.flatten())):5.2f} Nats (ternary entropy computed from pChanges)")
 
-    tStart = time.time()
-    stegoStruct, coverStruct, pChange = SI_UNIWARD(preCover, dummyJPEGstruct, Payload)
-    tEnd = time.time()
-    print(f"SI-UNIWARD runs in {tEnd - tStart:2.3f}. \t\t\t\t\tActual payload : {np.nansum(-pChange.flatten() * np.log2(pChange.flatten()) - (1 - pChange.flatten()) * np.log2(1 - pChange.flatten())):5.2f} bits = {np.nansum(-pChange.flatten() * np.log(pChange.flatten()) - (1 - pChange.flatten()) * np.log(1 - pChange.flatten())):5.2f} Nats (ternary entropy computed from pChanges)")
+    # tStart = time.time()
+    # stegoStruct, coverStruct, pChange = SI_UNIWARD(preCover, dummyJPEGstruct, Payload)
+    # tEnd = time.time()
+    # print(f"SI-UNIWARD runs in {tEnd - tStart:2.3f}. \t\t\t\t\tActual payload : {np.nansum(-pChange.flatten() * np.log2(pChange.flatten()) - (1 - pChange.flatten()) * np.log2(1 - pChange.flatten())):5.2f} bits = {np.nansum(-pChange.flatten() * np.log(pChange.flatten()) - (1 - pChange.flatten()) * np.log(1 - pChange.flatten())):5.2f} Nats (ternary entropy computed from pChanges)")
