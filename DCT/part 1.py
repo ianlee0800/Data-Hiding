@@ -1,8 +1,16 @@
 import os
+import logging
 from PIL import Image
 import numpy as np
 import skimage.metrics
 import matplotlib.pyplot as plt
+
+# Create the output directory if it doesn't exist
+output_dir = "./DCT/part 1 results"
+os.makedirs(output_dir, exist_ok=True)
+
+# Configure logging
+logging.basicConfig(filename=os.path.join(output_dir, 'part1_log.txt'), level=logging.INFO)
 
 def dct_1d(x):
     N = len(x)
@@ -28,19 +36,21 @@ def idct_1d(y):
     return x
 
 def dct_2d(image):
-    dct_coefficients = np.zeros_like(image)
-    for i in range(image.shape[0]):
-        dct_coefficients[i, :] = dct_1d(image[i, :])
-    for j in range(image.shape[1]):
-        dct_coefficients[:, j] = dct_1d(dct_coefficients[:, j])
+    M, N = image.shape
+    X, Y = np.meshgrid(range(N), range(M))
+    coeff_matrix = np.sqrt(2 / M) * np.sqrt(2 / N) * np.cos(np.pi * (2 * X + 1) * Y.T / (2 * N))
+    coeff_matrix[0, :] /= np.sqrt(2)
+    coeff_matrix[:, 0] /= np.sqrt(2)
+    dct_coefficients = coeff_matrix @ image @ coeff_matrix.T
     return dct_coefficients
 
 def idct_2d(coefficients):
-    reconstructed_image = np.zeros_like(coefficients)
-    for j in range(coefficients.shape[1]):
-        reconstructed_image[:, j] = idct_1d(coefficients[:, j])
-    for i in range(coefficients.shape[0]):
-        reconstructed_image[i, :] = idct_1d(reconstructed_image[i, :])
+    M, N = coefficients.shape
+    X, Y = np.meshgrid(range(N), range(M))
+    coeff_matrix = np.sqrt(2 / M) * np.sqrt(2 / N) * np.cos(np.pi * (2 * Y + 1) * X.T / (2 * M))
+    coeff_matrix[0, :] /= np.sqrt(2)
+    coeff_matrix[:, 0] /= np.sqrt(2)
+    reconstructed_image = coeff_matrix.T @ coefficients @ coeff_matrix
     return reconstructed_image
 
 def get_dct_basis():
@@ -64,14 +74,22 @@ def visualize_dct_basis(basis):
     plt.savefig('dct_basis.png')
     plt.close()
 
-def get_image(image_path):
+def get_image(image_path, target_size=None):
+    print(f"Loading image: {image_path}")
     image = Image.open(image_path)
     img_grey = image.convert('L')
+    if target_size is not None:
+        img_grey = img_grey.resize(target_size)
     img = np.array(img_grey, dtype=np.float64)
     return img
 
-def perform_dct(image):
-    dct_coefficients = dct_2d(image)
+def perform_dct(image, block_size=8):
+    M, N = image.shape
+    dct_coefficients = np.zeros_like(image)
+    for i in range(0, M, block_size):
+        for j in range(0, N, block_size):
+            block = image[i:i+block_size, j:j+block_size]
+            dct_coefficients[i:i+block_size, j:j+block_size] = dct_2d(block)
     return dct_coefficients
 
 def perform_idct(coefficients):
@@ -91,98 +109,137 @@ def zigzag_scan(coefficients):
     return zz
 
 def zonal_coding(coefficients, num_coeffs):
-    zigzag_coeffs = zigzag_scan(coefficients)
-    zigzag_coeffs[num_coeffs:] = 0
+    M, N = coefficients.shape
     reconstructed_coefficients = np.zeros_like(coefficients)
-    reconstructed_coefficients[np.unravel_index(np.arange(num_coeffs), (8, 8))] = zigzag_coeffs[:num_coeffs]
+    block_size = 8
+    for i in range(0, M, block_size):
+        for j in range(0, N, block_size):
+            block = coefficients[i:i+block_size, j:j+block_size]
+            zigzag_coeffs = zigzag_scan(block)
+            zigzag_coeffs[num_coeffs:] = 0
+            reconstructed_block = np.zeros_like(block)
+            reconstructed_block[np.unravel_index(np.arange(num_coeffs), (block_size, block_size))] = zigzag_coeffs[:num_coeffs]
+            reconstructed_coefficients[i:i+block_size, j:j+block_size] = reconstructed_block
     return reconstructed_coefficients
 
 def threshold_coding(coefficients, num_coeffs):
-    zigzag_coeffs = zigzag_scan(coefficients)
-    sorted_indices = np.argsort(np.abs(zigzag_coeffs))[::-1]
-    top_k_indices = sorted_indices[:num_coeffs]
+    M, N = coefficients.shape
     reconstructed_coefficients = np.zeros_like(coefficients)
-    reconstructed_coefficients[np.unravel_index(top_k_indices, (8, 8))] = zigzag_coeffs[top_k_indices]
+    block_size = 8
+    for i in range(0, M, block_size):
+        for j in range(0, N, block_size):
+            block = coefficients[i:i+block_size, j:j+block_size]
+            zigzag_coeffs = zigzag_scan(block)
+            sorted_indices = np.argsort(np.abs(zigzag_coeffs))[::-1]
+            top_k_indices = sorted_indices[:num_coeffs]
+            reconstructed_block = np.zeros_like(block)
+            reconstructed_block[np.unravel_index(top_k_indices, (block_size, block_size))] = zigzag_coeffs[top_k_indices]
+            reconstructed_coefficients[i:i+block_size, j:j+block_size] = reconstructed_block
     return reconstructed_coefficients
 
-def calculate_energy_distribution(coefficients):
-    energy = np.sum(coefficients ** 2, axis=(1, 2))
-    total_energy = np.sum(energy)
-    energy_distribution = energy / total_energy
+def calculate_energy_distribution(coefficients, block_size=8):
+    M, N = coefficients.shape
+    num_blocks = (M // block_size) * (N // block_size)
+    energy_per_block = np.zeros(num_blocks)
+    total_energy = 0
+    block_index = 0
+    for i in range(0, M, block_size):
+        for j in range(0, N, block_size):
+            block = coefficients[i:i+block_size, j:j+block_size]
+            energy = np.sum(block ** 2)
+            energy_per_block[block_index] = energy
+            total_energy += energy
+            block_index += 1
+    energy_distribution = energy_per_block / total_energy
     return energy_distribution
 
 def plot_energy_distribution(energy_distribution):
     plt.figure(figsize=(10, 5))
+    
     plt.subplot(1, 2, 1)
-    plt.plot(energy_distribution)
+    plt.plot(np.arange(1, len(energy_distribution) + 1), energy_distribution)
     plt.xlabel('Coefficient')
     plt.ylabel('Energy Percentage')
     plt.title('Energy Distribution (Linear Scale)')
     
     plt.subplot(1, 2, 2)
-    plt.semilogy(energy_distribution)
+    plt.semilogy(np.arange(1, len(energy_distribution) + 1), energy_distribution)
     plt.xlabel('Coefficient')
     plt.ylabel('Energy Percentage')
     plt.title('Energy Distribution (Log Scale)')
     
     plt.tight_layout()
-    plt.savefig('energy_distribution.png')
-    plt.close()
 
 if __name__ == "__main__":
     # Calculate and visualize DCT basis
+    logging.info("Calculating DCT basis...")
     dct_basis = get_dct_basis()
+    logging.info("Visualizing DCT basis...")
     visualize_dct_basis(dct_basis)
+    plt.savefig(os.path.join(output_dir, 'dct_basis.png'))
+    logging.info("DCT basis visualization completed.")
     
     # Load and process test images
     test_images = ['./DCT/images/bridge.tiff', './DCT/images/male.tiff']
     for image_path in test_images:
+        logging.info(f"Processing image: {image_path}")
         original_image = get_image(image_path)
         shifted_image = level_shift(original_image)
         
         # Perform DCT and save coefficients
+        logging.info("Performing DCT...")
         dct_coefficients = perform_dct(shifted_image)
-        np.save(os.path.splitext(image_path)[0] + '_dct.npy', dct_coefficients)
+        logging.info("Saving DCT coefficients...")
+        np.save(os.path.join(output_dir, os.path.splitext(os.path.basename(image_path))[0] + '_dct.npy'), dct_coefficients)
         
         # Perform inverse DCT and compare with original image
+        logging.info("Performing IDCT...")
         reconstructed_image = perform_idct(dct_coefficients)
         reconstructed_image = reconstructed_image + 128
         reconstructed_image = np.clip(reconstructed_image, 0, 255).astype(np.uint8)
         psnr = skimage.metrics.peak_signal_noise_ratio(original_image.astype(np.uint8), reconstructed_image)
         ssim = skimage.metrics.structural_similarity(original_image.astype(np.uint8), reconstructed_image)
-        print(f"Image: {image_path}")
-        print(f"PSNR: {psnr:.2f} dB")
-        print(f"SSIM: {ssim:.4f}")
-        print()
+        logging.info(f"Image: {image_path}")
+        logging.info(f"PSNR: {psnr:.2f} dB")
+        logging.info(f"SSIM: {ssim:.4f}")
+        logging.info("")
         
         # Perform ZONAL coding and calculate PSNR and SSIM
         num_coeffs_zonal = [1, 2, 3, 4, 5, 6]
         for num_coeffs in num_coeffs_zonal:
+            logging.info(f"Performing ZONAL coding with {num_coeffs} coefficient(s)...")
             reconstructed_coefficients = zonal_coding(dct_coefficients, num_coeffs)
             reconstructed_image = perform_idct(reconstructed_coefficients)
             reconstructed_image = reconstructed_image + 128
             reconstructed_image = np.clip(reconstructed_image, 0, 255).astype(np.uint8)
             psnr = skimage.metrics.peak_signal_noise_ratio(original_image.astype(np.uint8), reconstructed_image)
             ssim = skimage.metrics.structural_similarity(original_image.astype(np.uint8), reconstructed_image)
-            print(f"ZONAL Coding - {num_coeffs} coefficient(s):")
-            print(f"PSNR: {psnr:.2f} dB")
-            print(f"SSIM: {ssim:.4f}")
-            print()
+            logging.info(f"ZONAL Coding - {num_coeffs} coefficient(s):")
+            logging.info(f"PSNR: {psnr:.2f} dB")
+            logging.info(f"SSIM: {ssim:.4f}")
+            logging.info("")
         
         # Perform THRESHOLD coding and calculate PSNR and SSIM
         num_coeffs_threshold = [1, 2, 3, 4, 5, 6]
         for num_coeffs in num_coeffs_threshold:
+            logging.info(f"Performing THRESHOLD coding with {num_coeffs} coefficient(s)...")
             reconstructed_coefficients = threshold_coding(dct_coefficients, num_coeffs)
             reconstructed_image = perform_idct(reconstructed_coefficients)
             reconstructed_image = reconstructed_image + 128
             reconstructed_image = np.clip(reconstructed_image, 0, 255).astype(np.uint8)
             psnr = skimage.metrics.peak_signal_noise_ratio(original_image.astype(np.uint8), reconstructed_image)
             ssim = skimage.metrics.structural_similarity(original_image.astype(np.uint8), reconstructed_image)
-            print(f"THRESHOLD Coding - {num_coeffs} coefficient(s):")
-            print(f"PSNR: {psnr:.2f} dB")
-            print(f"SSIM: {ssim:.4f}")
-            print()
+            logging.info(f"THRESHOLD Coding - {num_coeffs} coefficient(s):")
+            logging.info(f"PSNR: {psnr:.2f} dB")
+            logging.info(f"SSIM: {ssim:.4f}")
+            logging.info("")
         
         # Calculate and plot energy distribution
+        logging.info("Calculating energy distribution...")
         energy_distribution = calculate_energy_distribution(dct_coefficients)
+        logging.info("Plotting energy distribution...")
         plot_energy_distribution(energy_distribution)
+        plt.savefig(os.path.join(output_dir, os.path.splitext(os.path.basename(image_path))[0] + '_energy_distribution.png'))
+        plt.close()
+        logging.info("Energy distribution plot completed.")
+        logging.info("")

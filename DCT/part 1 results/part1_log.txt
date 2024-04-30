@@ -1,0 +1,294 @@
+INFO:root:Calculating DCT basis...
+INFO:root:Visualizing DCT basis...
+INFO:root:DCT basis visualization completed.
+INFO:root:Processing image: ./DCT/images/bridge.tiff
+INFO:root:Performing DCT...
+INFO:root:Saving DCT coefficients...
+INFO:root:Performing IDCT...
+INFO:root:Image: ./DCT/images/bridge.tiff
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing ZONAL coding with 1 coefficient(s)...
+INFO:root:ZONAL Coding - 1 coefficient(s):
+INFO:root:PSNR: 13.12 dB
+INFO:root:SSIM: 0.1864
+INFO:root:
+INFO:root:Performing ZONAL coding with 2 coefficient(s)...
+INFO:root:ZONAL Coding - 2 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing ZONAL coding with 3 coefficient(s)...
+INFO:root:ZONAL Coding - 3 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing ZONAL coding with 4 coefficient(s)...
+INFO:root:ZONAL Coding - 4 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing ZONAL coding with 5 coefficient(s)...
+INFO:root:ZONAL Coding - 5 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing ZONAL coding with 6 coefficient(s)...
+INFO:root:ZONAL Coding - 6 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 1 coefficient(s)...
+INFO:root:THRESHOLD Coding - 1 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 2 coefficient(s)...
+INFO:root:THRESHOLD Coding - 2 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 3 coefficient(s)...
+INFO:root:THRESHOLD Coding - 3 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 4 coefficient(s)...
+INFO:root:THRESHOLD Coding - 4 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 5 coefficient(s)...
+INFO:root:THRESHOLD Coding - 5 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 6 coefficient(s)...
+INFO:root:THRESHOLD Coding - 6 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Calculating energy distribution...
+INFO:root:Plotting energy distribution...
+INFO:root:Energy distribution plot completed.
+INFO:root:
+INFO:root:Processing image: ./DCT/images/male.tiff
+INFO:root:Performing DCT...
+INFO:root:Saving DCT coefficients...
+INFO:root:Performing IDCT...
+INFO:root:Image: ./DCT/images/male.tiff
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing ZONAL coding with 1 coefficient(s)...
+INFO:root:ZONAL Coding - 1 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing ZONAL coding with 2 coefficient(s)...
+INFO:root:ZONAL Coding - 2 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing ZONAL coding with 3 coefficient(s)...
+INFO:root:ZONAL Coding - 3 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing ZONAL coding with 4 coefficient(s)...
+INFO:root:ZONAL Coding - 4 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing ZONAL coding with 5 coefficient(s)...
+INFO:root:ZONAL Coding - 5 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing ZONAL coding with 6 coefficient(s)...
+INFO:root:ZONAL Coding - 6 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 1 coefficient(s)...
+INFO:root:THRESHOLD Coding - 1 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 2 coefficient(s)...
+INFO:root:THRESHOLD Coding - 2 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 3 coefficient(s)...
+INFO:root:THRESHOLD Coding - 3 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 4 coefficient(s)...
+INFO:root:THRESHOLD Coding - 4 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 5 coefficient(s)...
+INFO:root:THRESHOLD Coding - 5 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 6 coefficient(s)...
+INFO:root:THRESHOLD Coding - 6 coefficient(s):
+INFO:root:PSNR: 11.25 dB
+INFO:root:SSIM: 0.3028
+INFO:root:
+INFO:root:Calculating energy distribution...
+INFO:root:Plotting energy distribution...
+INFO:root:Energy distribution plot completed.
+INFO:root:
+INFO:root:Calculating DCT basis...
+INFO:root:Visualizing DCT basis...
+INFO:root:DCT basis visualization completed.
+INFO:root:Processing image: ./DCT/images/bridge.tiff
+INFO:root:Performing DCT...
+INFO:root:Saving DCT coefficients...
+INFO:root:Performing IDCT...
+INFO:root:Image: ./DCT/images/bridge.tiff
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing ZONAL coding with 1 coefficient(s)...
+INFO:root:ZONAL Coding - 1 coefficient(s):
+INFO:root:PSNR: 13.12 dB
+INFO:root:SSIM: 0.1864
+INFO:root:
+INFO:root:Performing ZONAL coding with 2 coefficient(s)...
+INFO:root:ZONAL Coding - 2 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing ZONAL coding with 3 coefficient(s)...
+INFO:root:ZONAL Coding - 3 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing ZONAL coding with 4 coefficient(s)...
+INFO:root:ZONAL Coding - 4 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing ZONAL coding with 5 coefficient(s)...
+INFO:root:ZONAL Coding - 5 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing ZONAL coding with 6 coefficient(s)...
+INFO:root:ZONAL Coding - 6 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 1 coefficient(s)...
+INFO:root:THRESHOLD Coding - 1 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 2 coefficient(s)...
+INFO:root:THRESHOLD Coding - 2 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 3 coefficient(s)...
+INFO:root:THRESHOLD Coding - 3 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 4 coefficient(s)...
+INFO:root:THRESHOLD Coding - 4 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 5 coefficient(s)...
+INFO:root:THRESHOLD Coding - 5 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 6 coefficient(s)...
+INFO:root:THRESHOLD Coding - 6 coefficient(s):
+INFO:root:PSNR: 13.08 dB
+INFO:root:SSIM: 0.1863
+INFO:root:
+INFO:root:Calculating energy distribution...
+INFO:root:Plotting energy distribution...
+INFO:root:Energy distribution plot completed.
+INFO:root:
+INFO:root:Processing image: ./DCT/images/male.tiff
+INFO:root:Performing DCT...
+INFO:root:Saving DCT coefficients...
+INFO:root:Performing IDCT...
+INFO:root:Image: ./DCT/images/male.tiff
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing ZONAL coding with 1 coefficient(s)...
+INFO:root:ZONAL Coding - 1 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing ZONAL coding with 2 coefficient(s)...
+INFO:root:ZONAL Coding - 2 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing ZONAL coding with 3 coefficient(s)...
+INFO:root:ZONAL Coding - 3 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing ZONAL coding with 4 coefficient(s)...
+INFO:root:ZONAL Coding - 4 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing ZONAL coding with 5 coefficient(s)...
+INFO:root:ZONAL Coding - 5 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing ZONAL coding with 6 coefficient(s)...
+INFO:root:ZONAL Coding - 6 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 1 coefficient(s)...
+INFO:root:THRESHOLD Coding - 1 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 2 coefficient(s)...
+INFO:root:THRESHOLD Coding - 2 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 3 coefficient(s)...
+INFO:root:THRESHOLD Coding - 3 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 4 coefficient(s)...
+INFO:root:THRESHOLD Coding - 4 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 5 coefficient(s)...
+INFO:root:THRESHOLD Coding - 5 coefficient(s):
+INFO:root:PSNR: 11.32 dB
+INFO:root:SSIM: 0.3031
+INFO:root:
+INFO:root:Performing THRESHOLD coding with 6 coefficient(s)...
+INFO:root:THRESHOLD Coding - 6 coefficient(s):
+INFO:root:PSNR: 11.25 dB
+INFO:root:SSIM: 0.3028
+INFO:root:
+INFO:root:Calculating energy distribution...
+INFO:root:Plotting energy distribution...
+INFO:root:Energy distribution plot completed.
+INFO:root:
