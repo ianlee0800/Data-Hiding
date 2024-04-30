@@ -12,46 +12,31 @@ def bdct(a, n=8):
     numpy.ndarray: DCT2 transformed image
     """
     dctm = bdctmtx(n)
-    v, r, c = im2vec(a, (n, n))
-    b = vec2im(np.dot(dctm, v), bsize=(n, n), rows=r, cols=c)
+    v = im2vec(a, (n, n))
+    b = vec2im(np.dot(dctm, v), a.shape, (n, n))
     return b
 
 def bdctmtx(n):
     """
     Blocked discrete cosine transform matrix
-    
+
     Parameters:
     n (int): Block size
-    
+
     Returns:
     numpy.ndarray: DCT2 transform matrix of size n^2 x n^2
     """
-    c, r = np.meshgrid(range(n), range(n))
-    c0, r0 = np.meshgrid(c, c)
-    c1, r1 = np.meshgrid(r, r)
-    
+    c = np.arange(n).reshape(-1, 1)
+    r = np.arange(n).reshape(1, -1)
+
     x = np.sqrt(2 / n) * np.cos(np.pi * (2 * c + 1) * r / (2 * n))
     x[0, :] = x[0, :] / np.sqrt(2)
-    
-    m = x[r0 + c0 * n] * x[r1 + c1 * n]
-    
+
+    m = x * x.T
+
     return m
 
 def im2vec(im, bsize, padsize=0):
-    """
-    Reshape 2D image blocks into an array of column vectors
-    
-    Parameters:
-    im (numpy.ndarray): Input image
-    bsize (tuple): Block size (rows, cols)
-    padsize (tuple): Padding size (rows, cols) (default: (0, 0))
-    
-    Returns:
-    tuple: (v, rows, cols)
-        v (numpy.ndarray): Reshaped image blocks
-        rows (int): Number of rows of blocks
-        cols (int): Number of columns of blocks
-    """
     bsize = np.array(bsize)
     
     if isinstance(padsize, int):
@@ -64,75 +49,44 @@ def im2vec(im, bsize, padsize=0):
     
     imsize = np.array(im.shape)
     y, x = bsize + padsize
-    rows = int(np.floor((imsize[0] + padsize[0]) / y))
-    cols = int(np.floor((imsize[1] + padsize[1]) / x))
+    blocks_row = int(np.ceil((imsize[0] + padsize[0]) / y))
+    blocks_col = int(np.ceil((imsize[1] + padsize[1]) / x))
     
-    t = np.zeros((y * rows, x * cols))
+    t = np.zeros((y * blocks_row, x * blocks_col))
     
-    # Ensure that the input image shape is compatible with the block size
-    im_rows = min(imsize[0], y * rows - padsize[0])
-    im_cols = min(imsize[1], x * cols - padsize[1])
+    # Pad the input image with zeros
+    padded_im = np.pad(im, ((padsize[0], y * blocks_row - imsize[0] - padsize[0]),
+                            (padsize[1], x * blocks_col - imsize[1] - padsize[1])),
+                       mode='constant', constant_values=0)
     
-    t[:im_rows, :im_cols] = im[:im_rows, :im_cols]
+    t[:padded_im.shape[0], :padded_im.shape[1]] = padded_im
     
-    t = t.reshape(y, rows, x, cols)
-    t = t.transpose(0, 2, 1, 3).reshape(y, x, rows * cols)
+    v = t.reshape(y, blocks_row, x, blocks_col).transpose(1, 3, 0, 2).reshape(blocks_row, blocks_col, y * x)
     
-    v = t[:bsize[0], :bsize[1], :rows*cols]
-    v = v.reshape(y * x, rows * cols)
-    
-    return v, rows, cols
+    return v
 
-def vec2im(v, padsize=0, bsize=None, rows=None, cols=None):
+def vec2im(v, imshape, bsize):
     """
-    Reshape and combine column vectors into a 2D image
+    Reshape and combine a 2D array into a 2D image
     
     Parameters:
-    v (numpy.ndarray): Input vector array
-    padsize (tuple): Padding size (rows, cols) (default: (0, 0))
-    bsize (tuple): Block size (rows, cols) (default: square root of vector length)
-    rows (int): Number of rows of blocks (default: floor(sqrt(num_vectors)))
-    cols (int): Number of columns of blocks (default: ceil(num_vectors/rows))
+    v (numpy.ndarray): Input 2D array
+    imshape (tuple): Shape of the output image
+    bsize (tuple): Block size (rows, cols)
     
     Returns:
     numpy.ndarray: Output image
     """
-    padsize = np.array(padsize)
-    
-    if np.any(padsize < 0):
-        raise ValueError("Pad size must not be negative.")
-    
-    if v.ndim == 2:
-        m, n = v.shape
-    elif v.ndim == 3:
-        m, n, r = v.shape
-    else:
-        raise ValueError("Input array must be 2D or 3D.")
-    
-    if bsize is None:
-        bsize = (int(np.floor(np.sqrt(m))), int(np.floor(np.sqrt(m))))
     bsize = np.array(bsize)
     
-    if np.prod(bsize) != m:
-        raise ValueError("Block size does not match size of input vectors.")
+    y, x = bsize
+    rows = imshape[0] // y
+    cols = imshape[1] // x
     
-    if rows is None:
-        rows = int(np.floor(np.sqrt(n)))
-    if cols is None:
-        cols = int(np.ceil(n / rows))
-    
-    y, x = bsize + padsize
-    t = np.zeros((y, x, rows * cols))
-    
-    if v.ndim == 2:
-        t[:bsize[0], :bsize[1], :] = v.reshape(bsize[0], bsize[1], n)
-    else:
-        t[:bsize[0], :bsize[1], :] = v.reshape(bsize[0], bsize[1], r, n).transpose(0, 1, 3, 2)
-    
-    t = t.reshape(y, x, rows, cols)
+    t = v.reshape(y, x, rows, cols)
     t = t.transpose(0, 2, 1, 3).reshape(y * rows, x * cols)
     
-    im = t[:y*rows-padsize[0], :x*cols-padsize[1]]
+    im = t[:imshape[0], :imshape[1]]
     
     return im
 
@@ -148,8 +102,8 @@ def ibdct(a, n=8):
     numpy.ndarray: Reconstructed image
     """
     dctm = bdctmtx(n)
-    v, r, c = im2vec(a, (n, n))
-    b = vec2im(np.dot(dctm.T, v), bsize=(n, n), rows=r, cols=c)
+    v = im2vec(a, (n, n))
+    b = vec2im(np.dot(dctm.T, v), a.shape, (n, n))
     return b
 
 def quantize(coef, qtable):

@@ -3,8 +3,9 @@ from scipy.fftpack import dct, idct
 from scipy.signal import wiener
 from scipy.io import loadmat
 import os
-from jpegtbx import im2vec, vec2im
+from jpegtbx import bdctmtx, im2vec, vec2im
 import cv2
+import struct
 
 def SI_MiPOD_fastlog(preCover, C_STRUCT, Payload):
     """
@@ -21,8 +22,6 @@ def SI_MiPOD_fastlog(preCover, C_STRUCT, Payload):
         preCover = cv2.imread(preCover, flags=cv2.IMREAD_UNCHANGED)
         preCover = preCover.astype(np.float64)  # Convert to np.double
     
-    print(f"preCover shape: {preCover.shape}")  # Add this line for debugging
-    
     if len(preCover.shape) == 3:
         if preCover.shape[2] == 1:
             preCover = preCover[:, :, 0]  # If single channel, remove the channel dimension
@@ -30,19 +29,35 @@ def SI_MiPOD_fastlog(preCover, C_STRUCT, Payload):
             raise ValueError("Multi-channel images are not supported.")
     
     if isinstance(C_STRUCT, dict) and 'quant_tables' in C_STRUCT:
-        C_QUANT = np.array(C_STRUCT['quant_tables'][0])  # Convert quant_tables to NumPy array
-        C_QUANT = C_QUANT.reshape((8, 8))  # Reshape C_QUANT to 8x8
-    else:
-        raise ValueError("Invalid C_STRUCT. Expected a dictionary with 'quant_tables' key.")
-    
-    print(f"C_QUANT shape: {C_QUANT.shape}")  # Add this line for debugging
-    
+        # 尝试从 JPEG 文件中读取量化表
+        if isinstance(preCover, str):
+            # 如果 preCover 是字符串,则表示它是一个文件路径
+            img = cv2.imread(preCover, cv2.IMREAD_UNCHANGED)
+            if img is not None:
+                _, encoded_img = cv2.imencode('.jpg', img)
+                quant_table_data = get_quant_table(encoded_img.tobytes())
+                C_QUANT = np.array(quant_table_data, dtype=np.uint8).reshape(8, 8)
+            else:
+                raise ValueError("Failed to read image from provided path.")
+        else:
+            # 如果 preCover 是 NumPy 数组,则直接将其编码为 JPEG 数据
+            _, encoded_img = cv2.imencode('.jpg', preCover)
+            quant_table_data = get_quant_table(encoded_img.tobytes())
+            C_QUANT = np.array(quant_table_data, dtype=np.uint8).reshape(8, 8)
+
+    # 确保 C_QUANT 的形状为 (8, 8)
+    if C_QUANT.shape != (8, 8):
+        raise ValueError(f"Invalid shape of C_QUANT: {C_QUANT.shape}, expected (8, 8)")
+
     # Get the DCT matrix
-    MatDCT = RCgetJPEGmtx()
+    MatDCT = bdctmtx(8)
     C_QUANT_extended = np.tile(C_QUANT, (preCover.shape[0] // 8, preCover.shape[1] // 8))
-    DCT_coeffs = np.dot(MatDCT, im2vec(preCover - 128, [8, 8])) / C_QUANT_extended
-    DCT_coeffs = DCT_coeffs.reshape((-1, 8, 8))
-    DCT_real = vec2im(DCT_coeffs, [8, 8], [preCover.shape[0] // 8, preCover.shape[1] // 8])
+    
+    # Compute DCT coefficients
+    DCT_coeffs = np.tensordot(MatDCT, im2vec(preCover - 128, [8, 8]), axes=([1], [2]))
+    C_QUANT_extended_reshaped = np.tile(C_QUANT_extended.ravel()[None, None, :], (64, 64, 1))
+    DCT_coeffs = DCT_coeffs / C_QUANT_extended_reshaped
+    DCT_real = DCT_coeffs.reshape((preCover.shape[0] // 8, preCover.shape[1] // 8, 64))
     DCT_rounded = np.round(DCT_real)
 
     # Initialize 'coef_arrays' key in C_STRUCT
@@ -71,10 +86,7 @@ def SI_MiPOD_fastlog(preCover, C_STRUCT, Payload):
         MatDCTq[idx, :] = MatDCTq[idx, :] / Qvec[idx]
     
     VarianceDCT = np.zeros_like(preCover)
-    for idxR in range(0, Variance.shape[0], 8):
-        for idxC in range(0, Variance.shape[1], 8):
-            tmp = Variance[idxR:idxR+8, idxC:idxC+8]
-            VarianceDCT[idxR:idxR+8, idxC:idxC+8] = np.reshape(np.dot(MatDCTq, tmp.flatten()), (8, 8))
+    VarianceDCT = vec2im(np.dot(MatDCTq, im2vec(Variance, [8, 8])), preCover.shape, [8, 8])
     
     VarianceDCT[VarianceDCT < 1e-10] = 1e-10
     
@@ -139,6 +151,11 @@ def SI_MiPOD_fastlog(preCover, C_STRUCT, Payload):
     
     Deflection = np.sum(pChange.flatten() * FI.flatten())
     
+    try:
+        os.remove('temp.jpg')
+    except (PermissionError, FileNotFoundError):
+        pass
+
     return S_STRUCT, C_STRUCT, pChange, ChangeRate, Deflection
 
 def RCgetJPEGmtx():
@@ -246,6 +263,24 @@ def invxlnx2_fast(y, xlog, ylog):
     
     return x
 
+def get_quant_table(encoded_img):
+    try:
+        # 找到量化表的起始位置
+        start_offset = encoded_img.find(b'\xff\xdb')
+        if start_offset == -1:
+            raise ValueError("Could not find quantization table in JPEG data")
+        start_offset += 4  # 跳过长度字段
+
+        # 读取量化表长度
+        quant_table_length, = struct.unpack('>H', encoded_img[start_offset:start_offset+2])
+
+        # 读取量化表数据
+        quant_table_data = list(struct.unpack('>' + 'B' * quant_table_length, encoded_img[start_offset+2:start_offset+2+quant_table_length]))
+
+        return quant_table_data
+    except Exception as e:
+        raise ValueError(f"Failed to read quantization table from JPEG data: {str(e)}")
+
 def hBinary(Probs):
     H = -Probs * np.log(Probs) - (1 - Probs) * np.log(1 - Probs)
     H[Probs < 1e-10] = 0
@@ -278,3 +313,4 @@ def image2cols(image, block_size):
     )
 
     return image_reshaped.reshape(-1, block_rows * block_cols)
+

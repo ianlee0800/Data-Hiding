@@ -5,7 +5,6 @@ from scipy.io import loadmat
 import os
 
 def SI_MiPODv0(preCover, C_STRUCT, Payload, Wie=2, BlkSz=3, Degree=3, F=None):
-    print("SI_MiPODv0 function called")
     if F is None:
         F = np.array([[1, 3, 1], [3, 2, 3], [1, 3, 1]])
         F = F / np.sum(F)
@@ -43,7 +42,7 @@ def SI_MiPODv0(preCover, C_STRUCT, Payload, Wie=2, BlkSz=3, Degree=3, F=None):
                 return np.reshape(np.diag(np.dot(np.dot(MatDCT, np.diag(x.flatten())), MatDCT.T)), (8, 8)) / (C_STRUCT['quant_tables'][0] ** 2)
         else:
             def funVar(x):
-                return np.reshape(np.diag(np.dot(np.dot(MatDCT, np.diag(x.flatten())), MatDCT.T)), (8, 8)) / (C_STRUCT['quant_tables'][1] ** 2)
+                return np.reshape(np.diag(np.dot(np.dot(MatDCT, np.diag(x.flatten())), MatDCT.T)), (8, 8))
         
         VarianceDCT[:, :, cc] = np.apply_along_axis(funVar, 2, VarianceCC.reshape((-1, 8, 8)))
     
