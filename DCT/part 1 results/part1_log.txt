@@ -660,3 +660,12 @@ INFO:root:
 INFO:root:Extracted Secret:
 INFO:root:Accuracy: 100.00%
 INFO:root:
+INFO:root:Extracted Secret (random):
+INFO:root:Accuracy: 100.00%
+INFO:root:
+INFO:root:Extracted Secret (all_zeros):
+INFO:root:Accuracy: 100.00%
+INFO:root:
+INFO:root:Extracted Secret (all_ones):
+INFO:root:Accuracy: 100.00%
+INFO:root:

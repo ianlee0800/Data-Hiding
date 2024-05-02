@@ -110,49 +110,53 @@ if __name__ == "__main__":
     # Calculate the secret length adaptively
     max_secret_length = get_secret_length(image_height, image_width)
 
-    # Generate the secret with a specified ratio of zeros
-    ratio_zeros = 0  # Change this value to adjust the ratio of zeros
-    embedded_secret = generate_secret(max_secret_length, ratio_zeros)
+    # Generate secrets
+    secrets = {
+        'random': generate_secret(max_secret_length, 0.5),
+        'all_zeros': generate_secret(max_secret_length, 1.0),
+        'all_ones': generate_secret(max_secret_length, 0.0)
+    }
+    secret_types = list(secrets.keys())  # Convert dict_keys to a list
 
-    # Embed the secret into the DCT coefficients
-    watermarked_dct, embedding_record = embed_secret(dct_coefficients.copy(), embedded_secret, max_secret_length)
+    # Embed secrets into the DCT coefficients
+    watermarked_dcts = {}
+    embedding_records = {}
+    for secret_type, secret in secrets.items():
+        watermarked_dct, embedding_record = embed_secret(dct_coefficients.copy(), secret, max_secret_length)
+        watermarked_dcts[secret_type] = watermarked_dct
+        embedding_records[secret_type] = embedding_record
 
-    # Save the original secret to a file
-    np.savetxt(f"{output_dir}/embedded_secret.txt", embedded_secret, fmt='%d')
+        # Save the embedded secret to a file
+        embedded_secret_filename = f"{output_dir}/bridge-w{secret_types.index(secret_type) + 1}_embedded_secret.txt"
+        np.savetxt(embedded_secret_filename, secret, fmt='%d')
 
-    # Perform inverse DCT to obtain the watermarked image
-    watermarked_image = perform_idct(watermarked_dct)
-    watermarked_image = np.clip(watermarked_image, 0, 255).astype(np.uint8)
+    # Perform inverse DCT to obtain the watermarked images
+    for secret_type, watermarked_dct in watermarked_dcts.items():
+        watermarked_image = perform_idct(watermarked_dct)
+        watermarked_image = np.clip(watermarked_image, 0, 255).astype(np.uint8)
 
-    # Save the watermarked image
-    Image.fromarray(watermarked_image).save(f"{output_dir}/watermarked.png")
+        # Save the watermarked image
+        watermarked_image_filename = f"{output_dir}/bridge-w{secret_types.index(secret_type) + 1}.tiff"
+        Image.fromarray(watermarked_image).save(watermarked_image_filename)
 
-    # Compare the watermarked image with the original image
-    psnr = skimage.metrics.peak_signal_noise_ratio(original_image.astype(np.uint8), watermarked_image)
-    ssim = skimage.metrics.structural_similarity(original_image.astype(np.uint8), watermarked_image)
-    logging.info(f"Watermarked Image:")
-    logging.info(f"PSNR: {psnr:.2f} dB")
-    logging.info(f"SSIM: {ssim:.4f}")
-    logging.info("")
+    # Extract and compare secrets
+    for secret_type, watermarked_dct in watermarked_dcts.items():
+        embedding_record = embedding_records[secret_type]
+        embedded_secret_filename = f"{output_dir}/bridge-w{secret_types.index(secret_type) + 1}_embedded_secret.txt"
+        embedded_secret = np.loadtxt(embedded_secret_filename, dtype=int)
+        extracted_secret = extract_secret(watermarked_dct, embedding_record, max_secret_length, embedded_secret)
 
-    print(f"Watermarked Image:")
-    print(f"PSNR: {psnr:.2f} dB")
-    print(f"SSIM: {ssim:.4f}")
-    print("")
+        # Compare the extracted secret with the original secret
+        num_correct = np.sum(extracted_secret == embedded_secret)
+        accuracy = num_correct / len(embedded_secret) * 100
+        logging.info(f"Extracted Secret ({secret_type}):")
+        logging.info(f"Accuracy: {accuracy:.2f}%")
+        logging.info("")
 
-    # Extract the secret from the watermarked DCT coefficients
-    extracted_secret = extract_secret(watermarked_dct, embedding_record, max_secret_length, embedded_secret)
+        print(f"Extracted Secret ({secret_type}):")
+        print(f"Accuracy: {accuracy:.2f}%")
+        print("")
 
-    # Compare the extracted secret with the original secret
-    num_correct = np.sum(extracted_secret == embedded_secret)
-    accuracy = num_correct / len(embedded_secret) * 100
-    logging.info(f"Extracted Secret:")
-    logging.info(f"Accuracy: {accuracy:.2f}%")
-    logging.info("")
-
-    print(f"Extracted Secret:")
-    print(f"Accuracy: {accuracy:.2f}%")
-    print("")
-
-    # Save the extracted secret to a file
-    np.savetxt(f"{output_dir}/extracted_secret.txt", extracted_secret, fmt='%d')
+        # Save the extracted secret to a file
+        extracted_secret_filename = f"{output_dir}/bridge-w{secret_types.index(secret_type) + 1}_extracted_secret.txt"
+        np.savetxt(extracted_secret_filename, extracted_secret, fmt='%d')
