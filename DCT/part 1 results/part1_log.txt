@@ -292,3 +292,371 @@ INFO:root:Calculating energy distribution...
 INFO:root:Plotting energy distribution...
 INFO:root:Energy distribution plot completed.
 INFO:root:
+INFO:root:Watermarked Image (random):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_zeros):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_ones):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (random):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_zeros):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_ones):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (random):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_zeros):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_ones):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret (random):
+INFO:root:Accuracy: 50.18%
+INFO:root:
+INFO:root:Extracted Secret (all_zeros):
+INFO:root:Accuracy: 58.94%
+INFO:root:
+INFO:root:Extracted Secret (all_ones):
+INFO:root:Accuracy: 41.06%
+INFO:root:
+INFO:root:Watermarked Image (random):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_zeros):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_ones):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret (random):
+INFO:root:Accuracy: 49.37%
+INFO:root:
+INFO:root:Extracted Secret (all_zeros):
+INFO:root:Accuracy: 58.94%
+INFO:root:
+INFO:root:Extracted Secret (all_ones):
+INFO:root:Accuracy: 41.06%
+INFO:root:
+INFO:root:Watermarked Image (random):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_zeros):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_ones):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret (random):
+INFO:root:Accuracy: 49.44%
+INFO:root:
+INFO:root:Extracted Secret (all_zeros):
+INFO:root:Accuracy: 58.94%
+INFO:root:
+INFO:root:Extracted Secret (all_ones):
+INFO:root:Accuracy: 41.06%
+INFO:root:
+INFO:root:Watermarked Image (random):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_zeros):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_ones):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret (random):
+INFO:root:Accuracy: 49.21%
+INFO:root:
+INFO:root:Extracted Secret (all_zeros):
+INFO:root:Accuracy: 58.94%
+INFO:root:
+INFO:root:Extracted Secret (all_ones):
+INFO:root:Accuracy: 41.06%
+INFO:root:
+INFO:root:Watermarked Image (random):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_zeros):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_ones):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret (random):
+INFO:root:Accuracy: 49.74%
+INFO:root:
+INFO:root:Extracted Secret (all_zeros):
+INFO:root:Accuracy: 100.00%
+INFO:root:
+INFO:root:Extracted Secret (all_ones):
+INFO:root:Accuracy: 0.00%
+INFO:root:
+INFO:root:Watermarked Image (random):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_zeros):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_ones):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret (random):
+INFO:root:Accuracy: 50.84%
+INFO:root:
+INFO:root:Extracted Secret (all_zeros):
+INFO:root:Accuracy: 100.00%
+INFO:root:
+INFO:root:Extracted Secret (all_ones):
+INFO:root:Accuracy: 0.00%
+INFO:root:
+INFO:root:Watermarked Image (random):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_zeros):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_ones):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (random):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_zeros):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_ones):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (random):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_zeros):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_ones):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (random):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_zeros):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_ones):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (random):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_zeros):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_ones):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (random):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_zeros):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image (all_ones):
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret (random):
+INFO:root:Accuracy: 50.25%
+INFO:root:
+INFO:root:Extracted Secret (all_zeros):
+INFO:root:Accuracy: 100.00%
+INFO:root:
+INFO:root:Extracted Secret (all_ones):
+INFO:root:Accuracy: 0.00%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 50.00%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 0.00%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 50.00%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 50.00%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 50.40%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 49.90%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 49.80%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 52.23%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 50.10%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 50.07%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 98.65%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 1.35%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 100.00%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 0.00%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 52.23%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 50.00%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 100.00%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 100.00%
+INFO:root:
+INFO:root:Watermarked Image:
+INFO:root:PSNR: 6.10 dB
+INFO:root:SSIM: 0.0006
+INFO:root:
+INFO:root:Extracted Secret:
+INFO:root:Accuracy: 100.00%
+INFO:root:
