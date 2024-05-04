@@ -37,20 +37,38 @@ def idct_1d(y):
 
 def dct_2d(image):
     M, N = image.shape
-    X, Y = np.meshgrid(range(N), range(M))
-    coeff_matrix = np.sqrt(2 / M) * np.sqrt(2 / N) * np.cos(np.pi * (2 * X + 1) * Y.T / (2 * N))
-    coeff_matrix[0, :] /= np.sqrt(2)
-    coeff_matrix[:, 0] /= np.sqrt(2)
-    dct_coefficients = coeff_matrix @ image @ coeff_matrix.T
+    x, y = np.meshgrid(range(M), range(N))
+    
+    print("Calculating DCT coefficients...")
+    
+    cx = np.sqrt(1 / M) * np.cos(np.pi * (2 * x + 1) * np.arange(M)[:, np.newaxis] / (2 * M))
+    cy = np.sqrt(1 / N) * np.cos(np.pi * (2 * y + 1) * np.arange(N) / (2 * N))
+    
+    cx[1:, :] *= np.sqrt(2)
+    cy[:, 1:] *= np.sqrt(2)
+    
+    dct_coefficients = cx.T.dot(image).dot(cy)
+    
+    print("DCT coefficients calculated.")
+    
     return dct_coefficients
 
 def idct_2d(coefficients):
     M, N = coefficients.shape
-    X, Y = np.meshgrid(range(N), range(M))
-    coeff_matrix = np.sqrt(2 / M) * np.sqrt(2 / N) * np.cos(np.pi * (2 * Y + 1) * X.T / (2 * M))
-    coeff_matrix[0, :] /= np.sqrt(2)
-    coeff_matrix[:, 0] /= np.sqrt(2)
-    reconstructed_image = coeff_matrix.T @ coefficients @ coeff_matrix
+    x, y = np.meshgrid(range(M), range(N))
+    
+    print("Calculating reconstructed image...")
+    
+    cx = np.sqrt(1 / M) * np.cos(np.pi * (2 * np.arange(M)[:, np.newaxis] + 1) * x / (2 * M))
+    cy = np.sqrt(1 / N) * np.cos(np.pi * (2 * np.arange(N) + 1) * y / (2 * N))
+    
+    cx[:, 1:] *= np.sqrt(2)
+    cy[1:, :] *= np.sqrt(2)
+    
+    reconstructed_image = cx.dot(coefficients).dot(cy.T)
+    
+    print("Reconstructed image calculated.")
+    
     return reconstructed_image
 
 def get_dct_basis():
@@ -83,17 +101,20 @@ def get_image(image_path, target_size=None):
     img = np.array(img_grey, dtype=np.float64)
     return img
 
-def perform_dct(image, block_size=8):
-    M, N = image.shape
-    dct_coefficients = np.zeros_like(image)
-    for i in range(0, M, block_size):
-        for j in range(0, N, block_size):
-            block = image[i:i+block_size, j:j+block_size]
-            dct_coefficients[i:i+block_size, j:j+block_size] = dct_2d(block)
+def perform_dct(image):
+    print("Performing DCT...")
+    image = image.astype(np.float32)
+    image /= 255.0
+    dct_coefficients = dct_2d(image)
+    print("DCT completed.")
     return dct_coefficients
 
 def perform_idct(coefficients):
+    print("Performing IDCT...")
     reconstructed_image = idct_2d(coefficients)
+    reconstructed_image *= 255.0
+    reconstructed_image = np.clip(reconstructed_image, 0, 255).astype(np.uint8)
+    print("IDCT completed.")
     return reconstructed_image
 
 def level_shift(image):

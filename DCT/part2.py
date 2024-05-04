@@ -63,6 +63,9 @@ def embed_secret(dct_coefficients, secret, secret_length):
             dct_coefficients[i:i+block_size, j:j+block_size] = modified_block
 
             block_idx += 1
+    
+    # Clip the modified DCT coefficients to a reasonable range
+    dct_coefficients = np.clip(dct_coefficients, -1000, 1000)
 
     return dct_coefficients, embedding_record
 
@@ -73,6 +76,9 @@ def extract_secret(dct_coefficients, embedding_record, secret_length, embedded_s
     block_size = 8
     block_idx = 0
     secret_idx = 0
+    
+    # Clip the DCT coefficients to the same range used during embedding
+    dct_coefficients = np.clip(dct_coefficients, -1000, 1000)
 
     # Iterate over each 8x8 block
     for i in range(0, dct_coefficients.shape[0], block_size):
@@ -130,9 +136,14 @@ if __name__ == "__main__":
         embedded_secret_filename = f"{output_dir}/bridge-w{secret_types.index(secret_type) + 1}_embedded_secret.txt"
         np.savetxt(embedded_secret_filename, secret, fmt='%d')
 
+        # Save the embedding record to a file
+        embedding_record_filename = f"{output_dir}/bridge-w{secret_types.index(secret_type) + 1}_embedding_record.npy"
+        np.save(embedding_record_filename, embedding_record)
+
     # Perform inverse DCT to obtain the watermarked images
     for secret_type, watermarked_dct in watermarked_dcts.items():
         watermarked_image = perform_idct(watermarked_dct)
+        watermarked_image += 128  # Level shift
         watermarked_image = np.clip(watermarked_image, 0, 255).astype(np.uint8)
 
         # Save the watermarked image
