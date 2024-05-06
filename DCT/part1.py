@@ -212,6 +212,14 @@ if __name__ == "__main__":
         dct_coefficients = perform_dct(shifted_image)
         logging.info("Saving DCT coefficients...")
         np.save(os.path.join(output_dir, os.path.splitext(os.path.basename(image_path))[0] + '_dct.npy'), dct_coefficients)
+        # 在 perform_dct 函數后添加以下代碼,以保存 DCT 系數的可視化圖像
+        plt.figure()
+        plt.imshow(dct_coefficients, cmap='gray')
+        plt.title('DCT Coefficients')
+        plt.axis('off')
+        plt.tight_layout()
+        plt.savefig(os.path.join(output_dir, os.path.splitext(os.path.basename(image_path))[0] + '_dct.png'))
+        plt.close()
         
         # Perform inverse DCT and compare with original image
         logging.info("Performing IDCT...")
@@ -239,6 +247,10 @@ if __name__ == "__main__":
             logging.info(f"PSNR: {psnr:.2f} dB")
             logging.info(f"SSIM: {ssim:.4f}")
             logging.info("")
+            # 在 Zonal 編碼部分添加以下代碼,以保存重構圖像
+            reconstructed_image_zonal = perform_idct(reconstructed_coefficients)
+            reconstructed_image_zonal = np.clip(reconstructed_image_zonal, 0, 255).astype(np.uint8)
+            Image.fromarray(reconstructed_image_zonal).save(os.path.join(output_dir, f"{os.path.splitext(os.path.basename(image_path))[0]}{num_coeffs}z.tiff"))
         
         # Perform THRESHOLD coding and calculate PSNR and SSIM
         num_coeffs_threshold = [1, 2, 3, 4, 5, 6]
@@ -254,6 +266,10 @@ if __name__ == "__main__":
             logging.info(f"PSNR: {psnr:.2f} dB")
             logging.info(f"SSIM: {ssim:.4f}")
             logging.info("")
+            # 在 Threshold 編碼部分添加以下代碼,以保存重構圖像
+            reconstructed_image_threshold = perform_idct(reconstructed_coefficients)
+            reconstructed_image_threshold = np.clip(reconstructed_image_threshold, 0, 255).astype(np.uint8)
+            Image.fromarray(reconstructed_image_threshold).save(os.path.join(output_dir, f"{os.path.splitext(os.path.basename(image_path))[0]}{num_coeffs}t.tiff"))
         
         # Calculate and plot energy distribution
         logging.info("Calculating energy distribution...")
