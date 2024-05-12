@@ -2,7 +2,6 @@ import os
 import logging
 import numpy as np
 from PIL import Image
-import skimage.metrics
 from part1 import get_image, perform_dct, perform_idct, zigzag_scan
 
 # Create the output directory if it doesn't exist

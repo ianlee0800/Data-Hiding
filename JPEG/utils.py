@@ -5,6 +5,15 @@ import io
 from PIL import Image
 import tempfile
 import os
+import math
+
+def calculate_psnr(img1, img2):
+    mse = np.mean((img1 - img2) ** 2)
+    if mse == 0:
+        return 100
+    max_pixel = 255.0
+    psnr = 20 * math.log10(max_pixel / math.sqrt(mse))
+    return psnr
 
 def extract_quantization_tables(image_path):
     # 創建一個臨時文件來保存JPEG版本的圖像
@@ -41,32 +50,55 @@ def extract_quantization_tables(image_path):
     # 如果沒有找到量化表或量化表大小不是8x8,返回默認的亮度和色度量化表
     if len(quant_tables) == 0:
         quant_tables = [
-            np.array([... # 默認亮度量化表
+            np.array([
+                [16, 11, 10, 16, 24, 40, 51, 61],
+                [12, 12, 14, 19, 26, 58, 60, 55],
+                [14, 13, 16, 24, 40, 57, 69, 56],
+                [14, 17, 22, 29, 51, 87, 80, 62],
+                [18, 22, 37, 56, 68, 109, 103, 77],
+                [24, 35, 55, 64, 81, 104, 113, 92],
+                [49, 64, 78, 87, 103, 121, 120, 101],
+                [72, 92, 95, 98, 112, 100, 103, 99]
             ]),
-            np.array([... # 默認色度量化表
+            np.array([
+                [17, 18, 24, 47, 99, 99, 99, 99],
+                [18, 21, 26, 66, 99, 99, 99, 99],
+                [24, 26, 56, 99, 99, 99, 99, 99],
+                [47, 66, 99, 99, 99, 99, 99, 99],
+                [99, 99, 99, 99, 99, 99, 99, 99],
+                [99, 99, 99, 99, 99, 99, 99, 99],
+                [99, 99, 99, 99, 99, 99, 99, 99],
+                [99, 99, 99, 99, 99, 99, 99, 99]
             ])
         ]
+    
+    # 將量化表轉換為字典格式
+    quant_tables_dict = {
+        'quant_tables': quant_tables
+    }
 
     # 刪除臨時JPEG文件
     os.remove(tmp.name)
 
-    return quant_tables
+    return quant_tables_dict
 
 def stc_embed(cover, message, quantization_table):
-    # 對 cover 圖片應用 DCT
-    cover_dct = dct(cover)
+    BlockSize = 8
+    cover_blocks = view_as_blocks(cover, (BlockSize, BlockSize))
+    cover_dct_blocks = dct(cover_blocks - 128, norm='ortho')
 
     # 使用 quantization_table 量化 DCT 係數
-    cover_quantized = np.round(cover_dct / quantization_table)
+    cover_quantized = np.round(cover_dct_blocks / quantization_table)
 
     # 在量化的 DCT 係數中嵌入 message
     stego_quantized = cover_quantized + message
 
     # 對量化的 stego DCT 係數進行反量化
-    stego_dct = stego_quantized * quantization_table
+    stego_dct_blocks = stego_quantized * quantization_table
 
     # 對 stego DCT 係數應用反 DCT
-    stego = idct(stego_dct)
+    stego_blocks = idct(stego_dct_blocks, norm='ortho') + 128
+    stego = unview_as_blocks(stego_blocks, cover.shape)
 
     return stego
 
@@ -91,24 +123,29 @@ def blkproc(im, blksize, fun):
     return fun(blocks)
 
 def smooth_fisher_info(FisherInformation):
-    h, w = FisherInformation.shape
-    tmp = np.pad(FisherInformation, ((8,8),(8,8)), mode='symmetric')
-    
-    for i in range(8):
-        for j in range(8):
-            tmp[i::8, j::8] = np.array([
-                tmp[i  :i+h, j  :j+w],
-                tmp[i+8:i+8+h, j  :j+w],
-                tmp[i-8:i-8+h, j  :j+w],
-                tmp[i  :i+h, j+8:j+8+w],
-                tmp[i  :i+h, j-8:j-8+w],
-                tmp[i+8:i+8+h, j+8:j+8+w],
-                tmp[i-8:i-8+h, j+8:j+8+w],
-                tmp[i+8:i+8+h, j-8:j-8+w],
-                tmp[i-8:i-8+h, j-8:j-8+w]
-            ]).mean(0)
-            
-    return tmp[8:-8, 8:-8]
+    PadSize = 8
+    padded_fi = np.pad(FisherInformation, ((PadSize, PadSize), (PadSize, PadSize), (0, 0), (0, 0)), mode='symmetric')
+
+    tmp = np.zeros_like(padded_fi)
+    tmp[PadSize:-PadSize, PadSize:-PadSize] = padded_fi[PadSize:-PadSize, PadSize:-PadSize]
+    tmp[:PadSize, :] = tmp[PadSize:2*PadSize, :]
+    tmp[-PadSize:, :] = tmp[-2*PadSize:-PadSize, :]
+    tmp[:, :PadSize] = tmp[:, PadSize:2*PadSize]
+    tmp[:, -PadSize:] = tmp[:, -2*PadSize:-PadSize]
+
+    smoothed_fi = (
+        tmp[:-2*PadSize, :-2*PadSize] +
+        tmp[PadSize:-PadSize, :-2*PadSize] * 3 +
+        tmp[2*PadSize:, :-2*PadSize] +
+        tmp[:-2*PadSize, PadSize:-PadSize] * 3 +
+        tmp[PadSize:-PadSize, PadSize:-PadSize] * 4 +
+        tmp[2*PadSize:, PadSize:-PadSize] * 3 +
+        tmp[:-2*PadSize, 2*PadSize:] +
+        tmp[PadSize:-PadSize, 2*PadSize:] * 3 +
+        tmp[2*PadSize:, 2*PadSize:]
+    ) / 20
+
+    return smoothed_fi
 
 def hBinary(probs):
     p = np.clip(probs, 1e-10, 1 - 1e-10)
@@ -161,65 +198,121 @@ def TernaryProbs(FI, payload):
     beta = invxlnx2_fast(M * FI, xx, yy)
     return beta
 
+def RCgetJPEGmtx():
+    cc, rr = np.meshgrid(range(8), range(8))
+    T = np.sqrt(2 / 8) * np.cos(np.pi * (2 * cc + 1) * rr / 16)
+    T[0, :] /= np.sqrt(2)
+    dct8_mtx = np.zeros((64, 64))
+    for i in range(64):
+        dcttmp = np.zeros((8, 8))
+        dcttmp[i // 8, i % 8] = 1
+        TTMP = T @ dcttmp @ T.T
+        dct8_mtx[:, i] = TTMP.flatten()
+    return dct8_mtx
+
+def view_as_blocks(arr, block_size):
+    m, n = arr.shape
+    M, N = block_size
+    return arr.reshape(m//M, M, n//N, N).swapaxes(1,2)
+
+def unview_as_blocks(blocks, arr_shape):
+    M, N = blocks.shape[1], blocks.shape[2]
+    return blocks.swapaxes(1,2).reshape(arr_shape)
+
 def JMiPODv0(cover_y, C_STRUCT, Payload):
     quantization_tables = C_STRUCT['quant_tables']
     C_QUANT = quantization_tables[0]
     
-    DCT_rounded = C_STRUCT['coef_arrays'][0]
+    BlockSize = 8
+    cover_y_blocks = view_as_blocks(cover_y, (BlockSize, BlockSize))
+    num_blocks = cover_y_blocks.shape[0] * cover_y_blocks.shape[1]
     
-    VarianceDCT = VarianceEstimationDCT2D(cover_y, BlockSize=7, Degree=3)
+    DCT_real = dct(cover_y_blocks - 128, norm='ortho') / C_QUANT
+    DCT_rounded = np.round(DCT_real)
     
-    FisherInformation = 1 / (VarianceDCT * C_QUANT**2)**2
+    C_STRUCT['coef_arrays'] = [DCT_rounded]
+    e = DCT_rounded - DCT_real
+    sgn_e = np.sign(e)
     
-    # 平滑Fisher Information矩陣
+    rand_mask = np.random.rand(*e.shape) > 0.5
+    sgn_e[e == 0] = rand_mask[e == 0] * 2 - 1
+    
+    change = -sgn_e
+    
+    WienerResidual = cover_y - wiener(cover_y, (2, 2))
+    Variance = VarianceEstimationDCT2D(WienerResidual, BlockSize=3, Degree=3)
+    
+    VarianceDCT = view_as_blocks(Variance, (BlockSize, BlockSize))
+    VarianceDCT[VarianceDCT < 1e-10] = 1e-10
+    
+    FisherInformation = 1 / VarianceDCT ** 2
     FisherInformation = smooth_fisher_info(FisherInformation)
     
-    nzAC = np.count_nonzero(DCT_rounded) - np.count_nonzero(DCT_rounded[::8, ::8])
-    messageLenght = int(np.round(Payload * nzAC * np.log2(3)))
+    FI = FisherInformation * (2 * e - sgn_e) ** 4
+    maxCostMat = np.zeros_like(FI, dtype=bool)
+    maxCostMat[:, :, 0, 0] = True
+    maxCostMat[:, :, 4, 0] = True
+    maxCostMat[:, :, 0, 4] = True
+    maxCostMat[:, :, 4, 4] = True
+    FI[maxCostMat & (np.abs(e) > 0.4999)] = 1e10
+    FI[np.abs(e) < 0.01] = 1e10
     
-    FI = FisherInformation.flatten()
+    nzAC = num_blocks * 63
+    messageLenght = int(np.round(Payload * nzAC * np.log(2)))
+    
     beta = TernaryProbs(FI, messageLenght)
     
+    np.random.seed(0)
+    r = np.random.rand(*DCT_rounded.shape)
+    ModifPM1 = r < beta.reshape(DCT_rounded.shape)
+    S_COEFFS = DCT_rounded.copy()
+    S_COEFFS[ModifPM1] += change[ModifPM1]
+    S_COEFFS[S_COEFFS > 1024] = 1024
+    S_COEFFS[S_COEFFS < -1023] = -1023
+    ChangeRate = np.count_nonzero(ModifPM1) / ModifPM1.size
     pChange = beta.reshape(DCT_rounded.shape)
     
-    # 將beta轉換為syndrome coding所需的costs
-    rhos = -np.log(pChange / (1 - 2*pChange)) / 0.69314718055994529
+    S_STRUCT = C_STRUCT.copy()
+    S_STRUCT['coef_arrays'] = [S_COEFFS]
+    Deflection = np.sum(pChange * FI)
+    stego_y_dct_blocks = S_COEFFS * C_QUANT
+    stego_y_blocks = idct(stego_y_dct_blocks, norm='ortho') + 128
+    stego_y = unview_as_blocks(stego_y_blocks, cover_y.shape)
     
-    # 使用實際的STC進行嵌入編碼
-    stego_y = stc_embed(cover_y, rhos, C_QUANT)
-    
-    return stego_y, pChange
+    return stego_y, pChange, ChangeRate, Deflection
 
 def VarianceEstimationDCT2D(Image, BlockSize, Degree):
     if BlockSize % 2 != 1:
-        raise ValueError('BlockSize must be odd')
-
+        raise ValueError('The block dimensions should be odd!')
     if Degree > BlockSize:
-        raise ValueError('Degree must be less than or equal to BlockSize')
-
-    h, w = Image.shape
-    PadSize = BlockSize // 2
-    PadImage = np.pad(Image, ((PadSize, PadSize), (PadSize, PadSize)), mode='symmetric')
-    Blocks = np.lib.stride_tricks.as_strided(PadImage, shape=(h, w, BlockSize, BlockSize), strides=PadImage.itemsize * np.array([w, 1, w, 1]))
-
+        raise ValueError('Number of basis vectors exceeds block dimension!')
+    
     q = (Degree + 1) * (Degree + 2) // 2
-    G = np.zeros((BlockSize * BlockSize, q))
+    BaseMat = np.zeros((BlockSize, BlockSize))
+    BaseMat[0, 0] = 1
+    G = np.zeros((BlockSize ** 2, q))
     k = 0
-    for i in range(Degree + 1):
-        for j in range(Degree - i + 1):
-            basis = np.zeros((BlockSize, BlockSize), dtype=np.float32)
-            basis[i, j] = 1
-            G[:, k] = idct(idct(basis, axis=1, norm='ortho'), axis=0, norm='ortho').flatten()
+    for xShift in range(1, Degree + 1):
+        for yShift in range(1, Degree - xShift + 2):
+            G[:, k] = idct(idct(np.roll(BaseMat, (xShift - 1, yShift - 1), axis=(0, 1)), norm='ortho'), norm='ortho').flatten()
             k += 1
-
-    G_trans = G.T
-    Gt_G_inv = np.linalg.inv(G_trans @ G)
-    Var_est = np.zeros((h, w))
-    for i in range(h):
-        for j in range(w):
-            Block = Blocks[i, j].flatten()[:, np.newaxis]
-            Theta_est = Gt_G_inv @ G_trans @ Block
-            Var_est[i, j] = np.linalg.norm(Block - G @ Theta_est)**2 / (BlockSize * BlockSize - q)
-
-    return Var_est
+    
+    PadSize = BlockSize // 2
+    padded_image = np.pad(Image, ((PadSize, PadSize), (PadSize, PadSize)), mode='symmetric')
+    
+    m, n = Image.shape
+    M, N = BlockSize, BlockSize
+    num_blocks_ver = (m + M - 1) // M
+    num_blocks_hor = (n + N - 1) // N
+    
+    EstimatedVariance = np.zeros_like(Image, dtype=np.float64)
+    for i in range(num_blocks_ver):
+        for j in range(num_blocks_hor):
+            block = padded_image[i*M:i*M+BlockSize, j*N:j*N+BlockSize]
+            block_flat = block.flatten()
+            PGorth = np.eye(BlockSize ** 2) - G @ np.linalg.pinv(G.T @ G) @ G.T
+            var_est = np.sum((PGorth @ block_flat) ** 2) / (BlockSize ** 2 - q)
+            EstimatedVariance[i*M:min((i+1)*M, m), j*N:min((j+1)*N, n)] = var_est
+    
+    return EstimatedVariance
 
