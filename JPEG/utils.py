@@ -82,24 +82,22 @@ def extract_quantization_tables(image_path):
 
     return quant_tables_dict
 
-def stc_embed(cover, message, quantization_table):
-    BlockSize = 8
-    cover_blocks = view_as_blocks(cover, (BlockSize, BlockSize))
-    cover_dct_blocks = dct(cover_blocks - 128, norm='ortho')
-
-    # 使用 quantization_table 量化 DCT 係數
-    cover_quantized = np.round(cover_dct_blocks / quantization_table)
-
-    # 在量化的 DCT 係數中嵌入 message
-    stego_quantized = cover_quantized + message
-
-    # 對量化的 stego DCT 係數進行反量化
-    stego_dct_blocks = stego_quantized * quantization_table
-
-    # 對 stego DCT 係數應用反 DCT
-    stego_blocks = idct(stego_dct_blocks, norm='ortho') + 128
-    stego = unview_as_blocks(stego_blocks, cover.shape)
-
+def stc_embed(cover, pChange, quant_table, message):
+    # Perform embedding using syndrome-trellis codes (STCs)
+    # Modify the cover image based on the pChange values and the message
+    stego = cover.copy()
+    message_bits = iter(message)
+    
+    for i in range(cover.shape[0]):
+        for j in range(cover.shape[1]):
+            if np.random.random() < pChange[i // 8, j // 8, i % 8, j % 8]:
+                bit = next(message_bits, None)
+                if bit is not None:
+                    if bit == 1:
+                        stego[i, j] = min(stego[i, j] + quant_table[i % 8, j % 8], 255)
+                    else:
+                        stego[i, j] = max(stego[i, j] - quant_table[i % 8, j % 8], 0)
+    
     return stego
 
 def dct2(block):
@@ -219,7 +217,23 @@ def unview_as_blocks(blocks, arr_shape):
     M, N = blocks.shape[1], blocks.shape[2]
     return blocks.swapaxes(1,2).reshape(arr_shape)
 
-def JMiPODv0(cover_y, C_STRUCT, Payload):
+def JMiPODv0(cover_y, C_STRUCT, Payload, si_available=False, uncompressed_dct=None):
+    """
+    Performs J-MiPOD steganography on the given cover image.
+    
+    Args:
+        cover_y: The cover image in spatial domain.
+        C_STRUCT: The quantization tables and other JPEG compression parameters.
+        Payload: The desired payload size in bits per non-zero AC coefficient.
+        si_available: Flag indicating if side-information is available (default: False).
+        uncompressed_dct: The uncompressed DCT coefficients for side-informed steganography (default: None).
+    
+    Returns:
+        stego_y: The stego image in spatial domain.
+        pChange_y: The probability map of changes for each DCT coefficient.
+        ChangeRate: The actual change rate achieved.
+        Deflection: The deflection coefficient of the embedding.
+    """
     quantization_tables = C_STRUCT['quant_tables']
     C_QUANT = quantization_tables[0]
     
@@ -272,6 +286,25 @@ def JMiPODv0(cover_y, C_STRUCT, Payload):
     ChangeRate = np.count_nonzero(ModifPM1) / ModifPM1.size
     pChange = beta.reshape(DCT_rounded.shape)
     
+    if si_available:
+        # Perform side-informed steganography
+        # Use the uncompressed_dct to calculate the quantization error
+        e_si = uncompressed_dct - DCT_rounded
+        
+        # Modify the change probabilities based on the quantization error
+        beta_si = beta.copy()
+        beta_si[e_si > 0] = 0
+        beta_si[e_si < 0] = 2 * beta_si[e_si < 0]
+        
+        # Update the S_COEFFS and pChange based on the modified probabilities
+        r_si = np.random.rand(*DCT_rounded.shape)
+        ModifPM1_si = r_si < beta_si.reshape(DCT_rounded.shape)
+        S_COEFFS[ModifPM1_si] += change[ModifPM1_si]
+        S_COEFFS[S_COEFFS > 1024] = 1024
+        S_COEFFS[S_COEFFS < -1023] = -1023
+        ChangeRate = np.count_nonzero(ModifPM1_si) / ModifPM1_si.size
+        pChange = beta_si.reshape(DCT_rounded.shape)
+    
     S_STRUCT = C_STRUCT.copy()
     S_STRUCT['coef_arrays'] = [S_COEFFS]
     Deflection = np.sum(pChange * FI)
@@ -281,7 +314,7 @@ def JMiPODv0(cover_y, C_STRUCT, Payload):
     
     return stego_y, pChange, ChangeRate, Deflection
 
-def VarianceEstimationDCT2D(Image, BlockSize, Degree):
+def VarianceEstimationDCT2D(Image, BlockSize, Degree, eps=1e-8):
     if BlockSize % 2 != 1:
         raise ValueError('The block dimensions should be odd!')
     if Degree > BlockSize:
@@ -310,7 +343,7 @@ def VarianceEstimationDCT2D(Image, BlockSize, Degree):
         for j in range(num_blocks_hor):
             block = padded_image[i*M:i*M+BlockSize, j*N:j*N+BlockSize]
             block_flat = block.flatten()
-            PGorth = np.eye(BlockSize ** 2) - G @ np.linalg.pinv(G.T @ G) @ G.T
+            PGorth = np.eye(BlockSize ** 2) - G @ np.linalg.pinv(G.T @ G + eps * np.eye(q)) @ G.T
             var_est = np.sum((PGorth @ block_flat) ** 2) / (BlockSize ** 2 - q)
             EstimatedVariance[i*M:min((i+1)*M, m), j*N:min((j+1)*N, n)] = var_est
     
