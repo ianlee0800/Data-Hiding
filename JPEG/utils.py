@@ -1,6 +1,6 @@
 import numpy as np
-from scipy.signal import wiener
 from scipy.fftpack import dct, idct
+import scipy.signal
 import io
 from PIL import Image
 import tempfile
@@ -82,10 +82,24 @@ def extract_quantization_tables(image_path):
 
     return quant_tables_dict
 
+def wiener(im, mysize=None, noise=None):
+    if mysize is None:
+        mysize = [3, 3]
+    im = np.asarray(im)
+    lMean = scipy.signal.convolve2d(im, np.ones(mysize) / np.prod(mysize), mode='same', boundary='symm')
+    lVar = scipy.signal.convolve2d(im ** 2, np.ones(mysize) / np.prod(mysize), mode='same', boundary='symm') - lMean ** 2
+    lVar = np.maximum(lVar, 1e-8)  # 添加一個小常數,避免除以0
+    if noise is None:
+        noise = np.mean(np.ravel(lVar), axis=0)
+    res = im - lMean
+    res *= (1 - noise / lVar)
+    res += lMean
+    return res
+
 def stc_embed(cover, pChange, quant_table, message):
     # Perform embedding using syndrome-trellis codes (STCs)
     # Modify the cover image based on the pChange values and the message
-    stego = cover.copy()
+    stego = cover.astype(np.int16)
     message_bits = iter(message)
     
     for i in range(cover.shape[0]):
@@ -191,6 +205,7 @@ def TernaryProbs(FI, payload):
         i += 1
 
     if i == 20:
+        M = np.array([M])  # 將M轉換為numpy數組
         M = M[np.abs(fM).argmin()]
 
     beta = invxlnx2_fast(M * FI, xx, yy)
@@ -261,6 +276,7 @@ def JMiPODv0(cover_y, C_STRUCT, Payload, si_available=False, uncompressed_dct=No
     
     FisherInformation = 1 / VarianceDCT ** 2
     FisherInformation = smooth_fisher_info(FisherInformation)
+    FisherInformation = np.maximum(FisherInformation, 1e-8)  # 確保Fisher信息不會過小或為0
     
     FI = FisherInformation * (2 * e - sgn_e) ** 4
     maxCostMat = np.zeros_like(FI, dtype=bool)
@@ -284,6 +300,10 @@ def JMiPODv0(cover_y, C_STRUCT, Payload, si_available=False, uncompressed_dct=No
     S_COEFFS[S_COEFFS > 1024] = 1024
     S_COEFFS[S_COEFFS < -1023] = -1023
     ChangeRate = np.count_nonzero(ModifPM1) / ModifPM1.size
+    
+    if ChangeRate == 0:
+        raise ValueError("No information was embedded into the image. Please check the embedding process.")
+    
     pChange = beta.reshape(DCT_rounded.shape)
     
     if si_available:
