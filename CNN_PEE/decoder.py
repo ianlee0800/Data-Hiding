@@ -60,7 +60,7 @@ def predict_image_decoding(image):
     predicted_image = convolve2d(image, kernel, mode='same')
     return predicted_image
 
-def pee_extracting(stego_image, secret_data_length):
+def pee_extracting(stego_image, modified_positions, secret_data_length):
     preprocessed_image = preprocess_image_decoding(stego_image)
     predicted_image = predict_image_decoding(preprocessed_image)
 
@@ -68,7 +68,7 @@ def pee_extracting(stego_image, secret_data_length):
     data_index = 0
     for i in range(stego_image.shape[0]):
         for j in range(stego_image.shape[1]):
-            if data_index < secret_data_length:
+            if data_index < secret_data_length and modified_positions[i, j]:
                 prediction_error = stego_image[i, j].astype(int) - predicted_image[i, j].astype(int)
                 if prediction_error >= 0:
                     extracted_bit = prediction_error % 2
@@ -78,17 +78,16 @@ def pee_extracting(stego_image, secret_data_length):
                     extracted_bit = (-prediction_error) % 2
                     extracted_data.append(extracted_bit)
                     data_index += 1
-            else:
-                break
 
     restored_image = stego_image.copy()
     for i in range(stego_image.shape[0]):
         for j in range(stego_image.shape[1]):
-            prediction_error = stego_image[i, j].astype(int) - predicted_image[i, j].astype(int)
-            if prediction_error >= 0:
-                restored_image[i, j] = predicted_image[i, j] + prediction_error // 2
-            else:
-                restored_image[i, j] = predicted_image[i, j] + (prediction_error + 1) // 2
+            if modified_positions[i, j]:
+                prediction_error = stego_image[i, j].astype(int) - predicted_image[i, j].astype(int)
+                if prediction_error >= 0:
+                    restored_image[i, j] = predicted_image[i, j] + prediction_error // 2
+                else:
+                    restored_image[i, j] = predicted_image[i, j] + (prediction_error + 1) // 2
 
     return np.array(extracted_data), restored_image
 
@@ -106,8 +105,11 @@ secret_data_file = f"./CNN_PEE/stego/{stego_image_name.rsplit('_', 1)[0]}_secret
 with open(secret_data_file, "r") as file:
     secret_data = list(map(int, file.read().split(",")))
 
+# Load the modified positions from the file
+modified_positions = np.load(f"./CNN_PEE/stego/{stego_image_name.rsplit('_', 1)[0]}_modified_positions.npy")
+
 stego_image = cv2.imread(stego_image_path, cv2.IMREAD_GRAYSCALE)
-extracted_data, restored_image = pee_extracting(stego_image, len(secret_data))
+extracted_data, restored_image = pee_extracting(stego_image, modified_positions, len(secret_data))
 
 # Calculate PSNR and SSIM between the restored image and the original image
 origin_image_path = f"./CNN_PEE/origin/{stego_image_name.rsplit('_', 1)[0]}.png"

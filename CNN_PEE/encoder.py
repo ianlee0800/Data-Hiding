@@ -53,9 +53,11 @@ def pee_embedding(cover_image, secret_data):
     # Predict the preprocessed image
     predicted_image = predict_image(preprocessed_image)
 
-    # Calculate the prediction-error histogram
+    # Calculate the prediction errors
     prediction_errors = cover_image - predicted_image
-    histogram, _ = np.histogram(prediction_errors, bins=range(-255, 256))
+
+    # Create a binary mask to store the positions of modified pixels
+    modified_positions = np.zeros_like(cover_image, dtype=bool)
 
     # Perform PEE embedding
     stego_image = cover_image.copy()
@@ -66,14 +68,17 @@ def pee_embedding(cover_image, secret_data):
                 prediction_error = prediction_errors[i, j]
                 if prediction_error >= 0:
                     stego_image[i, j] = predicted_image[i, j] + 2 * prediction_error + secret_data[data_index]
+                    modified_positions[i, j] = True
                     data_index += 1
                 else:
                     stego_image[i, j] = predicted_image[i, j] + 2 * prediction_error - secret_data[data_index]
+                    modified_positions[i, j] = True
                     data_index += 1
             else:
                 break
 
-    return stego_image
+    return stego_image, modified_positions
+
 
 def calculate_psnr(origin_image, stego_image):
     mse = np.mean((origin_image - stego_image) ** 2)
@@ -100,7 +105,10 @@ if not os.path.isfile(cover_image_path):
 secret_data = [0, 1, 1, 0, 1, 0, 0, 1]
 
 cover_image = cv2.imread(cover_image_path, cv2.IMREAD_GRAYSCALE)
-stego_image = pee_embedding(cover_image, secret_data)
+stego_image, modified_positions = pee_embedding(cover_image, secret_data)
+
+# Save the modified positions to a file
+np.save(f"./CNN_PEE/stego/{cover_image_name}_modified_positions.npy", modified_positions)
 
 # Calculate PSNR and SSIM
 psnr_value = calculate_psnr(cover_image, stego_image)
