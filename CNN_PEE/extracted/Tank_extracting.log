@@ -1,0 +1,9 @@
+INFO:__main__:Extracting pixel (0, 0) - Prediction error: 105
+INFO:__main__:Extracting pixel (0, 1) - Prediction error: 31
+INFO:__main__:Extracting pixel (0, 2) - Prediction error: 87
+INFO:__main__:Extracting pixel (0, 3) - Prediction error: 33
+INFO:__main__:Extracting pixel (0, 4) - Prediction error: 90
+INFO:__main__:Extracting pixel (0, 5) - Prediction error: 35
+INFO:__main__:Extracting pixel (0, 6) - Prediction error: 85
+INFO:__main__:Extracting pixel (0, 7) - Prediction error: 40
+INFO:__main__:Extracted data: [1, 1, 1, 1, 0, 1, 1, 0]

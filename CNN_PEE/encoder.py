@@ -3,6 +3,11 @@ import cv2
 import os
 from scipy.signal import convolve2d
 from skimage.metrics import structural_similarity as ssim
+import logging
+
+# Get user input for the cover image name
+cover_image_name = input("Enter the cover image name (without extension): ")
+cover_image_path = f"./CNN_PEE/origin/{cover_image_name}.png"
 
 def preprocess_image(image):
     # Divide the image into four parts
@@ -46,6 +51,10 @@ def predict_image(image):
     predicted_image = image.copy()
     return predicted_image
 
+# Configure logging
+logging.basicConfig(filename=f"./CNN_PEE/stego/{cover_image_name}_embedding.log", level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 def pee_embedding(cover_image, secret_data):
     # Preprocess the cover image
     preprocessed_image = preprocess_image(cover_image)
@@ -59,6 +68,9 @@ def pee_embedding(cover_image, secret_data):
     # Create a binary mask to store the positions of modified pixels
     modified_positions = np.zeros_like(cover_image, dtype=bool)
 
+    # Create an array to store the embedded data for each modified pixel
+    embedded_data = np.zeros_like(cover_image, dtype=int)
+
     # Perform PEE embedding
     stego_image = cover_image.copy()
     data_index = 0
@@ -69,16 +81,17 @@ def pee_embedding(cover_image, secret_data):
                 if prediction_error >= 0:
                     stego_image[i, j] = predicted_image[i, j] + 2 * prediction_error + secret_data[data_index]
                     modified_positions[i, j] = True
+                    embedded_data[i, j] = secret_data[data_index]
                     data_index += 1
                 else:
                     stego_image[i, j] = predicted_image[i, j] + 2 * prediction_error - secret_data[data_index]
                     modified_positions[i, j] = True
+                    embedded_data[i, j] = secret_data[data_index]
                     data_index += 1
             else:
                 break
 
-    return stego_image, modified_positions
-
+    return stego_image, modified_positions, embedded_data
 
 def calculate_psnr(origin_image, stego_image):
     mse = np.mean((origin_image - stego_image) ** 2)
@@ -92,10 +105,6 @@ def calculate_ssim(origin_image, stego_image):
     ssim_value = ssim(origin_image, stego_image, data_range=origin_image.max() - origin_image.min())
     return ssim_value
 
-# Get user input for the cover image name
-cover_image_name = input("Enter the cover image name (without extension): ")
-cover_image_path = f"./CNN_PEE/origin/{cover_image_name}.png"
-
 # Check if the cover image exists
 if not os.path.isfile(cover_image_path):
     print(f"Error: Cover image '{cover_image_name}.png' not found in the './CNN_PEE/origin' directory.")
@@ -105,10 +114,13 @@ if not os.path.isfile(cover_image_path):
 secret_data = [0, 1, 1, 0, 1, 0, 0, 1]
 
 cover_image = cv2.imread(cover_image_path, cv2.IMREAD_GRAYSCALE)
-stego_image, modified_positions = pee_embedding(cover_image, secret_data)
+stego_image, modified_positions, embedded_data = pee_embedding(cover_image, secret_data)
 
 # Save the modified positions to a file
 np.save(f"./CNN_PEE/stego/{cover_image_name}_modified_positions.npy", modified_positions)
+
+# Save the embedded data to a file
+np.save(f"./CNN_PEE/stego/{cover_image_name}_embedded_data.npy", embedded_data)
 
 # Calculate PSNR and SSIM
 psnr_value = calculate_psnr(cover_image, stego_image)

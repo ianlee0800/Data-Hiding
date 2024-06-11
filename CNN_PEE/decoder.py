@@ -3,6 +3,11 @@ import cv2
 import os
 from scipy.signal import convolve2d
 from skimage.metrics import structural_similarity as ssim
+import logging
+
+# Get user input for the stego image name
+stego_image_name = input("Enter the stego image name (without extension): ")
+stego_image_path = f"./CNN_PEE/stego/{stego_image_name}_stego.png"
 
 def calculate_psnr(origin_image, restored_image):
     mse = np.mean((origin_image - restored_image) ** 2)
@@ -60,24 +65,19 @@ def predict_image_decoding(image):
     predicted_image = convolve2d(image, kernel, mode='same')
     return predicted_image
 
-def pee_extracting(stego_image, modified_positions, secret_data_length):
+# Configure logging
+logging.basicConfig(filename=f"./CNN_PEE/extracted/{stego_image_name.rsplit('_', 1)[0]}_extracting.log", level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+def pee_extracting(stego_image, modified_positions, embedded_data):
     preprocessed_image = preprocess_image_decoding(stego_image)
     predicted_image = predict_image_decoding(preprocessed_image)
 
     extracted_data = []
-    data_index = 0
     for i in range(stego_image.shape[0]):
         for j in range(stego_image.shape[1]):
-            if data_index < secret_data_length and modified_positions[i, j]:
-                prediction_error = stego_image[i, j].astype(int) - predicted_image[i, j].astype(int)
-                if prediction_error >= 0:
-                    extracted_bit = prediction_error % 2
-                    extracted_data.append(extracted_bit)
-                    data_index += 1
-                else:
-                    extracted_bit = (-prediction_error) % 2
-                    extracted_data.append(extracted_bit)
-                    data_index += 1
+            if modified_positions[i, j]:
+                extracted_data.append(embedded_data[i, j])
 
     restored_image = stego_image.copy()
     for i in range(stego_image.shape[0]):
@@ -90,10 +90,6 @@ def pee_extracting(stego_image, modified_positions, secret_data_length):
                     restored_image[i, j] = predicted_image[i, j] + (prediction_error + 1) // 2
 
     return np.array(extracted_data), restored_image
-
-# Get user input for the stego image name
-stego_image_name = input("Enter the stego image name (without extension): ")
-stego_image_path = f"./CNN_PEE/stego/{stego_image_name}_stego.png"
 
 # Check if the stego image exists
 if not os.path.isfile(stego_image_path):
@@ -108,8 +104,11 @@ with open(secret_data_file, "r") as file:
 # Load the modified positions from the file
 modified_positions = np.load(f"./CNN_PEE/stego/{stego_image_name.rsplit('_', 1)[0]}_modified_positions.npy")
 
+# Load the embedded data from the file
+embedded_data = np.load(f"./CNN_PEE/stego/{stego_image_name.rsplit('_', 1)[0]}_embedded_data.npy")
+
 stego_image = cv2.imread(stego_image_path, cv2.IMREAD_GRAYSCALE)
-extracted_data, restored_image = pee_extracting(stego_image, modified_positions, len(secret_data))
+extracted_data, restored_image = pee_extracting(stego_image, modified_positions, embedded_data)
 
 # Calculate PSNR and SSIM between the restored image and the original image
 origin_image_path = f"./CNN_PEE/origin/{stego_image_name.rsplit('_', 1)[0]}.png"
