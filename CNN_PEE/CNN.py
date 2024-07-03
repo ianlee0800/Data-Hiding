@@ -164,6 +164,8 @@ def predict(model, image, device):
         prediction = model(image)
     return prediction.squeeze().cpu().numpy()
 
+
+
 if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = AdaptiveCNNPredictor().to(device)

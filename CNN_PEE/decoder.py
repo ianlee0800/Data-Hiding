@@ -1,46 +1,34 @@
 import numpy as np
 import cv2
-import torch
-import os
-from CNN import AdaptiveCNNPredictor, preprocess_image
+from skimage.metrics import structural_similarity as ssim
 
-def load_cnn_model(model_path, device):
-    if not os.path.exists(model_path):
-        raise FileNotFoundError(f"CNN model file not found: {model_path}")
-    model = AdaptiveCNNPredictor().to(device)
-    model.load_state_dict(torch.load(model_path, map_location=device))
-    model.eval()
-    return model
+def load_image(path):
+    return cv2.imread(path, cv2.IMREAD_GRAYSCALE)
 
-def cnn_predict(model, image, device):
-    with torch.no_grad():
-        image_tensor = torch.from_numpy(image).unsqueeze(0).unsqueeze(0).float().to(device)
-        prediction = model(image_tensor)
-    return prediction.squeeze().cpu().numpy()
+def load_embedding_info(path):
+    return np.load(path, allow_pickle=True)
 
-def pee_extracting(stego_image, modified_positions, embedded_data, cnn_model, device):
-    preprocessed_image = preprocess_image(stego_image)
-    predicted_image = cnn_predict(cnn_model, preprocessed_image, device)
-
+def pee_extracting(stego_image, embedding_info):
     extracted_data = []
     restored_image = stego_image.copy()
 
-    for i in range(stego_image.shape[0]):
-        for j in range(stego_image.shape[1]):
-            if modified_positions[i, j]:
-                error = int(stego_image[i, j]) - int(round(predicted_image[i, j]))
-                
-                if error >= 0:
-                    extracted_bit = error % 2
-                    restored_value = predicted_image[i, j] + (error // 2)
-                else:
-                    extracted_bit = (-error) % 2
-                    restored_value = predicted_image[i, j] + (error // 2)
-                
-                extracted_data.append(extracted_bit)
-                restored_image[i, j] = int(round(restored_value))
-            else:
-                restored_image[i, j] = int(round(predicted_image[i, j]))
+    for info in embedding_info:
+        i, j = info['position']
+        stego_value = int(stego_image[i, j])
+        predicted_value = info['predicted_value']
+        error = info['error']
+        original_value = info['original_value']
+
+        if error >= 0:
+            extracted_bit = (stego_value - predicted_value - 2 * error)
+        else:
+            extracted_bit = -(stego_value - predicted_value - 2 * error)
+
+        extracted_data.append(extracted_bit)
+        restored_image[i, j] = original_value
+
+        print(f"位置 ({i}, {j}): stego值 = {stego_value}, 预测值 = {predicted_value}, 错误 = {error}")
+        print(f"提取位 = {extracted_bit}, 还原值 = {original_value}")
 
     return np.array(extracted_data), restored_image
 
@@ -52,101 +40,92 @@ def calculate_psnr(original, restored):
     psnr = 20 * np.log10(max_pixel / np.sqrt(mse))
     return psnr
 
-def calculate_ssim(original, restored):
-    from skimage.metrics import structural_similarity as ssim
-    return ssim(original, restored, data_range=original.max() - original.min())
-
-def load_image(path):
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Image file not found: {path}")
-    image = cv2.imread(path, cv2.IMREAD_GRAYSCALE)
-    if image is None:
-        raise ValueError(f"Failed to load image: {path}")
-    return image
-
-def load_numpy_file(path):
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Numpy file not found: {path}")
-    return np.load(path)
-
 if __name__ == "__main__":
     try:
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        
-        # 加載 CNN 模型
-        model_path = './CNN_PEE/model/adaptive_cnn_predictor.pth'
-        cnn_model = load_cnn_model(model_path, device)
-
-        # 讀取 stego 圖像
+        # 读取 stego 图像
         stego_image_path = "./CNN_PEE/stego/Tank_stego.png"
         stego_image = load_image(stego_image_path)
-        
-        # 讀取修改位置和嵌入數據
-        modified_positions = load_numpy_file("./CNN_PEE/stego/modified_positions.npy")
-        embedded_data = load_numpy_file("./CNN_PEE/stego/embedded_data.npy")
 
-        # 計算嵌入數據的總位元數
-        total_embedded_bits = np.sum(embedded_data)
+        # 读取嵌入信息
+        embedding_info = load_embedding_info("./CNN_PEE/stego/embedding_info.npy")
 
-        # 提取數據和還原圖像
-        extracted_data, restored_image = pee_extracting(stego_image, modified_positions, embedded_data, cnn_model, device)
+        # 读取原始秘密数据
+        original_secret_data = np.load("./CNN_PEE/stego/original_secret_data.npy")
 
-        # 讀取原始圖像和原始秘密數據（用於比較）
+        # 读取原始图像（用于比较）
         original_image_path = "./CNN_PEE/origin/Tank.png"
         original_image = load_image(original_image_path)
-        original_secret_data = load_numpy_file("./CNN_PEE/stego/original_secret_data.npy")
 
-        # 計算 PSNR 和 SSIM
+        # 验证加载的 stego 图像
+        saved_stego_values = np.load("./CNN_PEE/stego/stego_values.npy")
+        stego_match = np.array_equal(stego_image, saved_stego_values)
+        print(f"加载的 stego 图像与保存的 stego 值完全匹配: {stego_match}")
+
+        if not stego_match:
+            mismatch_count = np.sum(stego_image != saved_stego_values)
+            print(f"不匹配的像素数: {mismatch_count}")
+            print(f"不匹配率: {mismatch_count / (stego_image.shape[0] * stego_image.shape[1]):.4f}")
+
+        # 打印嵌入信息的前10项
+        print(f"嵌入信息的前10项：")
+        for i, info in enumerate(embedding_info[:10]):
+            print(f"位置 {i}: {info}")
+
+        # 提取数据和还原图像
+        extracted_data, restored_image = pee_extracting(stego_image, embedding_info)
+        
+        # 计算 PSNR 和 SSIM
         psnr = calculate_psnr(original_image, restored_image)
-        ssim = calculate_ssim(original_image, restored_image)
+        ssim_value = ssim(original_image, restored_image, data_range=original_image.max() - original_image.min())
 
         print(f"PSNR: {psnr:.2f} dB")
-        print(f"SSIM: {ssim:.6f}")
+        print(f"SSIM: {ssim_value:.6f}")
 
-        # 驗證提取的數據
-        print(f"嵌入數據長度: {len(original_secret_data)}, 提取的數據長度: {len(extracted_data)}")
+        # 验证提取的数据
+        print(f"嵌入数据长度: {len(original_secret_data)}, 提取的数据长度: {len(extracted_data)}")
 
-        if len(extracted_data) == len(original_secret_data):
-            data_match = np.array_equal(extracted_data, original_secret_data)
-            print(f"提取的數據與原始數據完全匹配: {data_match}")
+        # 比较提取的数据与原始秘密数据
+        data_match = np.array_equal(extracted_data, original_secret_data[:len(extracted_data)])
+        print(f"提取的数据与原始数据完全匹配: {data_match}")
+
+        if not data_match:
+            mismatched_count = np.sum(extracted_data != original_secret_data[:len(extracted_data)])
+            print(f"不匹配的位元数: {mismatched_count}")
+            print(f"不匹配率: {mismatched_count / len(extracted_data):.4f}")
             
-            if not data_match:
-                mismatched_count = np.sum(extracted_data != original_secret_data)
-                print(f"不匹配的位元數: {mismatched_count}")
-                print(f"不匹配率: {mismatched_count / len(original_secret_data):.4f}")
-                
-                # 顯示前幾個不匹配的位置
-                mismatch_indices = np.where(extracted_data != original_secret_data)[0]
-                print("前10個不匹配的位置及其值：")
-                for i in range(min(10, len(mismatch_indices))):
-                    idx = mismatch_indices[i]
-                    print(f"位置 {idx}: 提取值 {extracted_data[idx]}, 原始值 {original_secret_data[idx]}")
-        else:
-            print("提取的數據長度與原始數據長度不匹配")
-            print(f"提取數據的前20個值: {extracted_data[:20]}")
+            # 显示不匹配的位置
+            mismatch_indices = np.where(extracted_data != original_secret_data[:len(extracted_data)])[0]
+            print("不匹配的位置及其值：")
+            for idx in mismatch_indices:
+                print(f"位置 {idx}: 提取值 {extracted_data[idx]}, 原始值 {original_secret_data[idx]}")
 
-        # 驗證還原的圖像
+        # 验证还原的图像
         image_match = np.array_equal(restored_image, original_image)
-        print(f"還原的圖像與原始圖像完全匹配: {image_match}")
+        print(f"还原的图像与原始图像完全匹配: {image_match}")
 
         if not image_match:
             diff = np.abs(restored_image.astype(int) - original_image.astype(int))
-            print(f"不匹配的像素數: {np.sum(diff != 0)}")
-            print(f"最大像素差異: {np.max(diff)}")
-            print(f"平均像素差異: {np.mean(diff):.4f}")
+            print(f"不匹配的像素数: {np.sum(diff != 0)}")
+            print(f"最大像素差异: {np.max(diff)}")
+            print(f"平均像素差异: {np.mean(diff):.4f}")
             
-            # 顯示一些不匹配像素的詳細資訊
+            # 显示一些不匹配像素的详细信息
             mismatch_indices = np.where(diff != 0)
-            for i in range(min(10, len(mismatch_indices[0]))):  # 顯示前10個不匹配的像素
+            for i in range(min(10, len(mismatch_indices[0]))):  # 显示前10个不匹配的像素
                 x, y = mismatch_indices[0][i], mismatch_indices[1][i]
-                print(f"位置 ({x}, {y}): 原始值 {original_image[x, y]}, 還原值 {restored_image[x, y]}")
+                print(f"位置 ({x}, {y}): 原始值 {original_image[x, y]}, 还原值 {restored_image[x, y]}")
 
-        # 保存還原的圖像
+        # 保存还原的图像
         cv2.imwrite("./CNN_PEE/restored/Tank_restored.png", restored_image)
 
-        print("解碼完成。還原的圖像已保存。")
+        print(f"嵌入位置数量: {len(embedding_info)}")
+        print(f"嵌入错误范围: {min([info['error'] for info in embedding_info])} 到 {max([info['error'] for info in embedding_info])}")
+        print(f"原始秘密数据: {original_secret_data}")
+        print(f"提取的秘密数据: {extracted_data}")
+
+        print("解码完成。还原的图像已保存。")
 
     except Exception as e:
-        print(f"發生未預期的錯誤：{e}")
+        print(f"发生未预期的错误：{e}")
         import traceback
         traceback.print_exc()
