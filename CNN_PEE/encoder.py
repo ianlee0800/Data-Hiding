@@ -113,7 +113,7 @@ if __name__ == "__main__":
     cover_image = cv2.imread(cover_image_path, cv2.IMREAD_GRAYSCALE)
 
     # 生成秘密數據（示例）
-    payload_size = 10
+    payload_size = 10000
     secret_data = np.random.randint(0, 2, payload_size)
 
     # 執行 PEE 嵌入
