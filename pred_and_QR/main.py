@@ -13,9 +13,6 @@ from cnn_model import load_model, generate_predict_image
 def int_transfer_binary_single_intlist(array1D, bits=8):
     return np.unpackbits(np.array(array1D, dtype=np.uint8).reshape(-1, 1), axis=1)[:, -bits:].flatten()
 
-def repeat_int_array(array, lenNewA):
-    return (array * (lenNewA // len(array) + 1))[:lenNewA]
-
 def get_infor_from_array1D(array1D, num, digit):
     padding = digit - (len(array1D) % digit) if len(array1D) % digit != 0 else 0
     padded_array = np.pad(array1D, (0, padding), 'constant', constant_values=(0))
@@ -36,7 +33,6 @@ def main():
     k = 2  # QRcode模塊形狀調整寬度
     method = "h"  # 模塊形狀調整方法：h水平、v垂直
     EL = 7  # 嵌入限制(大於1)
-    weight = [1, 2, 11, 12]  # 加權值
 
     # 設置新的文件路徑
     image_path = os.path.join("./pred_and_QR/image", f"{imgName}.{filetype}")
@@ -83,23 +79,27 @@ def main():
     psnr_diff = calculate_psnr(origImg, img_diff)
     ssim_diff = calculate_ssim(origImg, img_diff)
 
-    # 二維碼：模塊形狀調整，嵌入加權值與EL
-    data_p = weight + [EL]
-    bin_weight = int_transfer_binary_single_intlist(data_p)
-    print(f"原始加權值: {data_p}")
-    print(f"原始加權值的二進制表示: {bin_weight}")
+    # 二維碼：模塊形狀調整，只嵌入EL
+    data_p = [EL]
+    bin_el = int_transfer_binary_single_intlist(data_p)
+    print(f"原始 EL 值: {EL}")
+    print(f"EL 的二進制表示: {bin_el}")
 
     bits, simQrcode = simplified_qrcode(QRCImg)
     loc = find_locaion(QRCImg, bits)
 
-    message = bin_weight  # 只嵌入原始的加權值，不進行重複
+    if method == "h":
+        payload_qr = calculate_embedded_bits(simQrcode, 1)
+    elif method == "v":
+        payload_qr = calculate_embedded_bits(simQrcode, 2)
+
+    message = bin_el  # 只嵌入 EL 值
     print(f"QR碼嵌入信息長度: {len(message)}")
 
     if method == "h":
         QRCImg_m = horizontal_embedding(QRCImg, simQrcode, loc, message, k)
     elif method == "v":
         QRCImg_m = vertical_embedding(QRCImg, simQrcode, loc, message, k)
-    print(f"QR碼嵌入的原始信息: {message}")
 
     # X2：DE嵌入法，嵌入二進制二維碼
     binQRC_m = array2D_transfer_to_array1D(QRCImg_m)
@@ -126,7 +126,7 @@ def main():
 
     # 輸出結果
     print(f"原影像: {imgName}, 原二維碼: {qrcodeName}")
-    print(f"加權值={weight}, EL={EL}")
+    print(f"EL={EL}")
     print(f"qrcode: ssim={ssim_q}, correct ratio={ratio_qr}")
     print(f"X1: payload={payload_diff}, bpp={bpp_diff}")
     print(f"X1: PSNR={psnr_diff}, SSIM={ssim_diff}")
@@ -141,7 +141,7 @@ def main():
     markedImg = img_h.copy()
     exImg_diff, exInf_qr = decode_different_expansion(markedImg, hidemap)
     flag_img = np.array_equal(exImg_diff, img_diff)
-    flag_inf = np.array_equal(binQRC_m[:40], exInf_qr)  # 只比較前40位
+    flag_inf = np.array_equal(binQRC_m, exInf_qr)
     exQRc = array1D_transfer_to_array2D(exInf_qr)
 
     w = find_w(exQRc)
@@ -156,18 +156,19 @@ def main():
 
     print(f"提取的二進制數據長度: {len(exBin)}")
     print(f"提取的二進制數據: {exBin}")
-    print(f"原始嵌入的二進制數據: {message}")
-    exWeight = get_infor_from_array1D(exBin, 5, 8)
-    print(f"提取的加權值（包括 EL）：{exWeight}")
+
+    # 只提取 EL 值
+    exEL = get_infor_from_array1D(exBin, 1, 8)[0]
+    print(f"提取的 EL 值：{exEL}")
 
     exImg_p = generate_predict_image(exImg_diff, model)
     exdiffA_e = two_array2D_add_or_subtract(exImg_diff, exImg_p, -1)
-    exdiffA_s, exInf = decode_image_difference_embeding(exdiffA_e, EL, len(inInf))
-    exdiffA = decode_image_different_shift(exdiffA_s, EL)
+    exdiffA_s, exInf = decode_image_difference_embeding(exdiffA_e, exEL, len(inInf))
+    exdiffA = decode_image_different_shift(exdiffA_s, exEL)
     print(f"解碼的差值信息長度: {len(exInf)}")
 
-    print(f"原始加權值：{data_p}")
-    print(f"提取的加權值：{exWeight}")
+    print(f"原始 EL 值：{EL}")
+    print(f"提取的 EL 值：{exEL}")
     print(f"DE 影像還原正確：{flag_img}")
     print(f"取出二維碼資訊正確：{flag_inf}")
     print(f"原始隱藏資訊長度：{len(inInf)}")

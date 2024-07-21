@@ -958,10 +958,10 @@ ssim_h = calculate_ssim(origImg, img_h)
 cv2.imwrite("./pred_and_QR/outcome/image/%s/%s_pred.%s"%(imgName, imgName, filetype), img_p)#預測影像
 cv2.imwrite("./pred_and_QR/outcome/qrcode/%s_%s.%s"%(qrcodeName, method, filetype), QRCImg_m)#嵌入後二維碼
 cv2.imwrite("./pred_and_QR/outcome/image/%s/%s_X1.%s"%(imgName, imgName, filetype), img_diff)#X1
-cv2.imwrite("./pred_and_QR/outcome/image/%s/%s_X2.%s"%(imgName, imgName, filetype), img_de)#X2
+cv2.imwrite("./pred_and_QR/outcome/image/%s/%s_X2.%s"%(imgName, imgName, filetype), img_de)#X2 
 cv2.imwrite("./pred_and_QR/outcome/image/%s/%s_X3.%s"%(imgName, imgName, filetype), img_h)#X3
 #差值直方圖影像的輸出
-plt.bar(diffId, diffNum)
+plt.bar(diffId, diffNum)  
 # plt.title("difference")
 plt.ylim(0, diffNum[range_x+1]*1.3)
 plt.savefig("./pred_and_QR/outcome/histogram/%s/difference/%s_diff.%s"%(imgName, imgName, filetype))
@@ -969,30 +969,41 @@ plt.close()
 plt.bar(diffId_s, diffNum_s)
 # plt.title("difference shift")
 plt.ylim(0, diffNum[range_x+1]*1.3)
-plt.savefig("./pred_and_QR/outcome/histogram/%s/difference/%s_diffshift.%s"%(imgName, imgName, filetype))
+plt.savefig("./pred_and_QR/outcome/histogram/%s/difference/%s_diffshift.%s"%(imgName, imgName, filetype)) 
 plt.close()
 plt.bar(diffId_e, diffNum_e)
 plt.ylim(0, diffNum[range_x+1]*1.3)
-# plt.title("difference embeding")
+# plt.title("difference embeding")  
 plt.savefig("./pred_and_QR/outcome/histogram/%s/difference/%s_diffembed.%s"%(imgName, imgName, filetype))
 plt.close()
 #原影像直方圖
 hist_orig = generate_histogram(origImg)
 plt.bar(range(256), hist_orig)
 plt.savefig("./pred_and_QR/outcome/histogram/%s/%s_orighist.%s"%(imgName, imgName, filetype))
-plt.close()
+plt.close()  
 #X1直方圖
 plt.bar(range(256), hist_diff)
 plt.savefig("./pred_and_QR/outcome/histogram/%s/%s_X1_hist.%s"%(imgName, imgName, filetype))
 plt.close()
-#X2直方圖
+#X2直方圖  
 plt.bar(range(256), hist_de)
-plt.savefig("./pred_and_QR/outcome/histogram/%s/%s_X2_hist.%s"%(imgName, imgName, filetype))
+plt.savefig("./pred_and_QR/outcome/histogram/%s/%s_X2_hist.%s"%(imgName, imgName, filetype)) 
 plt.close()
 #X3直方圖
-plt.bar(range(256), hist_h)
+plt.bar(range(256), hist_h)  
 plt.savefig("./pred_and_QR/outcome/histogram/%s/%s_X3_hist.%s"%(imgName, imgName, filetype))
 plt.close()
+
+print("原影像: %s, 原二維碼: %s"%(imgName, qrcodeName))
+print("加權值=%s, EL=%s"%(weight, EL))
+print("qrcode: ssim=%s, correct ration=%s"%(ssim_q, ratio_qr))
+print("X1: payload=%s, bpp=%s"%(payload_diff, bpp_diff)) #X1:嵌入後的影像
+print("X1: PSNR=%s, SSIM=%s"%(psnr_diff, ssim_diff))
+print("X2: maximum payload=%s, location map=%s bits"%(payload_de, len(bin_map)))
+print("X2: PSNR=%s, SSIM=%s"%(psnr_de, ssim_de))
+print("X3: peak=%s, payload=%s"%(peak, payload_h))
+print("X3: PSNR=%s, SSIM=%s"%(psnr_h, ssim_h))
+print("...加密完成...")
 print()
 
 #decode
@@ -1024,26 +1035,27 @@ exWeight = get_infor_from_array1D(exBin, 4, 8)
 exImg_p = generate_perdict_image(origImg, exWeight)
 exdiffA_e = two_array2D_add_or_subtract(exImg_diff, exImg_p, -1)
 exdiffId_e, exdiffNum_e = generate_different_histogram_without_frame(exdiffA_e, list(range(-range_x,range_x+1)), [0]*(range_x*2+1))
+
 # plt.subplot(234)
-plt.bar(exdiffId_e, exdiffNum_e)
+plt.bar(exdiffId_e, exdiffNum_e)  
 plt.ylim(0, diffNum[range_x+1]*1.3)
-plt.savefig("outcome/histogram/%s/difference/de_%s_diffembed.%s"%(imgName, imgName, filetype))
+plt.savefig("./pred_and_QR/outcome/histogram/%s/difference/de_%s_diffembed.%s"%(imgName, imgName, filetype))
 plt.close()
 #解碼已嵌入差值直方圖得到隱藏資訊
 exdiffA_s, exInf = decode_image_difference_embeding(exdiffA_e, EL)
 exdiffId_s, exdiffNum_s = generate_different_histogram_without_frame(exdiffA_s, list(range(-range_x,range_x+1)), [0]*(range_x*2+1))
-# plt.subplot(235)
+# plt.subplot(235)  
 plt.bar(exdiffId_s, exdiffNum_s)
 plt.ylim(0, diffNum[range_x+1]*1.3)
-plt.savefig("outcome/histogram/%s/difference/de_%s_diffshift.%s"%(imgName, imgName, filetype))
-plt.close()
+plt.savefig("./pred_and_QR/outcome/histogram/%s/difference/de_%s_diffshift.%s"%(imgName, imgName, filetype)) 
+plt.close()  
 #將已平移過的直方圖復原
 exdiffA = decode_image_different_shift(exdiffA_s, EL)
 exdiffId, exdiffNum = generate_different_histogram_without_frame(exdiffA, list(range(-range_x,range_x+1)), [0]*(range_x*2+1))
 # plt.subplot(236)
 plt.bar(exdiffId, exdiffNum)
-plt.ylim(0, diffNum[range_x+1]*1.3)
-plt.savefig("outcome/histogram/%s/difference/de_%s_diff.%s"%(imgName, imgName, filetype))
+plt.ylim(0, diffNum[range_x+1]*1.3)  
+plt.savefig("./pred_and_QR/outcome/histogram/%s/difference/de_%s_diff.%s"%(imgName, imgName, filetype))
 plt.close()
 # plt.show()
 
