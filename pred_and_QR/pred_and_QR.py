@@ -894,8 +894,8 @@ method = "h" #模塊形狀調整方法：h水平、v垂直
 EL = 7 #嵌入限制(大於1)
 weight = [1,2,11,12] #加權值
 
-origImg = cv2.imread("image/%s.%s"%(imgName, filetype), cv2.IMREAD_GRAYSCALE) #原影像讀取位置
-QRCImg = cv2.imread("./qrcode/%s.%s"%(qrcodeName, filetype), cv2.IMREAD_GRAYSCALE) #二維碼影像讀取位置
+origImg = cv2.imread("./pred_and_QR/image/%s.%s"%(imgName, filetype), cv2.IMREAD_GRAYSCALE) #原影像讀取位置
+QRCImg = cv2.imread("./pred_and_QR/qrcode/%s.%s"%(qrcodeName, filetype), cv2.IMREAD_GRAYSCALE) #二維碼影像讀取位置
 
 #encode
 
@@ -955,55 +955,44 @@ psnr_h = calculate_psnr(origImg, img_h)
 ssim_h = calculate_ssim(origImg, img_h)
 
 #相關影像儲存
-cv2.imwrite("outcome/image/%s/%s_pred.%s"%(imgName, imgName, filetype), img_p)#預測影像
-cv2.imwrite("outcome/qrcode/%s_%s.%s"%(qrcodeName, method, filetype), QRCImg_m)#嵌入後二維碼
-cv2.imwrite("outcome/image/%s/%s_X1.%s"%(imgName, imgName, filetype), img_diff)#X1
-cv2.imwrite("outcome/image/%s/%s_X2.%s"%(imgName, imgName, filetype), img_de)#X2
-cv2.imwrite("outcome/image/%s/%s_X3.%s"%(imgName, imgName, filetype), img_h)#X3
+cv2.imwrite("./pred_and_QR/outcome/image/%s/%s_pred.%s"%(imgName, imgName, filetype), img_p)#預測影像
+cv2.imwrite("./pred_and_QR/outcome/qrcode/%s_%s.%s"%(qrcodeName, method, filetype), QRCImg_m)#嵌入後二維碼
+cv2.imwrite("./pred_and_QR/outcome/image/%s/%s_X1.%s"%(imgName, imgName, filetype), img_diff)#X1
+cv2.imwrite("./pred_and_QR/outcome/image/%s/%s_X2.%s"%(imgName, imgName, filetype), img_de)#X2
+cv2.imwrite("./pred_and_QR/outcome/image/%s/%s_X3.%s"%(imgName, imgName, filetype), img_h)#X3
 #差值直方圖影像的輸出
 plt.bar(diffId, diffNum)
 # plt.title("difference")
 plt.ylim(0, diffNum[range_x+1]*1.3)
-plt.savefig("outcome/histogram/%s/difference/%s_diff.%s"%(imgName, imgName, filetype))
+plt.savefig("./pred_and_QR/outcome/histogram/%s/difference/%s_diff.%s"%(imgName, imgName, filetype))
 plt.close()
 plt.bar(diffId_s, diffNum_s)
 # plt.title("difference shift")
 plt.ylim(0, diffNum[range_x+1]*1.3)
-plt.savefig("outcome/histogram/%s/difference/%s_diffshift.%s"%(imgName, imgName, filetype))
+plt.savefig("./pred_and_QR/outcome/histogram/%s/difference/%s_diffshift.%s"%(imgName, imgName, filetype))
 plt.close()
 plt.bar(diffId_e, diffNum_e)
 plt.ylim(0, diffNum[range_x+1]*1.3)
 # plt.title("difference embeding")
-plt.savefig("outcome/histogram/%s/difference/%s_diffembed.%s"%(imgName, imgName, filetype))
+plt.savefig("./pred_and_QR/outcome/histogram/%s/difference/%s_diffembed.%s"%(imgName, imgName, filetype))
 plt.close()
 #原影像直方圖
 hist_orig = generate_histogram(origImg)
 plt.bar(range(256), hist_orig)
-plt.savefig("outcome/histogram/%s/%s_orighist.%s"%(imgName, imgName, filetype))
+plt.savefig("./pred_and_QR/outcome/histogram/%s/%s_orighist.%s"%(imgName, imgName, filetype))
 plt.close()
 #X1直方圖
 plt.bar(range(256), hist_diff)
-plt.savefig("outcome/histogram/%s/%s_X1_hist.%s"%(imgName, imgName, filetype))
+plt.savefig("./pred_and_QR/outcome/histogram/%s/%s_X1_hist.%s"%(imgName, imgName, filetype))
 plt.close()
 #X2直方圖
 plt.bar(range(256), hist_de)
-plt.savefig("outcome/histogram/%s/%s_X2_hist.%s"%(imgName, imgName, filetype))
+plt.savefig("./pred_and_QR/outcome/histogram/%s/%s_X2_hist.%s"%(imgName, imgName, filetype))
 plt.close()
 #X3直方圖
 plt.bar(range(256), hist_h)
-plt.savefig("outcome/histogram/%s/%s_X3_hist.%s"%(imgName, imgName, filetype))
+plt.savefig("./pred_and_QR/outcome/histogram/%s/%s_X3_hist.%s"%(imgName, imgName, filetype))
 plt.close()
-
-print("原影像: %s, 原二維碼: %s"%(imgName, qrcodeName))
-print("加權值=%s, EL=%s"%(weight, EL))
-print("qrcode: ssim=%s, correct ration=%s"%(ssim_q, ratio_qr))
-print("X1: payload=%s, bpp=%s"%(payload_diff, bpp_diff)) #X1:嵌入後的影像
-print("X1: PSNR=%s, SSIM=%s"%(psnr_diff, ssim_diff))
-print("X2: maximum payload=%s, location map=%s bits"%(payload_de, len(bin_map)))
-print("X2: PSNR=%s, SSIM=%s"%(psnr_de, ssim_de))
-print("X3: peak=%s, payload=%s"%(peak, payload_h))
-print("X3: PSNR=%s, SSIM=%s"%(psnr_h, ssim_h))
-print("...加密完成...")
 print()
 
 #decode
