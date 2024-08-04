@@ -41,26 +41,30 @@ def generate_histogram(array2D):
             num[value] += 1
     return num
 
+def generate_different_histogram_without_frame(array2d, histId, histNum):
+    """
+    累算二維陣列上的數值並生成直方圖，不包括邊框
+    """
+    height, width = array2d.shape
+    for y in range(1, height-1):
+        for x in range(1, width-1):
+            value = int(array2d[y,x])
+            for i, id_value in enumerate(histId):
+                if value == id_value:
+                    histNum[i] += 1
+    return histId, histNum
+
 def two_array2D_add_or_subtract(array2D_1, array2D_2, sign):
     """
     兩個二維陣列的數值相加或相減
     """
-    row, column = array2D_1.shape
-    diff = np.zeros((row, column))
-    for j in range(row):
-        for i in range(column):
-            diff[j,i] = int(array2D_1[j,i]) + sign*int(array2D_2[j,i])
-    return diff
+    return array2D_1 + sign * array2D_2
 
 def find_max(array1D):
     """
     找出一維陣列中最大值的索引
     """
-    max_index = 0 
-    for i in range(1, len(array1D)):
-        if array1D[i] > array1D[max_index]:
-            max_index = i
-    return max_index
+    return np.argmax(array1D)
 
 def find_w(image):
     """
@@ -71,11 +75,9 @@ def find_w(image):
     for y in range(height):
         RunLength = 0
         for x in range(width-1):
-            color1 = image[y,x]
-            color2 = image[y,x+1]
-            if color1 == color2:
+            if image[y,x] == image[y,x+1]:
                 RunLength += 1
-            elif color1 != color2:
+            else:
                 RLArray[RunLength+1] += 1
                 RunLength = 0
     w = find_max(RLArray)
@@ -85,49 +87,53 @@ def array2D_transfer_to_array1D(array2D):
     """
     二維陣列轉換為一維陣列
     """
-    array1D = []
-    row, column = array2D.shape
-    for y in range(row):
-        for x in range(column):
-            value = array2D[y,x]
-            if value < 128:
-                array1D.append(0)
-            elif value >= 128:
-                array1D.append(1)
-    return array1D
+    return (array2D >= 128).flatten().astype(int)
 
 def array1D_transfer_to_array2D(array1D):
     """
     一維陣列轉換為二維陣列
     """
-    length = len(array1D)
-    side = int(length**0.5)
-    array2D = np.zeros((side, side))
-    i = 0
-    for y in range(side):
-        for x in range(side):
-            value = array1D[i]
-            if value == 1:
-                value = 255
-            array2D[y,x] = value
-            i += 1
-    return array2D
+    side = int(np.sqrt(len(array1D)))
+    array2D = np.array(array1D).reshape(side, side)
+    return array2D * 255
 
 def same_array1D(array1, array2):
     """
     檢查兩個一維陣列是否相同
     """
-    if len(array1) != len(array2):
-        return False
-    return all(a == b for a, b in zip(array1, array2))
+    return np.array_equal(array1, array2)
 
 def same_array2D(array1, array2):
     """
     檢查兩個二維陣列是否相同
     """
-    if array1.shape != array2.shape:
-        return False
-    return np.all(array1 == array2)
+    return np.array_equal(array1, array2)
+
+def image_rotation(image, times):
+    """
+    將圖像旋轉指定的次數（每次旋轉90度）
+    
+    參數:
+    image: 輸入圖像
+    times: 旋轉次數（整數）
+    
+    返回:
+    旋轉後的圖像
+    """
+    return np.rot90(image, times)
+
+def image_rerotation(image, times):
+    """
+    將圖像轉回原方向
+    
+    參數:
+    image: 輸入圖像
+    times: 原圖像已被90度旋轉的次數
+    
+    返回:
+    轉回原方向的圖像
+    """
+    return np.rot90(image, -times % 4)
 
 # 如果需要直接運行此文件進行測試
 if __name__ == "__main__":
@@ -137,3 +143,9 @@ if __name__ == "__main__":
     processed_image = preprocess_image(test_image)
     histogram = generate_histogram(processed_image)
     print("Histogram sample:", histogram[:10])  # 打印直方圖的前10個值
+
+    # 測試新添加的 generate_different_histogram_without_frame 函數
+    histId = list(range(-10, 11))  # 從 -10 到 10 的範圍
+    histNum = [0] * len(histId)
+    _, diff_histogram = generate_different_histogram_without_frame(processed_image, histId, histNum)
+    print("Different histogram sample:", diff_histogram[:10])  # 打印差異直方圖的前10個值
