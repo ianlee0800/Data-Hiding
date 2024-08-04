@@ -44,13 +44,14 @@ def main():
     print("程序執行開始...")
 
     # 設置參數
-    imgName = "airplane"
+    imgName = "airplane"  
     qrcodeName = "nuk_L"
     filetype = "png"
     range_x = 10  # 預估是嵌入過程直方圖x範圍
     k = 2  # QRcode模塊形狀調整寬度
     method = "h"  # 模塊形狀調整方法：h水平、v垂直
     EL = 7  # 嵌入限制(大於1)
+    rotation_times = 1  # 旋轉次數，例如旋轉90度
 
     # 設置新的文件路徑
     image_path = os.path.join("./pred_and_QR/image", f"{imgName}.{filetype}")
@@ -75,12 +76,9 @@ def main():
     print(f"成功讀取QR碼文件: {qrcode_path}")
 
     print("加載CNN模型...")
-    model_path = "./CNN_PEE/model/adaptive_cnn_predictor.pth"
+    model_path = "./CNN_PEE/model/adaptive_cnn_predictor.pth"  
     model = load_model(model_path)
     
-    # 定義旋轉次數（可以根據需要調整）
-    rotation_times = 0  # 例如，旋轉90度
-
     print(f"旋轉圖像 {rotation_times * 90} 度...")
     rotated_img = image_rotation(origImg, rotation_times)
 
@@ -95,7 +93,7 @@ def main():
     # X1: 預估式嵌入法，嵌入隨機位元
     diffA = two_array2D_add_or_subtract(rotated_img, img_p, -1)
     payload_diff = np.sum((diffA >= -EL) & (diffA <= EL)) - np.sum((diffA == -EL) | (diffA == EL))
-    bpp_diff = round(payload_diff / rotated_img.size, 2)
+    bpp_diff = round(payload_diff / rotated_img.size, 4)
 
     # 1. 原始差值直方圖
     diffId, diffNum = generate_different_histogram_without_frame(diffA, list(range(-range_x, range_x+1)), [0]*(range_x*2+1))
@@ -103,14 +101,14 @@ def main():
                               "Original Difference Histogram", range_x)
 
     diffA_s = image_difference_shift(diffA, EL)
-    
+
     # 2. 差值平移後的直方圖
     diffId_s, diffNum_s = generate_different_histogram_without_frame(diffA_s, list(range(-range_x, range_x+1)), [0]*(range_x*2+1))
     save_difference_histogram(diffNum_s, f"./pred_and_QR/outcome/histogram/{imgName}/difference/{imgName}_diffshift.{filetype}", 
                               "Difference Shift Histogram", range_x)
 
     diffA_e, inInf = image_difference_embeding(diffA_s, 0, EL, 0)
-    
+
     # 3. 差值嵌入後的直方圖
     diffId_e, diffNum_e = generate_different_histogram_without_frame(diffA_e, list(range(-range_x, range_x+1)), [0]*(range_x*2+1))
     save_difference_histogram(diffNum_e, f"./pred_and_QR/outcome/histogram/{imgName}/difference/{imgName}_diffembed.{filetype}", 
@@ -121,8 +119,6 @@ def main():
     print(f"差值嵌入信息長度: {len(inInf)}")
 
     hist_diff = generate_histogram(img_diff)
-    psnr_diff = calculate_psnr(origImg, img_diff)
-    ssim_diff = calculate_ssim(origImg, img_diff)
 
     # 保存X1結果直方圖
     save_histogram(hist_diff, f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X1_hist.{filetype}", 
@@ -157,8 +153,6 @@ def main():
     print(f"DE嵌入後圖像數據類型: {img_de.dtype}")
 
     hist_de = generate_histogram(img_de)
-    psnr_de = calculate_psnr(origImg, img_de)
-    ssim_de = calculate_ssim(origImg, img_de)
 
     # 保存X2結果直方圖
     save_histogram(hist_de, f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X2_hist.{filetype}", 
@@ -174,43 +168,49 @@ def main():
     print(f"直方圖平移嵌入後圖像數據類型: {img_h.dtype}")
 
     hist_h = generate_histogram(img_h)
-    psnr_h = calculate_psnr(origImg, img_h)
-    ssim_h = calculate_ssim(origImg, img_h)
 
     # 保存X3結果直方圖
     save_histogram(hist_h, f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X3_hist.{filetype}", 
                    "X3: Histogram Shift", "Pixel Value", "Frequency")
 
-    # 所有嵌入步驟完成後，將圖像轉回原方向
+    # 所有嵌入步驟完成後,將圖像轉回原方向
     img_h = image_rerotation(img_h, rotation_times)
-    
+
     # 保存中間結果
     cv2.imwrite(f"./pred_and_QR/outcome/image/{imgName}/{imgName}_pred.{filetype}", img_p)
     cv2.imwrite(f"./pred_and_QR/outcome/qrcode/{qrcodeName}_{method}.{filetype}", QRCImg_m)
-    cv2.imwrite(f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1.{filetype}", img_diff)
-    cv2.imwrite(f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X2.{filetype}", img_de)
+    cv2.imwrite(f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1.{filetype}", image_rerotation(img_diff, rotation_times))
+    cv2.imwrite(f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X2.{filetype}", image_rerotation(img_de, rotation_times))   
     cv2.imwrite(f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X3.{filetype}", img_h)
+
+    # 計算PSNR和SSIM時使用原始未旋轉的圖像
+    psnr_diff = calculate_psnr(origImg, image_rerotation(img_diff, rotation_times))
+    ssim_diff = calculate_ssim(origImg, image_rerotation(img_diff, rotation_times))
+    psnr_de = calculate_psnr(origImg, image_rerotation(img_de, rotation_times))
+    ssim_de = calculate_ssim(origImg, image_rerotation(img_de, rotation_times))
+    psnr_h = calculate_psnr(origImg, img_h)
+    ssim_h = calculate_ssim(origImg, img_h)
 
     # 輸出結果
     print(f"原影像: {imgName}, 原二維碼: {qrcodeName}")
     print(f"EL={EL}")
-    print(f"qrcode: ssim={ssim_q}, correct ratio={ratio_qr}")
+    print(f"qrcode: ssim={ssim_q}, correct ratio={ratio_qr}") 
     print(f"X1: payload={payload_diff}, bpp={bpp_diff}")
     print(f"X1: PSNR={psnr_diff}, SSIM={ssim_diff}")
-    print(f"X2: maximum payload={payload_de}, location map={len(bin_map)} bits")
+    print(f"X2: maximum payload={payload_de}, location map={len(bin_map)} bits")  
     print(f"X2: PSNR={psnr_de}, SSIM={ssim_de}")
     print(f"X3: peak={peak}, payload={payload_h}")
     print(f"X3: PSNR={psnr_h}, SSIM={ssim_h}")
     print("...加密完成...")
-    
-# 解密過程
+
+# 解密過程  
     print("\n開始解密過程...")
     markedImg = img_h.copy()
-    
+
     # 將接收到的圖像旋轉到處理方向
     rotated_markedImg = image_rotation(markedImg, rotation_times)
-    
-    exImg_diff, exInf_qr = decode_different_expansion(markedImg, hidemap)
+
+    exImg_diff, exInf_qr = decode_different_expansion(rotated_markedImg, hidemap)  
     flag_img = np.array_equal(exImg_diff, img_diff)
     flag_inf = np.array_equal(binQRC_m, exInf_qr)
     exQRc = array1D_transfer_to_array2D(exInf_qr)
@@ -241,15 +241,15 @@ def main():
                               "Decoded Difference Embedding Histogram", range_x)
 
     exdiffA_s, exInf = decode_image_difference_embeding(exdiffA_e, exEL, len(inInf))
-    
+
     # 5. 解碼後的差值平移直方圖
     exdiffId_s, exdiffNum_s = generate_different_histogram_without_frame(exdiffA_s, list(range(-range_x, range_x+1)), [0]*(range_x*2+1))
     save_difference_histogram(exdiffNum_s, f"./pred_and_QR/outcome/histogram/{imgName}/difference/de_{imgName}_diffshift.{filetype}", 
                               "Decoded Difference Shift Histogram", range_x)
 
     exdiffA = decode_image_different_shift(exdiffA_s, exEL)
-    
-    # 6. 解碼後的原始差值直方圖
+
+    # 6. 解碼後的原始差值直方圖  
     exdiffId, exdiffNum = generate_different_histogram_without_frame(exdiffA, list(range(-range_x, range_x+1)), [0]*(range_x*2+1))
     save_difference_histogram(exdiffNum, f"./pred_and_QR/outcome/histogram/{imgName}/difference/de_{imgName}_diff.{filetype}", 
                               "Decoded Original Difference Histogram", range_x)
@@ -257,24 +257,24 @@ def main():
     print(f"解碼的差值信息長度: {len(exInf)}")
 
     # 解密完成後，將恢復的圖像轉回原方向
-    recovered_img = image_rerotation(exImg_diff, rotation_times)
-
+    exImg_diff = image_rerotation(exImg_diff, rotation_times)
+                              
     print(f"原始 EL 值：{EL}")
-    print(f"提取的 EL 值：{exEL}")
+    print(f"提取的 EL 值：{exEL}")  
     print(f"DE 影像還原正確：{flag_img}")
     print(f"取出二維碼資訊正確：{flag_inf}")
-    print(f"原始隱藏資訊長度：{len(inInf)}")
+    print(f"原始隱藏資訊長度：{len(inInf)}")  
     print(f"提取的隱藏資訊長度：{len(exInf)}")
     print(f"隱藏資訊提取正確：{np.array_equal(inInf[:len(exInf)], exInf)}")
 
     if flag_img and flag_inf and np.array_equal(inInf[:len(exInf)], exInf):
-        print("...解密完成...")
+        print("...解密完成...") 
     else:
         print("...解密失敗...")
         if not flag_img:
             print("DE 影像還原錯誤")
         if not flag_inf:
-            print("取出二維碼資訊錯誤")
+            print("取出二維碼資訊錯誤") 
         if not np.array_equal(inInf[:len(exInf)], exInf):
             print("差值直方圖解碼，隱藏資訊提取錯誤")
 
@@ -285,11 +285,11 @@ def main():
     plt.title(f"{imgName}")
     plt.axis('off')
     plt.subplot(2, 2, 2)
-    plt.imshow(img_diff, cmap="gray")
-    plt.title("difference histogram")
+    plt.imshow(image_rerotation(img_diff, rotation_times), cmap="gray")
+    plt.title("difference histogram") 
     plt.axis('off')
     plt.subplot(2, 2, 3)
-    plt.imshow(img_de, cmap="gray")
+    plt.imshow(image_rerotation(img_de, rotation_times), cmap="gray")
     plt.title("difference expansion")
     plt.axis('off')
     plt.subplot(2, 2, 4)
