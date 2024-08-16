@@ -10,6 +10,7 @@ import numpy as np
 from scipy.signal import convolve2d
 import time
 import torch.cuda.amp as amp
+from torch.utils.tensorboard import SummaryWriter
 
 # Set environment variable to ignore multiprocessing-related warnings
 os.environ['PYTHONWARNINGS'] = 'ignore:semaphore_tracker:UserWarning'
@@ -22,6 +23,8 @@ def set_seed(seed):
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
 
 set_seed(42)
 
@@ -62,6 +65,22 @@ def preprocess_image(image):
 def preprocess_image_tensor(x):
     return torch.from_numpy(preprocess_image(x.squeeze().numpy())).unsqueeze(0)
 
+class RandomRotation(object):
+    def __init__(self, degrees):
+        self.degrees = degrees
+
+    def __call__(self, img):
+        angle = random.uniform(-self.degrees, self.degrees)
+        return transforms.functional.rotate(img, angle)
+
+class LargeRandomRotation(object):
+    def __init__(self, degrees=90):
+        self.degrees = degrees
+
+    def __call__(self, img):
+        angle = random.uniform(-self.degrees, self.degrees)
+        return transforms.functional.rotate(img, angle, expand=True)
+
 class ILSVRCSubset(Dataset):
     def __init__(self, root_dir, num_images=3000, transform=None):
         self.root_dir = root_dir
@@ -94,9 +113,11 @@ class ILSVRCSubset(Dataset):
         return image
 
 def load_data(root_dir, num_images=3000, batch_size=8):
-    print("Starting data loading...")
+    print("Starting data loading with large angle rotation...")
     transform = transforms.Compose([
-        transforms.Resize((512, 512)),  # Keep original image size
+        transforms.Resize((512, 512)),
+        LargeRandomRotation(degrees=90),  # 大角度隨機旋轉
+        transforms.CenterCrop((512, 512)),  # 裁剪以去除旋轉導致的黑邊
         transforms.Grayscale(),
         transforms.ToTensor(),
         transforms.Lambda(preprocess_image_tensor),
@@ -144,7 +165,7 @@ class ImprovedAdaptiveCNNPredictor(nn.Module):
         
         self.conv1x1 = nn.Conv2d(96, 32, kernel_size=1)
         
-        self.prediction_layers = nn.ModuleList([
+        self.prediction_layers = nn.Sequential(*[
             nn.Sequential(
                 nn.Conv2d(32, 32, 3, padding=1),
                 nn.BatchNorm2d(32),
@@ -173,13 +194,15 @@ class CustomLoss(nn.Module):
         l2_reg = sum(p.pow(2.0).sum() for p in model.parameters())
         return mse_loss + self.lambda_reg * l2_reg
 
+
 def train_model(model, train_loader, val_loader, num_epochs, device, accumulation_steps=4):
     print("Starting model training...")
     criterion = CustomLoss(lambda_reg=1e-3)
-    optimizer = optim.Adam(model.parameters(), lr=0.001)
-    scheduler = optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
+    optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
     scaler = amp.GradScaler()
 
+    writer = SummaryWriter('runs/CNN_training')
     start_time = time.time()
 
     for epoch in range(num_epochs):
@@ -228,13 +251,24 @@ def train_model(model, train_loader, val_loader, num_epochs, device, accumulatio
         print(f'Epoch [{epoch+1}/{num_epochs}], Train Loss: {avg_loss:.4f}, Val Loss: {val_loss:.4f}, '
               f'LR: {scheduler.get_last_lr()[0]}, Time: {epoch_time:.2f}s')
 
+        # Log to TensorBoard
+        writer.add_scalar('Loss/train', avg_loss, epoch)
+        writer.add_scalar('Loss/val', val_loss, epoch)
+        writer.add_scalar('LR', scheduler.get_last_lr()[0], epoch)
+
         if (epoch + 1) % 5 == 0:
             model_path = f'./CNN_PEE/model/model_epoch_{epoch+1}.pth'
-            torch.save(model.state_dict(), model_path)
+            torch.save({
+                'epoch': epoch,
+                'model_state_dict': model.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'loss': avg_loss,
+            }, model_path)
             print(f"Model saved to {model_path}")
 
     total_time = time.time() - start_time
     print(f"\nTraining completed, total time: {total_time:.2f} seconds")
+    writer.close()
 
 if __name__ == "__main__":
     print("Program execution started...")
