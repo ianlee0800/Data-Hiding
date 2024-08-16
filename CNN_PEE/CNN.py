@@ -82,7 +82,7 @@ class LargeRandomRotation(object):
         return transforms.functional.rotate(img, angle, expand=True)
 
 class ILSVRCSubset(Dataset):
-    def __init__(self, root_dir, num_images=3000, transform=None):
+    def __init__(self, root_dir, num_images=10, transform=None):
         self.root_dir = root_dir
         self.transform = transform
         self.image_paths = self._get_image_paths(num_images)
@@ -112,7 +112,7 @@ class ILSVRCSubset(Dataset):
         
         return image
 
-def load_data(root_dir, num_images=3000, batch_size=8):
+def load_data(root_dir, num_images=3000, batch_size=32):
     print("Starting data loading with large angle rotation...")
     transform = transforms.Compose([
         transforms.Resize((512, 512)),
@@ -194,26 +194,30 @@ class CustomLoss(nn.Module):
         l2_reg = sum(p.pow(2.0).sum() for p in model.parameters())
         return mse_loss + self.lambda_reg * l2_reg
 
+def get_gpu_memory_usage():
+    if torch.cuda.is_available():
+        return {
+            'allocated': torch.cuda.memory_allocated() / 1e9,
+            'cached': torch.cuda.memory_reserved() / 1e9
+        }
+    return {'allocated': 0, 'cached': 0}
 
-def train_model(model, train_loader, val_loader, num_epochs, device, accumulation_steps=4):
+def train_model(model, train_loader, val_loader, num_epochs, device, accumulation_steps=8):
     print("Starting model training...")
     criterion = CustomLoss(lambda_reg=1e-3)
     optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
-    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
     scaler = amp.GradScaler()
 
-    writer = SummaryWriter('runs/CNN_training')
     start_time = time.time()
 
     for epoch in range(num_epochs):
-        epoch_start_time = time.time()
-        print(f"\nStarting epoch {epoch+1}/{num_epochs}")
+        torch.cuda.empty_cache()  # 清理 GPU 缓存
         model.train()
         total_loss = 0
-        optimizer.zero_grad()
+        batch_count = 0
 
         for batch_idx, inputs in enumerate(train_loader):
-            batch_start_time = time.time()
             inputs = inputs.to(device, non_blocking=True)
             
             with amp.autocast():
@@ -222,53 +226,55 @@ def train_model(model, train_loader, val_loader, num_epochs, device, accumulatio
 
             scaler.scale(loss).backward()
 
-            if (batch_idx + 1) % accumulation_steps == 0:
+            if (batch_idx + 1) % accumulation_steps == 0 or batch_idx == len(train_loader) - 1:
                 scaler.step(optimizer)
                 scaler.update()
                 optimizer.zero_grad()
 
             total_loss += loss.item() * accumulation_steps
+            batch_count += 1
 
-            if batch_idx % 10 == 0:
+            if batch_idx % 50 == 0:
                 print(f'  Epoch [{epoch+1}/{num_epochs}], Batch [{batch_idx}/{len(train_loader)}], '
-                      f'Loss: {loss.item():.4f}, Batch Time: {time.time() - batch_start_time:.2f}s')
+                      f'Loss: {loss.item():.4f}')
+                print(f'  GPU Memory: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB')
 
-        avg_loss = total_loss / len(train_loader)
-        scheduler.step()
+        avg_train_loss = total_loss / batch_count
 
         print("Starting validation...")
         model.eval()
-        val_loss = 0
+        total_val_loss = 0
+        val_batch_count = 0
         with torch.no_grad():
             for inputs in val_loader:
                 inputs = inputs.to(device, non_blocking=True)
                 with amp.autocast():
                     outputs = model(inputs)
-                    val_loss += criterion(outputs, inputs, model).item()
-        val_loss /= len(val_loader)
+                    val_loss = criterion(outputs, inputs, model)
+                total_val_loss += val_loss.item()
+                val_batch_count += 1
+        avg_val_loss = total_val_loss / val_batch_count
 
-        epoch_time = time.time() - epoch_start_time
-        print(f'Epoch [{epoch+1}/{num_epochs}], Train Loss: {avg_loss:.4f}, Val Loss: {val_loss:.4f}, '
-              f'LR: {scheduler.get_last_lr()[0]}, Time: {epoch_time:.2f}s')
+        scheduler.step(avg_val_loss)
 
-        # Log to TensorBoard
-        writer.add_scalar('Loss/train', avg_loss, epoch)
-        writer.add_scalar('Loss/val', val_loss, epoch)
-        writer.add_scalar('LR', scheduler.get_last_lr()[0], epoch)
+        print(f'Epoch [{epoch+1}/{num_epochs}], Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}, '
+              f'LR: {optimizer.param_groups[0]["lr"]:.6f}')
+        print(f'GPU Memory: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB')
 
-        if (epoch + 1) % 5 == 0:
+        if (epoch + 1) % 5 == 0 or epoch == num_epochs - 1:
             model_path = f'./CNN_PEE/model/model_epoch_{epoch+1}.pth'
             torch.save({
                 'epoch': epoch,
                 'model_state_dict': model.state_dict(),
                 'optimizer_state_dict': optimizer.state_dict(),
-                'loss': avg_loss,
+                'scheduler_state_dict': scheduler.state_dict(),
+                'train_loss': avg_train_loss,
+                'val_loss': avg_val_loss,
             }, model_path)
             print(f"Model saved to {model_path}")
 
     total_time = time.time() - start_time
     print(f"\nTraining completed, total time: {total_time:.2f} seconds")
-    writer.close()
 
 if __name__ == "__main__":
     print("Program execution started...")
@@ -285,12 +291,13 @@ if __name__ == "__main__":
     ilsvrc_root = r"C:\Users\ianle\Downloads\ILSVRC2017_DET"
     
     print("Loading data...")
-    train_loader, val_loader = load_data(ilsvrc_root, num_images=3000, batch_size=8)
+    train_loader, val_loader = load_data(ilsvrc_root, num_images=3000, batch_size=16)  # 减小批次大小
 
-    print(f"GPU memory allocated: {torch.cuda.memory_allocated(device) / 1e9:.2f} GB")
-    print(f"GPU memory cached: {torch.cuda.memory_reserved(device) / 1e9:.2f} GB")
+    print(f"Initial GPU memory: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB")
 
     print("Starting training process...")
-    train_model(model, train_loader, val_loader, num_epochs=50, device=device, accumulation_steps=4)
+    train_model(model, train_loader, val_loader, num_epochs=50, device=device, accumulation_steps=8)
+
+    print(f"Final GPU memory: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB")
 
     print("Program execution completed")
