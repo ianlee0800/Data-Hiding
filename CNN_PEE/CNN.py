@@ -288,7 +288,7 @@ if __name__ == "__main__":
     model = ImprovedAdaptiveCNNPredictor().to(device)
     
     print("Setting data path...")
-    ilsvrc_root = r"C:\Users\ianle\Downloads\ILSVRC2017_DET"
+    ilsvrc_root = r"C:\Users\Ian Lee\Downloads\ILSVRC2017_DET"
     
     print("Loading data...")
     train_loader, val_loader = load_data(ilsvrc_root, num_images=3000, batch_size=16)  # 减小批次大小
