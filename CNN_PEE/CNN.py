@@ -9,11 +9,14 @@ import random
 import numpy as np
 from scipy.signal import convolve2d
 import time
-import torch.cuda.amp as amp
 from torch.utils.tensorboard import SummaryWriter
 
 # Set environment variable to ignore multiprocessing-related warnings
 os.environ['PYTHONWARNINGS'] = 'ignore:semaphore_tracker:UserWarning'
+
+# Set device type and device
+DEVICE_TYPE = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = torch.device(DEVICE_TYPE)
 
 # Set random seed for reproducibility
 def set_seed(seed):
@@ -207,12 +210,13 @@ def train_model(model, train_loader, val_loader, num_epochs, device, accumulatio
     criterion = CustomLoss(lambda_reg=1e-3)
     optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
-    scaler = amp.GradScaler()
+    scaler = torch.amp.GradScaler('cuda') if DEVICE_TYPE == 'cuda' else None
 
     start_time = time.time()
 
     for epoch in range(num_epochs):
-        torch.cuda.empty_cache()  # 清理 GPU 缓存
+        if DEVICE_TYPE == 'cuda':
+            torch.cuda.empty_cache()  # 清理 GPU 缓存
         model.train()
         total_loss = 0
         batch_count = 0
@@ -220,15 +224,22 @@ def train_model(model, train_loader, val_loader, num_epochs, device, accumulatio
         for batch_idx, inputs in enumerate(train_loader):
             inputs = inputs.to(device, non_blocking=True)
             
-            with amp.autocast():
+            if DEVICE_TYPE == 'cuda':
+                with torch.amp.autocast(device_type='cuda'):
+                    outputs = model(inputs)
+                    loss = criterion(outputs, inputs, model) / accumulation_steps
+                scaler.scale(loss).backward()
+            else:
                 outputs = model(inputs)
                 loss = criterion(outputs, inputs, model) / accumulation_steps
-
-            scaler.scale(loss).backward()
+                loss.backward()
 
             if (batch_idx + 1) % accumulation_steps == 0 or batch_idx == len(train_loader) - 1:
-                scaler.step(optimizer)
-                scaler.update()
+                if DEVICE_TYPE == 'cuda':
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    optimizer.step()
                 optimizer.zero_grad()
 
             total_loss += loss.item() * accumulation_steps
@@ -237,7 +248,8 @@ def train_model(model, train_loader, val_loader, num_epochs, device, accumulatio
             if batch_idx % 50 == 0:
                 print(f'  Epoch [{epoch+1}/{num_epochs}], Batch [{batch_idx}/{len(train_loader)}], '
                       f'Loss: {loss.item():.4f}')
-                print(f'  GPU Memory: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB')
+                if DEVICE_TYPE == 'cuda':
+                    print(f'  GPU Memory: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB')
 
         avg_train_loss = total_loss / batch_count
 
@@ -248,7 +260,11 @@ def train_model(model, train_loader, val_loader, num_epochs, device, accumulatio
         with torch.no_grad():
             for inputs in val_loader:
                 inputs = inputs.to(device, non_blocking=True)
-                with amp.autocast():
+                if DEVICE_TYPE == 'cuda':
+                    with torch.amp.autocast(device_type='cuda'):
+                        outputs = model(inputs)
+                        val_loss = criterion(outputs, inputs, model)
+                else:
                     outputs = model(inputs)
                     val_loss = criterion(outputs, inputs, model)
                 total_val_loss += val_loss.item()
@@ -259,7 +275,8 @@ def train_model(model, train_loader, val_loader, num_epochs, device, accumulatio
 
         print(f'Epoch [{epoch+1}/{num_epochs}], Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}, '
               f'LR: {optimizer.param_groups[0]["lr"]:.6f}')
-        print(f'GPU Memory: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB')
+        if DEVICE_TYPE == 'cuda':
+            print(f'GPU Memory: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB')
 
         if (epoch + 1) % 5 == 0 or epoch == num_epochs - 1:
             model_path = f'./CNN_PEE/model/model_epoch_{epoch+1}.pth'
@@ -270,7 +287,7 @@ def train_model(model, train_loader, val_loader, num_epochs, device, accumulatio
                 'scheduler_state_dict': scheduler.state_dict(),
                 'train_loss': avg_train_loss,
                 'val_loss': avg_val_loss,
-            }, model_path)
+            }, model_path, _use_new_zipfile_serialization=False)
             print(f"Model saved to {model_path}")
 
     total_time = time.time() - start_time
@@ -281,7 +298,10 @@ if __name__ == "__main__":
     torch.multiprocessing.set_start_method('spawn')
 
     print("Checking CUDA availability...")
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if torch.cuda.is_available():
+        print(f"CUDA is available. GPU: {torch.cuda.get_device_name(0)}")
+    else:
+        print("CUDA is not available. Using CPU.")
     print(f"Using device: {device}")
 
     print("Initializing model...")
@@ -293,11 +313,19 @@ if __name__ == "__main__":
     print("Loading data...")
     train_loader, val_loader = load_data(ilsvrc_root, num_images=3000, batch_size=16)  # 减小批次大小
 
-    print(f"Initial GPU memory: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB")
+    if DEVICE_TYPE == 'cuda':
+        print(f"Initial GPU memory: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB")
 
     print("Starting training process...")
-    train_model(model, train_loader, val_loader, num_epochs=50, device=device, accumulation_steps=8)
+    try:
+        train_model(model, train_loader, val_loader, num_epochs=50, device=device, accumulation_steps=8)
+    except RuntimeError as e:
+        if "CUDA out of memory" in str(e):
+            print("CUDA out of memory. Try reducing batch size or model size.")
+        else:
+            print(f"An error occurred: {e}")
 
-    print(f"Final GPU memory: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB")
+    if DEVICE_TYPE == 'cuda':
+        print(f"Final GPU memory: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB")
 
     print("Program execution completed")
