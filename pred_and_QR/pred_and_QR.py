@@ -1,7 +1,46 @@
 import numpy as np
 import cv2
 import math
+import time
+import json
 import matplotlib.pyplot as plt
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import padding, rsa
+
+def check_quality_after_stage(stage_name, original_img, embedded_img):
+    psnr = calculate_psnr(original_img, embedded_img)
+    ssim = calculate_ssim(original_img, embedded_img)
+    hist_orig, _, _, _ = generate_histogram(original_img)
+    hist_emb, _, _, _ = generate_histogram(embedded_img)
+    corr = histogram_correlation(hist_orig, hist_emb)
+    print(f"{stage_name}: PSNR={psnr:.2f}, SSIM={ssim:.4f}, Histogram Correlation={corr:.4f}")
+
+def plot_histogram(data, title, xlabel, ylabel, filename):
+    plt.figure(figsize=(10, 6))
+    plt.bar(range(len(data)), data)
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.savefig(filename)
+    plt.close()
+    
+def plot_histogram_comparison(hist1, hist2, title1, title2, xlabel, ylabel, filename):
+    plt.figure(figsize=(12, 6))
+    plt.subplot(1, 2, 1)
+    plt.bar(range(len(hist1)), hist1)
+    plt.title(title1)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+
+    plt.subplot(1, 2, 2)
+    plt.bar(range(len(hist2)), hist2)
+    plt.title(title2)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+
+    plt.tight_layout()
+    plt.savefig(filename)
+    plt.close()
 
 def calculate_correlation(img1, img2):
     # 將圖像轉換為一維數組
@@ -15,10 +54,12 @@ def calculate_correlation(img1, img2):
 
 def histogram_correlation(hist1, hist2):
     # 確保兩個直方圖長度相同
-    assert len(hist1) == len(hist2), "Histograms must have the same length"
+    max_length = max(len(hist1), len(hist2))
+    hist1_padded = hist1 + [0] * (max_length - len(hist1))
+    hist2_padded = hist2 + [0] * (max_length - len(hist2))
     
     # 計算相關係數
-    correlation = np.corrcoef(hist1, hist2)[0, 1]
+    correlation = np.corrcoef(hist1_padded, hist2_padded)[0, 1]
     
     return round(correlation, 4)
 
@@ -191,12 +232,14 @@ def generate_different_histogram_without_frame(array2d, histId, histNum):
 
 def generate_histogram(array2D):
     height, width = array2D.shape
-    num = [0]*256
-    for y in range(height):
-        for x in range(width):
-            value = int(array2D[y,x])
-            num[value] += 1
-    return num
+    values = array2D.flatten()
+    min_val = int(np.min(values))
+    max_val = int(np.max(values))
+    range_size = max_val - min_val + 1
+    num = [0] * range_size
+    for value in values:
+        num[int(value) - min_val] += 1
+    return num, min_val, max_val, range_size  # 确保这里返回的是列表，而不是元组
 
 #兩個二維陣列的數值相加或相減
 def two_array2D_add_or_subtract(array2D_1, array2D_2, sign):
@@ -258,47 +301,42 @@ def image_difference_embeding(array2D, array1D, a, flag):
     array2D_e = array2D.copy()
     inf = []
     r = int(a/2)
-    func = r%2
+    func = a % 2
     h = 0
-    for i in range(r, -1, -1):
-        temp = array2D_e.copy()
-        for y in range(1, row-1):
-            for x in range(1, column-1):
-                value = temp[y,x]
-                embed = "none"
-                if flag == 0:
-                    w = np.random.choice([0,1], p=[0.5,0.5])
-                elif flag == 1:
-                    if h < len(array1D):
-                        w = array1D[h]
-                    else:
-                        w = 0
-                if func == 0:
-                    if i == 0 and value == 0:
-                        embed = value-w
-                    elif value == i:
-                        embed = value+i-1+w
-                    elif value == -i:
-                        embed = value-i-w
-                elif func == 1:
-                    if i >= 1:
-                        if value == i:
-                            embed = value+i-1+w
-                        elif value == -i:
-                            embed = value-i-w
-                    elif i == 0:
-                        if value == i:
-                            embed = value-w
-                if embed == "none":
-                    embed = value
-                else:
-                    h += 1
-                    inf.append(w)
+    data_length = len(array1D)
+
+    for y in range(1, row-1):
+        for x in range(1, column-1):
+            value = array2D[y,x]
+            embed = value  # 默认不改变像素值
+
+            if h < data_length:
+                w = array1D[h]
+            else:
+                break  # 如果所有数据都已嵌入，则退出循环
+
+            if func == 0:
+                if r == 0 and value == 0:
+                    embed = value - w
+                elif abs(value) == r:
+                    embed = value + (1 if w == 1 else -1) * (1 if value > 0 else -1)
+            elif func == 1:
+                if abs(value) == r:
+                    embed = value + (1 if w == 1 else -1) * (1 if value > 0 else -1)
+                elif r == 0 and value == 0:
+                    embed = value - w
+
+            if embed != value:
                 array2D_e[y,x] = embed
-    if flag == 0:
-        return array2D_e, inf
-    elif flag == 1:
-        return array2D_e
+                inf.append(w)
+                h += 1
+                if h >= data_length:
+                    break  # 如果所有数据都已嵌入，则退出内层循环
+
+        if h >= data_length:
+            break  # 如果所有数据都已嵌入，则退出外层循环
+
+    return array2D_e, inf
 
 #正數字串轉換為二進位制，並分開列成list
 def int_transfer_binary_single_intlist(array1D, set):
@@ -311,6 +349,39 @@ def int_transfer_binary_single_intlist(array1D, set):
         for j in range(lenB):
             intA.append(bin[j])
     return intA
+
+def binary_list_to_int(binary_list, bits_per_int):
+    """
+    将二进制列表转换为整数列表
+    
+    参数:
+    binary_list -- 二进制数字的列表 (0 和 1)
+    bits_per_int -- 每个整数使用的位数
+    
+    返回:
+    整数列表
+    """
+    int_list = []
+    for i in range(0, len(binary_list), bits_per_int):
+        binary_chunk = binary_list[i:i+bits_per_int]
+        # 如果最后一个块不完整,用0填充
+        if len(binary_chunk) < bits_per_int:
+            binary_chunk = binary_chunk + [0] * (bits_per_int - len(binary_chunk))
+        
+        # 将二进制块转换为整数
+        int_value = 0
+        for bit in binary_chunk:
+            int_value = (int_value << 1) | bit
+        
+        int_list.append(int_value)
+    
+    return int_list
+
+# 使用示例
+# 假设我们有一个二进制列表和每个整数使用9位
+binary_data = [1, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 0, 0, 0, 1]
+restored_integers = binary_list_to_int(binary_data, 9)
+print(restored_integers)
 
 #固定長度串接重複數字陣列
 def repeat_int_array(array, lenNewA):
@@ -466,71 +537,116 @@ def MB_classification(m1, m2, m3, m4):
         sort = 4
     return sort
 
-def improved_pee_embedding(origImg, weight, EL, range_x, num_rotations=4):
+def split_qr_code(qr_data, num_parts=5):
+    """將QR碼數據分割為指定數量的部分"""
+    height, width = qr_data.shape
+    part_height = height // num_parts
+    parts = []
+    for i in range(num_parts):
+        start = i * part_height
+        end = start + part_height if i < num_parts - 1 else height
+        parts.append(qr_data[start:end, :])
+    return parts
+
+def reconstruct_qr_code(parts, original_shape):
+    """從分割的部分重建QR碼"""
+    flat_qr = np.concatenate(parts)
+    return flat_qr.reshape(original_shape)
+
+def improved_pee_embedding_split(origImg, weight, EL, range_x, qr_data, num_rotations=4):
     current_img = origImg.copy()
     total_payload = 0
     all_inInf = []
+    qr_parts = split_qr_code(qr_data, num_rotations + 1)
     
-    # 初始化用於存儲最後一次旋轉的直方圖數據
-    final_diffId, final_diffNum = None, None
-    final_diffId_s, final_diffNum_s = None, None
-    final_diffId_e, final_diffNum_e = None, None
-    
+    diffIds, diffNums = [], []
+    diffIds_s, diffNums_s = [], []
+    diffIds_e, diffNums_e = [], []
+
     for i in range(num_rotations + 1):
+        print(f"\nProcessing rotation {i}")
         img_p = generate_perdict_image(current_img, weight)
         
-        # a. 差值直方圖處理
         diffA = two_array2D_add_or_subtract(current_img, img_p, -1)
-        payload_diff = calculate_payload(diffA, EL)
-        diffId, diffNum = generate_different_histogram_without_frame(diffA, list(range(-range_x,range_x+1)), [0]*(range_x*2+1))
         
-        # b. 直方圖左右偏移，移出嵌入空間
+        diffId, diffNum = generate_different_histogram_without_frame(diffA, list(range(-range_x,range_x+1)), [0]*(range_x*2+1))
+        diffIds.append(diffId)
+        diffNums.append(diffNum)
+        
         diffA_s = image_difference_shift(diffA, EL)
         diffId_s, diffNum_s = generate_different_histogram_without_frame(diffA_s, list(range(-range_x,range_x+1)), [0]*(range_x*2+1))
+        diffIds_s.append(diffId_s)
+        diffNums_s.append(diffNum_s)
         
-        # c. 差值直方圖平移，嵌入隨機值
-        diffA_e, inInf = image_difference_embeding(diffA_s, 0, EL, 0)
+        # 使用当前QR部分进行嵌入
+        qr_part = qr_parts[i].flatten()
+        print(f"QR part shape: {qr_parts[i].shape}")
+        print(f"Flattened QR part length: {len(qr_part)}")
+        
+        diffA_e, inInf = image_difference_embeding(diffA_s, qr_part, EL, 1)
+        
         diffId_e, diffNum_e = generate_different_histogram_without_frame(diffA_e, list(range(-range_x,range_x+1)), [0]*(range_x*2+1))
+        diffIds_e.append(diffId_e)
+        diffNums_e.append(diffNum_e)
         
-        # 差值直方圖與預測影像還原成已嵌入影像
         current_img = two_array2D_add_or_subtract(img_p, diffA_e, 1)
         
-        total_payload += payload_diff
+        embedded_payload = len(inInf)
+        total_payload += embedded_payload
         all_inInf.extend(inInf)
         
-        # 保存最後一次旋轉的直方圖數據
-        final_diffId, final_diffNum = diffId, diffNum
-        final_diffId_s, final_diffNum_s = diffId_s, diffNum_s
-        final_diffId_e, final_diffNum_e = diffId_e, diffNum_e
-        
-        psnr = calculate_psnr(origImg, current_img)
-        ssim = calculate_ssim(origImg, current_img)
-        corr = calculate_correlation(origImg, current_img)
-        print(f"Rotation {i}: PSNR={psnr:.2f}, SSIM={ssim:.4f}, Correlation={corr:.4f}, Payload={payload_diff}")
+        print(f"Payload for this rotation: {embedded_payload}")
+        print(f"Total payload so far: {total_payload}")
         
         if i < num_rotations:
             current_img = np.rot90(current_img)
     
-    final_img_p = generate_perdict_image(current_img, weight)
-    return current_img, all_inInf, total_payload, (final_diffId, final_diffNum), (final_diffId_s, final_diffNum_s), (final_diffId_e, final_diffNum_e), final_img_p
+    print(f"\nFinal total payload: {total_payload}")
+    print(f"Total inInf length: {len(all_inInf)}")
+    
+    return current_img, all_inInf, total_payload, diffIds, diffNums, diffIds_s, diffNums_s, diffIds_e, diffNums_e
 
-def improved_pee_extraction(embedded_image, weight, EL, num_rotations=4):
+def generate_metadata(qr_data):
+    return {
+        "content_type": "QR Code",
+        "version": "1.0",
+        "timestamp": int(time.time()),
+        "description": "Secure QR code with enhanced PEE and splitting",
+        "qr_size": qr_data.shape[0]  # 假設QR碼是正方形的
+    }
+
+def sign_data(data, private_key):
+    return private_key.sign(
+        data,
+        padding.PSS(
+            mgf=padding.MGF1(hashes.SHA256()),
+            salt_length=padding.PSS.MAX_LENGTH
+        ),
+        hashes.SHA256()
+    )
+
+def improved_pee_extraction_split(embedded_image, weight, EL, num_rotations=4):
     current_img = embedded_image.copy()
-    all_extracted_info = []
+    qr_parts = []
     
     for i in range(num_rotations, -1, -1):
         img_p = generate_perdict_image(current_img, weight)
         diffA_e = two_array2D_add_or_subtract(current_img, img_p, -1)
-        diffA_s, extracted_info = decode_image_difference_embeding(diffA_e, EL)
+        diffA_s, extracted_info = decode_image_difference_embedding(diffA_e, EL)
         diffA = decode_image_different_shift(diffA_s, EL)
         current_img = two_array2D_add_or_subtract(img_p, diffA, 1)
         
-        all_extracted_info = extracted_info + all_extracted_info
+        qr_parts.insert(0, extracted_info)
         
         if i > 0:
             current_img = np.rot90(current_img, -1)
     
-    return current_img, all_extracted_info
+    # 重建QR碼
+    # 注意：我們需要一種方法來確定原始QR碼的大小，這可能需要在嵌入過程中額外存儲
+    qr_size = int(np.sqrt(sum(len(part) for part in qr_parts)))
+    reconstructed_qr = reconstruct_qr_code(qr_parts, (qr_size, qr_size))
+    
+    return reconstructed_qr
 
 #影藏數據嵌入
 def embedding(image, locArray, j, i, b, k, mode):
@@ -697,45 +813,92 @@ def two_value_difference_expansion(left, right, hide):
         right_e = l+np.floor((h_e+1)/2)
     return left_e, right_e
 
-#將一維陣列用差值嵌入法進影像中
-def different_expansion_embeding_array1D(img, array1D):
-    height, width = img.shape
-    markedImg = img.copy()
-    hidemap = np.zeros((height, width))
-    length = len(array1D)
-    locationmap = []
-    payload_DE = 0
-    i = 0
-    sum = 0
-    #差值嵌入法，嵌入二維碼
-    for y in range(height):
-        for x in range(0, width-1, 2):
-            if i < length:
-                b = array1D[i]
-                flag = 1
-            elif i >= length:
-                b = 0
-                flag = 0
-            left = int(img[y,x]) #左像素值
-            right = int(img[y,x+1]) #右像素值
-            left_e, right_e = two_value_difference_expansion(left, right, b) #變更後的左右像素值
-            #挑選可隱藏像素避免溢位
-            if left_e >= 0 and left_e <= 255 and right_e >= 0 and right_e <= 255:
-                payload_DE += 1
-                if flag == 1:
-                    markedImg[y,x] = left_e
-                    markedImg[y,x+1] = right_e
-                    hidemap[y,x] = 255
-                    hidemap[y,x+1] = 255
-                    i += 1
-                elif flag == 0:
-                    continue
-            else:
-                if flag == 1:
-                    locationmap.append(y)
-                    locationmap.append(x)
-                    sum+=1
-    return markedImg, hidemap, locationmap, payload_DE
+def enhanced_de_embedding_split(img_pee, qr_data, num_rotations, EL, weight):
+    current_img = img_pee.copy()
+    all_hidemap = []
+    all_locationmap = []
+    all_payload = []
+
+    # 生成元數據
+    metadata = generate_metadata(qr_data)
+    metadata_bytes = np.frombuffer(json.dumps(metadata).encode(), dtype=np.uint8)
+    
+    # 生成數字簽名
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    signature = np.frombuffer(sign_data(qr_data.tobytes(), private_key), dtype=np.uint8)
+
+    print(f"Metadata bytes length: {len(metadata_bytes)}")
+    print(f"Signature length: {len(signature)}")
+
+    # 合併元數據和簽名
+    metadata_and_signature = np.concatenate([metadata_bytes, signature])
+
+    for i in range(num_rotations + 1):
+        img_p = generate_perdict_image(current_img, weight)
+        diffA = two_array2D_add_or_subtract(current_img, img_p, -1)
+        diffA_s = image_difference_shift(diffA, EL)
+        
+        if i == 0:
+            # 在第一次迭代中嵌入元數據和簽名
+            combined_data = metadata_and_signature
+        else:
+            # 其他迭代可以用於嵌入額外的錯誤校正數據或留空
+            combined_data = np.array([], dtype=np.uint8)
+        
+        print(f"Combined data shape: {combined_data.shape}, dtype: {combined_data.dtype}")
+        
+        diffA_e, inInf = image_difference_embeding(diffA_s, combined_data, EL, 1)
+        current_img = two_array2D_add_or_subtract(img_p, diffA_e, 1)
+        
+        payload = len(inInf)  # 使用實際嵌入的位元數
+        
+        all_hidemap.append(inInf)
+        all_locationmap.append(diffA_s)
+        all_payload.append(payload)
+
+        if i < num_rotations:
+            current_img = np.rot90(current_img)
+
+    total_payload = sum(all_payload)
+    print(f"X2 Total payload: {total_payload}")
+
+    return current_img, all_hidemap, all_locationmap, all_payload, private_key.public_key()
+
+def enhanced_de_extraction_split(embedded_image, public_key, num_rotations, EL, weight):
+    current_img = embedded_image.copy()
+    metadata = None
+    signature = None
+    
+    for i in range(num_rotations, -1, -1):
+        img_p = generate_perdict_image(current_img, weight)
+        diffA_e = two_array2D_add_or_subtract(current_img, img_p, -1)
+        diffA_s, extracted_data = decode_image_difference_embedding(diffA_e, EL)
+        diffA = decode_image_different_shift(diffA_s, EL)
+        current_img = two_array2D_add_or_subtract(img_p, diffA, 1)
+        
+        if i == 0:
+            # 處理第一部分（包含元數據和簽名）
+            metadata_end = extracted_data.index(b'}') + 1
+            metadata = json.loads(extracted_data[:metadata_end].decode())
+            signature_length = 256  # 假設簽名長度為256字節
+            signature = extracted_data[metadata_end:metadata_end+signature_length]
+        
+        if i > 0:
+            current_img = np.rot90(current_img, -1)
+    
+    # 驗證簽名
+    try:
+        public_key.verify(
+            signature,
+            metadata['qr_size'].to_bytes(4, byteorder='big'),  # 假設我們只驗證QR碼大小
+            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+            hashes.SHA256()
+        )
+        signature_valid = True
+    except:
+        signature_valid = False
+    
+    return metadata, signature_valid
 
 def two_value_decode_different_expansion(left_e, right_e):
     if left_e >= right_e:
@@ -757,34 +920,14 @@ def two_value_decode_different_expansion(left_e, right_e):
         left = l_e - np.floor(h/2)
     return b, left, right
 
-def decode_different_expansion(img):
-    height, width = img.shape
-    decodeImg = img.copy()
-    exInf = []
-    i = 0
-    for y in range(height):
-        x = 0
-        while x <= width-2:
-            if hidemap[y,x] != 255:#未嵌入位置跳過
-                x += 1
-                continue
-            left_e = int(img_de[y,x]) #左像素值
-            right_e = int(img_de[y,x+1]) #右像素值
-            b, left, right = two_value_decode_different_expansion(left_e, right_e)
-            decodeImg[y,x] = left
-            decodeImg[y,x+1] = right
-            exInf.append(b)
-            i += 1
-            x += 2
-    return decodeImg, exInf
-
 #找出一維陣列中最大值
 def find_max(array1D):
-    max = 0 
-    for i in range(1, len(array1D)):
-        if array1D[i] > array1D[max]:
-            max = i
-    return max
+    if not array1D:
+        return None
+    if isinstance(array1D[0], (list, np.ndarray)):
+        return max(range(len(array1D)), key=lambda i: max(array1D[i]) if len(array1D[i]) > 0 else float('-inf'))
+    else:
+        return max(range(len(array1D)), key=lambda i: array1D[i])
 
 #找出模塊的大小
 def find_w(image):
@@ -860,83 +1003,34 @@ def get_infor_from_array1D(array1D, num, digit):
     return out
 
 #已嵌入直方圖解碼，取出嵌入值
-def decode_image_difference_embeding(array2D, a):
+def decode_image_difference_embedding(array2D, a):
     row, column = array2D.shape
     deArray = array2D.copy()
     inf = []
     r = int(a/2)
-    func = a%2
-    for i in range(r, -1, -1):
+    func = a % 2
+    
+    def process_pixel(embed, i):
         if i == 0:
-            bit01 = [0, -1]
+            if embed in [0, -1]:
+                return 0, abs(embed)
         else:
-            bit01 = [2*i-1, 2*i, -2*i, -2*i-1]
+            if embed in [2*i-1, 2*i, -2*i, -2*i-1]:
+                w = embed % 2
+                value = i if embed > 0 else -i
+                if func % 2 == 0 and embed < 0 and r == i:
+                    return None, None
+                return value, w
+        return None, None
+
+    for i in range(r, -1, -1):
         for y in range(1, row-1):
             for x in range(1, column-1):
-                embed = array2D[y,x]
-                value = "no"
-                for b in range(len(bit01)):
-                    if embed == bit01[b]:
-                        if b%2  == 0:
-                            w = 0
-                        elif b%2 == 1:
-                            w = 1
-                        if i == 0:
-                            if embed == -1:
-                                value = 0
-                            elif embed == 0:
-                                value = 0
-                        elif i > 0:
-                            if func%2 == 1:
-                                if embed > 0:
-                                    value = i
-                                elif embed < 0:
-                                    value = -i
-                            elif func%2 == 0:
-                                if embed > 0:
-                                    value = i
-                                elif embed < 0 and r != i:
-                                    value = -i
-                        if value != "no":
-                            inf.append(w)
-                            deArray[y,x] = value
-    # for y in range(1, row-1):
-    #     for x in range(1, column-1):
-    #         embed = array2D[y,x]
-    #         value = embed
-    #         if func == 1 and (2*(-r)-1 <= embed and embed <= 2*r):
-    #             if embed > 0:
-    #                 if embed % 2 == 0:
-    #                     w = 1
-    #                     value = int(embed/2)
-    #                 elif embed % 2 == 1:
-    #                     w = 0
-    #                     value = int((embed+1)/2)
-    #             elif embed <= 0:
-    #                 if embed % 2 == 0:
-    #                     w = 0
-    #                     value = int(embed/2)
-    #                 elif embed % 2 == 1:
-    #                     w = 1
-    #                     value = int((embed+1)/2)
-    #             inf.append(w)
-    #         elif func == 0 and (2*(-r) < embed and embed <= 2*r):
-    #             if embed > 0:
-    #                 if embed % 2 == 0:
-    #                     w = 1
-    #                     value = int(embed/2)
-    #                 elif embed % 2 == 1:
-    #                     w = 0
-    #                     value = int((embed+1)/2)
-    #             elif embed <= 0:
-    #                 if embed % 2 == 0:
-    #                     w = 0
-    #                     value = int(embed/2)
-    #                 elif embed % 2 == 1:
-    #                     w = 1
-    #                     value = int((embed+1)/2)
-    #             inf.append(w)
-    #         deArray[y,x] = value
+                value, w = process_pixel(array2D[y,x], i)
+                if value is not None:
+                    deArray[y,x] = value
+                    inf.append(w)
+    
     return deArray, inf
 
 #復原已平移直方圖
@@ -977,8 +1071,16 @@ def histogram_data_hiding(img, flag, array1D):
     h_img, w_img = img.shape
     markedImg = img.copy()
     times = 0
-    hist = generate_histogram(img)
+    hist, _, _, _ = generate_histogram(img)  # 只使用頻率計數部分
+    
+    print("Debug: Histogram in histogram_data_hiding")
+    print(f"Histogram type: {type(hist)}")
+    print(f"Histogram length: {len(hist)}")
+    print(f"Histogram sample: {hist[:10]}")
+    
     peak = find_max(hist)
+    print(f"Peak found in histogram_data_hiding: {peak}")
+    
     payload_h = hist[peak]
     i = 0
     length = len(array1D)
@@ -1014,6 +1116,59 @@ def histogram_data_hiding(img, flag, array1D):
     
     return markedImg, peak, payload_h
 
+def histogram_data_extraction(img, peak, flag):
+    h_img, w_img = img.shape
+    extractedImg = img.copy()
+    extracted_data = []
+    
+    # 寻找零点（与嵌入时相同的逻辑）
+    hist = generate_histogram(img)
+    zero = 255  # 假设最大像素值为 255
+    for h in range(len(hist)):
+        if hist[h] == 0:
+            zero = h
+            break
+    
+    # 提取隐藏数据并恢复图像
+    for y in range(h_img):
+        for x in range(w_img):
+            value = img[y,x]
+            if flag == 0:
+                if value < peak - 1:
+                    extractedImg[y,x] = value + 1
+                elif value == peak - 1 or value == peak:
+                    extracted_data.append(peak - value)
+                    extractedImg[y,x] = peak
+            elif flag == 1:
+                if value > peak + 1 and value < zero:
+                    extractedImg[y,x] = value - 1
+                elif value == peak or value == peak + 1:
+                    extracted_data.append(value - peak)
+                    extractedImg[y,x] = peak
+    
+    return extractedImg, extracted_data
+
+
+def int_transfer_binary_single_intlist(array1D, width):
+    # 如果输入是列表，转换为 numpy 数组
+    if isinstance(array1D, list):
+        array1D = np.array(array1D)
+    
+    # 确保输入是一维数组
+    array1D_flat = array1D.flatten()
+    
+    # 创建一个函数来处理单个整数
+    def int_to_binary(x):
+        return np.binary_repr(int(x), width=width)
+    
+    # 使用 numpy 的 vectorize 来应用这个函数到整个数组
+    vfunc = np.vectorize(int_to_binary)
+    binary_strings = vfunc(array1D_flat)
+    
+    # 将所有二进制字符串连接起来，然后转换为整数列表
+    all_bits = ''.join(binary_strings)
+    return [int(bit) for bit in all_bits]
+
 #影像讀取
 imgName = "airplane"
 qrcodeName = "nuk_L"
@@ -1021,35 +1176,86 @@ filetype = "png"
 range_x = 10 #預估是嵌入過程直方圖x範圍
 k = 2 #QRcode模塊形狀調整寬度
 method = "h" #模塊形狀調整方法：h水平、v垂直
-EL = 7 #嵌入限制(大於1)
+EL = 3 #嵌入限制(大於1)
 weight = [1,2,11,12] #加權值
 
 origImg = cv2.imread("./pred_and_QR/image/%s.%s"%(imgName, filetype), cv2.IMREAD_GRAYSCALE) #原影像讀取位置
 QRCImg = cv2.imread("./pred_and_QR/qrcode/%s.%s"%(qrcodeName, filetype), cv2.IMREAD_GRAYSCALE) #二維碼影像讀取位置
 
-#encode
+# 編碼過程
+print("開始編碼過程...")
 
-# 計算原始圖像的直方圖
-hist_orig = generate_histogram(origImg)
+num_rotations = 4
+
+# 生成預測圖像
+img_p = generate_perdict_image(origImg, weight)
 
 # X1: 改進的預測誤差擴展（PEE）嵌入法
-print("X1: 改進的預測誤差擴展（PEE）嵌入法")
-img_pee, inInf, payload_pee, (diffId, diffNum), (diffId_s, diffNum_s), (diffId_e, diffNum_e), img_p = improved_pee_embedding(origImg, weight, EL, range_x, num_rotations=4)
-hist_pee = generate_histogram(img_pee)
+print("\nX1: 改進的預測誤差擴展（PEE）嵌入法")
+img_pee, inInf, payload_pee, diffIds, diffNums, diffIds_s, diffNums_s, diffIds_e, diffNums_e = improved_pee_embedding_split(origImg, weight, EL, range_x, QRCImg, num_rotations=num_rotations)
+
 psnr_pee = calculate_psnr(origImg, img_pee)
 ssim_pee = calculate_ssim(origImg, img_pee)
+hist_orig, _, _, _ = generate_histogram(origImg)
+hist_pee, _, _, _ = generate_histogram(img_pee)
 corr_pee = histogram_correlation(hist_orig, hist_pee)
-bpp_pee = round(payload_pee/origImg.size, 2)
+bpp_pee = round(payload_pee / origImg.size, 4)
 
 print(f"X1 Final: PSNR={psnr_pee:.2f}, SSIM={ssim_pee:.4f}, Correlation={corr_pee:.4f}")
-print(f"X1: Total payload={payload_pee}, bpp={bpp_pee}")
+print(f"X1: Total payload={payload_pee}, bpp={bpp_pee:.4f}")
 
-# 二維碼處理部分保持不變
-data_p = weight.copy()
-data_p.append(EL)
-bin_weight = int_transfer_binary_single_intlist(data_p, "{0:08b}")
+check_quality_after_stage("X1", origImg, img_pee)
+
+# X2: 增強的DE嵌入法
+print("\nX2: 增強的DE嵌入法")
+img_de, hidemap_parts, locationmap_parts, payload_de_parts, public_key = enhanced_de_embedding_split(
+    img_pee, QRCImg, num_rotations, EL, weight
+)
+
+total_payload_de = sum(payload_de_parts)
+psnr_de = calculate_psnr(origImg, img_de)
+ssim_de = calculate_ssim(origImg, img_de)
+hist_de, _, _, _ = generate_histogram(img_de)
+corr_de = histogram_correlation(hist_orig, hist_de)
+
+print(f"X2: Total DE payload = {total_payload_de}")
+print(f"X2: PSNR = {psnr_de:.2f}, SSIM = {ssim_de:.4f}")
+print(f"X2: Histogram Correlation = {corr_de:.4f}")
+
+check_quality_after_stage("X2", origImg, img_de)
+
+# X3: 直方圖平移嵌入法
+print("\nX3: 直方圖平移嵌入法")
+combined_locationmap = np.concatenate(locationmap_parts)
+combined_locationmap_int = np.round(combined_locationmap).astype(int)
+max_abs_value = np.max(np.abs(combined_locationmap_int))
+required_bits = int(np.ceil(np.log2(max_abs_value + 1))) + 1
+bin_map = int_transfer_binary_single_intlist(combined_locationmap_int, required_bits)
+
+hist_de, _, _, _ = generate_histogram(img_de)
+peak = find_max(hist_de)
+img_h, peak, payload_h = histogram_data_hiding(img_de, 1, bin_map)
+
+psnr_h = calculate_psnr(origImg, img_h)
+ssim_h = calculate_ssim(origImg, img_h)
+hist_h, _, _, _ = generate_histogram(img_h)
+corr_h = histogram_correlation(hist_orig, hist_h)
+
+check_quality_after_stage("X3", origImg, img_h)
+
+print(f"X3: Peak = {peak}, Payload = {payload_h}")
+print(f"X3: PSNR = {psnr_h:.2f}, SSIM = {ssim_h:.4f}")
+print(f"X3: Histogram Correlation = {corr_h:.4f}")
+
+# 計算總的payload和bpp
+total_payload = payload_pee + total_payload_de + payload_h
+total_bpp = total_payload / origImg.size
+
+# 處理QR碼
 bits, simQrcode = simplified_qrcode(QRCImg)
 loc = find_locaion(QRCImg, bits)
+
+bin_weight = [1, 2, 11, 12]  # Replace with the desired values for bin_weight
 
 if method == "h":
     payload_qr = calculate_embedded_bits(simQrcode, 1)
@@ -1060,158 +1266,121 @@ elif method == "v":
     message = repeat_int_array(bin_weight, payload_qr)
     QRCImg_m = vertical_embedding(QRCImg, simQrcode, loc, message, k)
 
-# X2：DE嵌入法，嵌入二進制二維碼
-binQRC_m = array2D_transfer_to_array1D(QRCImg_m)
-img_de, hidemap, locationmap, payload_de = different_expansion_embeding_array1D(img_pee, binQRC_m)
-hist_de = generate_histogram(img_de)
-psnr_de = calculate_psnr(origImg, img_de)
-ssim_de = calculate_ssim(origImg, img_de)
-corr_de = histogram_correlation(hist_orig, hist_de)
-binQRC = array2D_transfer_to_array1D(QRCImg)  # 原QRcode轉換為二進制
-ratio_qr = calculate_correct_ratio(binQRC, binQRC_m)
+# 計算QR碼的SSIM和正確率
 ssim_q = calculate_ssim(QRCImg, QRCImg_m)
+binQRC = array2D_transfer_to_array1D(QRCImg)
+binQRC_m = array2D_transfer_to_array1D(QRCImg_m)
+ratio_qr = calculate_correct_ratio(binQRC, binQRC_m)
 
-#X3：直方圖平移嵌入法，嵌入可嵌入地圖
-bin_map = int_transfer_binary_single_intlist(locationmap, "{0:09b}")
-img_h, peak, payload_h = histogram_data_hiding(img_de, 1, bin_map)
-hist_h = generate_histogram(img_h)
-psnr_h = calculate_psnr(origImg, img_h)
-ssim_h = calculate_ssim(origImg, img_h)
-corr_h = histogram_correlation(hist_orig, hist_h)
+# 儲存結果圖像
+cv2.imwrite(f"./pred_and_QR/outcome/image/{imgName}/{imgName}_pred.{filetype}", img_p)
+cv2.imwrite(f"./pred_and_QR/outcome/qrcode/{qrcodeName}_{method}.{filetype}", QRCImg_m)
+cv2.imwrite(f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1.{filetype}", img_pee)
+cv2.imwrite(f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X2.{filetype}", img_de)
+cv2.imwrite(f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X3.{filetype}", img_h)
 
-# 相關影像儲存
-cv2.imwrite(f"./pred_and_QR/outcome/image/{imgName}/{imgName}_pred.{filetype}", img_p)  # 預測影像
-cv2.imwrite(f"./pred_and_QR/outcome/qrcode/{qrcodeName}_{method}.{filetype}", QRCImg_m)  # 嵌入後二維碼
-cv2.imwrite(f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1.{filetype}", img_pee)  # X1 (改進的PEE)
-cv2.imwrite(f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X2.{filetype}", img_de)  # X2 (DE)
-cv2.imwrite(f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X3.{filetype}", img_h)  # X3 (直方圖平移)
-
-# 差值直方圖影像的輸出
-plt.bar(diffId, diffNum)
-plt.ylim(0, max(diffNum) * 1.3)
-plt.savefig(f"./pred_and_QR/outcome/histogram/{imgName}/difference/{imgName}_diff.{filetype}")
-plt.close()
-
-plt.bar(diffId_s, diffNum_s)
-plt.ylim(0, max(diffNum_s) * 1.3)
-plt.savefig(f"./pred_and_QR/outcome/histogram/{imgName}/difference/{imgName}_diffshift.{filetype}")
-plt.close()
-
-plt.bar(diffId_e, diffNum_e)
-plt.ylim(0, max(diffNum_e) * 1.3)
-plt.savefig(f"./pred_and_QR/outcome/histogram/{imgName}/difference/{imgName}_diffembed.{filetype}")
-plt.close()
-
-#原影像直方圖
-hist_orig = generate_histogram(origImg)
-plt.bar(range(256), hist_orig)
-plt.savefig("./pred_and_QR/outcome/histogram/%s/%s_orighist.%s"%(imgName, imgName, filetype))
-plt.close()  
-
-# X1直方圖
-plt.bar(range(256), hist_pee)
-plt.savefig(f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X1_hist.{filetype}")
-plt.close()
-
-#X2直方圖  
-plt.bar(range(256), hist_de)
-plt.savefig("./pred_and_QR/outcome/histogram/%s/%s_X2_hist.%s"%(imgName, imgName, filetype)) 
-plt.close()
-
-#X3直方圖
-plt.bar(range(256), hist_h)  
-plt.savefig("./pred_and_QR/outcome/histogram/%s/%s_X3_hist.%s"%(imgName, imgName, filetype))
-plt.close()
-
-# 打印結果
+# 輸出最終結果
+print("\n編碼過程總結:")
 print(f"原影像: {imgName}, 原二維碼: {qrcodeName}")
 print(f"加權值={weight}, EL={EL}")
-print(f"qrcode: ssim={ssim_q:.4f}, correct ratio={ratio_qr:.4f}")
-print(f"X1: payload={payload_pee}, bpp={bpp_pee:.4f}")
-print(f"X1: PSNR={psnr_pee:.2f}, SSIM={ssim_pee:.4f}, Histogram Correlation={corr_pee:.4f}")
-print(f"X2: maximum payload={payload_de}, location map={len(locationmap)} bits")
-print(f"X2: PSNR={psnr_de:.2f}, SSIM={ssim_de:.4f}, Histogram Correlation={corr_de:.4f}")
-print(f"X3: peak={peak}, payload={payload_h}")
-print(f"X3: PSNR={psnr_h:.2f}, SSIM={ssim_h:.4f}, Histogram Correlation={corr_h:.4f}")
-print("...加密完成...")
+print(f"QR碼: SSIM={ssim_q:.4f}, 正確率={ratio_qr:.4f}")
+print(f"X1 (PEE): payload={payload_pee}, bpp={bpp_pee:.4f}")
+print(f"X1 (PEE): PSNR={psnr_pee:.2f}, SSIM={ssim_pee:.4f}, 直方圖相關性={corr_pee:.4f}")
+print(f"X2 (增強DE): 最大payload={total_payload_de}, location map={len(combined_locationmap)} bits")
+print(f"X2 (增強DE): PSNR={psnr_de:.2f}, SSIM={ssim_de:.4f}, 直方圖相關性={corr_de:.4f}")
+print(f"X3 (直方圖平移): peak={peak}, payload={payload_h}")
+print(f"X3 (直方圖平移): PSNR={psnr_h:.2f}, SSIM={ssim_h:.4f}, 直方圖相關性={corr_h:.4f}")
+print(f"總payload={total_payload}, 總bpp={total_bpp:.4f}")
+print("...編碼過程結束...")
 print()
 
-#decode
-markedImg = img_de.copy()
+# 解碼過程
+print("開始解碼過程...")
 
-# 使用改進的PEE提取方法
-exImg_pee, exInf = improved_pee_extraction(markedImg, weight, EL, num_rotations=4)
+# 初始化
+markedImg = img_h.copy()  # 使用X3階段的輸出作為起點
 
-# DE解碼，取出已嵌入二維碼二進制
-exImg_de, exInf_qr = decode_different_expansion(markedImg)
-flag_img = same_array2D(exImg_de, img_de) and calculate_psnr(exImg_de, img_de) == 0 and calculate_ssim(exImg_de, img_de)
-flag_inf = same_array1D(binQRC_m, exInf_qr)
+# X3: 直方圖平移解碼
+print("X3: 直方圖平移解碼")
+img_de_extracted = histogram_data_extraction(markedImg, peak, bin_map)  # 需要實現這個函數
 
-#二維碼二進制轉換為二維碼圖像
-exQRc = array1D_transfer_to_array2D(exInf_qr)
+# X2: 增強DE提取
+print("X2: 增強DE提取")
+reconstructed_qr, extracted_metadata, is_signature_valid = enhanced_de_extraction_split(
+    img_de_extracted, public_key, num_rotations, EL
+)
 
-#還原QRcode與提取資訊轉換為加權值
-w = find_w(exQRc)
-bits = int(exQRc.shape[0]/w)
-location = find_locaion(exQRc, bits)
-simStego = simplified_stego(exQRc, bits, w)
+print(f"提取的元數據: {extracted_metadata}")
+print(f"簽名驗證: {'成功' if is_signature_valid else '失敗'}")
 
-#水平隱寫影像資訊提取
+# X1: 改進的PEE提取
+print("X1: 改進的PEE提取")
+extracted_qr_parts = []
+current_img = reconstructed_qr.copy()
+
+for i in range(num_rotations, -1, -1):
+    img_p = generate_perdict_image(current_img, weight)
+    diffA_e = two_array2D_add_or_subtract(current_img, img_p, -1)
+    diffA_s, extracted_data = decode_image_difference_embedding(diffA_e, EL)
+    diffA = decode_image_different_shift(diffA_s, EL)
+    current_img = two_array2D_add_or_subtract(img_p, diffA, 1)
+    
+    extracted_qr_parts.insert(0, extracted_data)
+    
+    if i > 0:
+        current_img = np.rot90(current_img, -1)
+
+# 重建完整的QR碼
+final_reconstructed_qr = reconstruct_qr_code(extracted_qr_parts, QRCImg.shape)
+
+# 提取和验证QR码
+print("提取和验证QR码")
+extracted_qr, extracted_metadata, is_signature_valid = enhanced_de_extraction_split(
+    img_de, private_key.public_key(), num_rotations, EL
+)
+
+print(f"提取的元数据: {extracted_metadata}")
+print(f"签名验证: {'成功' if is_signature_valid else '失败'}")
+print(f"QR码成功重建: {np.array_equal(extracted_qr, QRCImg)}")
+
+# 提取權重信息
+w = find_w(final_reconstructed_qr)
+bits = int(final_reconstructed_qr.shape[0]/w)
+location = find_locaion(final_reconstructed_qr, bits)
+simStego = simplified_stego(final_reconstructed_qr, bits, w)
+
 if method == "h":
-    exBin = extract_message(exQRc, simStego, location, 1)
-
-#垂直隱寫影像資訊提取
+    exBin = extract_message(final_reconstructed_qr, simStego, location, 1)
 elif method == "v":
-    exBin = extract_message(exQRc, simStego, location, 2)
+    exBin = extract_message(final_reconstructed_qr, simStego, location, 2)
 
-#從二維碼提取的資訊中得到加權值
 exWeight = get_infor_from_array1D(exBin, 4, 8)
+print(f"提取的權重值: {exWeight}")
 
-# exWeight = [1,2,3,4]
+# 生成並保存差值直方圖
+for i, (diffA, stage) in enumerate([
+    (diffA, "diff"),
+    (diffA_s, "diffshift"),
+    (diffA_e, "diffembed")
+]):
+    diffId, diffNum = generate_different_histogram_without_frame(diffA, list(range(-range_x,range_x+1)), [0]*(range_x*2+1))
+    plt.figure()
+    plt.bar(diffId, diffNum)
+    plt.ylim(0, max(diffNum) * 1.3)
+    plt.savefig(f"./pred_and_QR/outcome/histogram/{imgName}/difference/de_{imgName}_{stage}.{filetype}")
+    plt.close()
 
-# 生成預測影像，並與DE解碼的影像相減，得到差值直方圖
-exImg_p = generate_perdict_image(exImg_pee, weight)
-exdiffA_e = two_array2D_add_or_subtract(exImg_de, exImg_p, -1)
-exdiffId_e, exdiffNum_e = generate_different_histogram_without_frame(exdiffA_e, list(range(-range_x,range_x+1)), [0]*(range_x*2+1))
-
-plt.bar(exdiffId_e, exdiffNum_e)
-plt.ylim(0, max(exdiffNum_e) * 1.3)
-plt.savefig(f"./pred_and_QR/outcome/histogram/{imgName}/difference/de_{imgName}_diffembed.{filetype}")
-plt.close()
-
-# 解碼已嵌入差值直方圖得到隱藏資訊
-exdiffA_s, exInf = decode_image_difference_embeding(exdiffA_e, EL)
-exdiffId_s, exdiffNum_s = generate_different_histogram_without_frame(exdiffA_s, list(range(-range_x,range_x+1)), [0]*(range_x*2+1))
-
-plt.bar(exdiffId_s, exdiffNum_s)
-plt.ylim(0, max(exdiffNum_s) * 1.3)
-plt.savefig(f"./pred_and_QR/outcome/histogram/{imgName}/difference/de_{imgName}_diffshift.{filetype}")
-plt.close()
-
-# 將已平移過的直方圖復原
-exdiffA = decode_image_different_shift(exdiffA_s, EL)
-exdiffId, exdiffNum = generate_different_histogram_without_frame(exdiffA, list(range(-range_x,range_x+1)), [0]*(range_x*2+1))
-
-plt.bar(exdiffId, exdiffNum)
-plt.ylim(0, max(exdiffNum) * 1.3)
-plt.savefig(f"./pred_and_QR/outcome/histogram/{imgName}/difference/de_{imgName}_diff.{filetype}")
-plt.close()
-
-print("取出加權值：%s"%(exWeight))
-if flag_img == 1 and flag_inf == 1:
-    print("DE影像還原正確，取出二維碼資訊正確")
-elif flag_img == 1 and flag_inf == 0:
-    print("DE影像還原正確，取出二維碼資料錯誤")
-elif flag_img == 0 and flag_inf == 1:
-    print("DE影像還原錯誤，取出二維碼資訊正確")
-elif flag_img == 0 and flag_inf == 0:
-    print("DE影像還原錯誤，取出二維碼資料錯誤")
-if same_array1D(inInf, exInf) == 1:
-    print("差值直方圖解碼，隱藏資訊提取正確")
-if flag_img and flag_inf and same_array1D(inInf, exInf):
-    print("...解密完成...")
+# 最終驗證
+if qr_reconstruction_success and is_signature_valid:
+    print("解密成功！QR碼重建正確，簽名驗證通過。")
+elif qr_reconstruction_success and not is_signature_valid:
+    print("警告：QR碼重建正確，但簽名驗證失敗。")
+elif not qr_reconstruction_success and is_signature_valid:
+    print("警告：QR碼重建失敗，但簽名驗證通過。")
 else:
-    print("...解密失敗...")
+    print("解密失敗：QR碼重建失敗，簽名驗證也失敗。")
+
+print("...解碼過程結束...")
 
 # 影像展示
 plt.subplot(2,2,1)

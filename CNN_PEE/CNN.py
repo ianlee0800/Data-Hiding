@@ -205,18 +205,30 @@ def get_gpu_memory_usage():
         }
     return {'allocated': 0, 'cached': 0}
 
-def train_model(model, train_loader, val_loader, num_epochs, device, accumulation_steps=8):
-    print("Starting model training...")
+def train_model(model, train_loader, val_loader, start_epoch, num_epochs, device, accumulation_steps=8):
+    print(f"Starting/Resuming model training from epoch {start_epoch + 1}...")
     criterion = CustomLoss(lambda_reg=1e-3)
     optimizer = optim.AdamW(model.parameters(), lr=0.001, weight_decay=1e-4)
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=5)
     scaler = torch.amp.GradScaler('cuda') if DEVICE_TYPE == 'cuda' else None
 
+    # 如果不是從頭開始，加載之前的檢查點
+    if start_epoch > 0:
+        checkpoint_path = f'./CNN_PEE/model/model_epoch_{start_epoch}.pth'
+        if os.path.exists(checkpoint_path):
+            checkpoint = torch.load(checkpoint_path)
+            model.load_state_dict(checkpoint['model_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            print(f"Resumed training from epoch {start_epoch}")
+        else:
+            print(f"No checkpoint found at {checkpoint_path}, starting from epoch {start_epoch} without loading weights")
+
     start_time = time.time()
 
-    for epoch in range(num_epochs):
+    for epoch in range(start_epoch, start_epoch + num_epochs):
         if DEVICE_TYPE == 'cuda':
-            torch.cuda.empty_cache()  # 清理 GPU 缓存
+            torch.cuda.empty_cache()
         model.train()
         total_loss = 0
         batch_count = 0
@@ -246,7 +258,7 @@ def train_model(model, train_loader, val_loader, num_epochs, device, accumulatio
             batch_count += 1
 
             if batch_idx % 50 == 0:
-                print(f'  Epoch [{epoch+1}/{num_epochs}], Batch [{batch_idx}/{len(train_loader)}], '
+                print(f'  Epoch [{epoch+1}/{start_epoch + num_epochs}], Batch [{batch_idx}/{len(train_loader)}], '
                       f'Loss: {loss.item():.4f}')
                 if DEVICE_TYPE == 'cuda':
                     print(f'  GPU Memory: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB')
@@ -273,12 +285,12 @@ def train_model(model, train_loader, val_loader, num_epochs, device, accumulatio
 
         scheduler.step(avg_val_loss)
 
-        print(f'Epoch [{epoch+1}/{num_epochs}], Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}, '
+        print(f'Epoch [{epoch+1}/{start_epoch + num_epochs}], Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}, '
               f'LR: {optimizer.param_groups[0]["lr"]:.6f}')
         if DEVICE_TYPE == 'cuda':
             print(f'GPU Memory: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB')
 
-        if (epoch + 1) % 5 == 0 or epoch == num_epochs - 1:
+        if (epoch + 1) % 5 == 0 or epoch == start_epoch + num_epochs - 1:
             model_path = f'./CNN_PEE/model/model_epoch_{epoch+1}.pth'
             torch.save({
                 'epoch': epoch,
@@ -297,6 +309,11 @@ if __name__ == "__main__":
     print("Program execution started...")
     torch.multiprocessing.set_start_method('spawn')
 
+    # 訓練設置
+    START_FROM_SCRATCH = True  # 設置為 True 從頭開始訓練，False 從特定 epoch 繼續
+    LAST_EPOCH = 0  # 如果 START_FROM_SCRATCH 為 False，這裡設置上次訓練到的 epoch
+    TOTAL_EPOCHS = 50  # 總共要訓練的 epochs 數量
+
     print("Checking CUDA availability...")
     if torch.cuda.is_available():
         print(f"CUDA is available. GPU: {torch.cuda.get_device_name(0)}")
@@ -311,14 +328,24 @@ if __name__ == "__main__":
     ilsvrc_root = r"C:\Users\Ian Lee\Downloads\ILSVRC2017_DET"
     
     print("Loading data...")
-    train_loader, val_loader = load_data(ilsvrc_root, num_images=3000, batch_size=16)  # 减小批次大小
+    train_loader, val_loader = load_data(ilsvrc_root, num_images=3000, batch_size=16)
 
     if DEVICE_TYPE == 'cuda':
         print(f"Initial GPU memory: {torch.cuda.memory_allocated()/1e9:.2f}GB / {torch.cuda.memory_reserved()/1e9:.2f}GB")
 
-    print("Starting training process...")
+    if START_FROM_SCRATCH:
+        start_epoch = 0
+        num_epochs = TOTAL_EPOCHS
+        print("Starting training from scratch...")
+    else:
+        start_epoch = LAST_EPOCH
+        num_epochs = TOTAL_EPOCHS - LAST_EPOCH
+        print(f"Resuming training from epoch {start_epoch + 1}...")
+
+    print(f"Will train for {num_epochs} epochs, ending at epoch {start_epoch + num_epochs}")
+
     try:
-        train_model(model, train_loader, val_loader, num_epochs=50, device=device, accumulation_steps=8)
+        train_model(model, train_loader, val_loader, start_epoch=start_epoch, num_epochs=num_epochs, device=device, accumulation_steps=8)
     except RuntimeError as e:
         if "CUDA out of memory" in str(e):
             print("CUDA out of memory. Try reducing batch size or model size.")
