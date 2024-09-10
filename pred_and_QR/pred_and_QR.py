@@ -553,58 +553,79 @@ def reconstruct_qr_code(parts, original_shape):
     flat_qr = np.concatenate(parts)
     return flat_qr.reshape(original_shape)
 
-def improved_pee_embedding_split(origImg, weight, EL, range_x, qr_data, num_rotations=4):
+def improved_predict_image(img, block_size=8):
+    height, width = img.shape
+    pred_img = np.zeros_like(img)
+    
+    for i in range(0, height, block_size):
+        for j in range(0, width, block_size):
+            block = img[i:i+block_size, j:j+block_size]
+            if i == 0 and j == 0:
+                pred_img[i:i+block_size, j:j+block_size] = np.mean(block)
+            elif i == 0:
+                pred_img[i:i+block_size, j:j+block_size] = block[:, 0][:, np.newaxis]
+            elif j == 0:
+                pred_img[i:i+block_size, j:j+block_size] = block[0, :][np.newaxis, :]
+            else:
+                left = img[i:i+block_size, j-1][:, np.newaxis]
+                top = img[i-1, j:j+block_size][np.newaxis, :]
+                pred_img[i:i+block_size, j:j+block_size] = (left + top) / 2
+
+    return pred_img
+
+def adaptive_embedding(diff, data, threshold):
+    embedded = np.zeros_like(diff)
+    embedded_data = []
+    data_index = 0
+    
+    for i in range(diff.shape[0]):
+        for j in range(diff.shape[1]):
+            if data_index >= len(data):
+                embedded[i, j] = diff[i, j]
+                continue
+            
+            if abs(diff[i, j]) < threshold:
+                bit = data[data_index]
+                if diff[i, j] >= 0:
+                    embedded[i, j] = 2 * diff[i, j] + bit
+                else:
+                    embedded[i, j] = 2 * diff[i, j] - bit
+                embedded_data.append(bit)
+                data_index += 1
+            else:
+                embedded[i, j] = diff[i, j]
+    
+    return embedded, embedded_data
+
+def improved_pee_embedding_split(origImg, qr_data, block_size=8, threshold=3):
     current_img = origImg.copy()
     total_payload = 0
-    all_inInf = []
-    qr_parts = split_qr_code(qr_data, num_rotations + 1)
+    all_embedded_data = []
+    qr_parts = split_qr_code(qr_data, 5)  # Assuming 5 rotations as before
     
-    diffIds, diffNums = [], []
-    diffIds_s, diffNums_s = [], []
-    diffIds_e, diffNums_e = [], []
-
-    for i in range(num_rotations + 1):
+    for i, qr_part in enumerate(qr_parts):
         print(f"\nProcessing rotation {i}")
-        img_p = generate_perdict_image(current_img, weight)
+        pred_img = improved_predict_image(current_img, block_size)
+        diff = current_img - pred_img
         
-        diffA = two_array2D_add_or_subtract(current_img, img_p, -1)
+        qr_bits = qr_part.flatten()
+        embedded_diff, embedded_data = adaptive_embedding(diff, qr_bits, threshold)
         
-        diffId, diffNum = generate_different_histogram_without_frame(diffA, list(range(-range_x,range_x+1)), [0]*(range_x*2+1))
-        diffIds.append(diffId)
-        diffNums.append(diffNum)
+        current_img = pred_img + embedded_diff
         
-        diffA_s = image_difference_shift(diffA, EL)
-        diffId_s, diffNum_s = generate_different_histogram_without_frame(diffA_s, list(range(-range_x,range_x+1)), [0]*(range_x*2+1))
-        diffIds_s.append(diffId_s)
-        diffNums_s.append(diffNum_s)
+        total_payload += len(embedded_data)
+        all_embedded_data.extend(embedded_data)
         
-        # 使用当前QR部分进行嵌入
-        qr_part = qr_parts[i].flatten()
-        print(f"QR part shape: {qr_parts[i].shape}")
-        print(f"Flattened QR part length: {len(qr_part)}")
-        
-        diffA_e, inInf = image_difference_embeding(diffA_s, qr_part, EL, 1)
-        
-        diffId_e, diffNum_e = generate_different_histogram_without_frame(diffA_e, list(range(-range_x,range_x+1)), [0]*(range_x*2+1))
-        diffIds_e.append(diffId_e)
-        diffNums_e.append(diffNum_e)
-        
-        current_img = two_array2D_add_or_subtract(img_p, diffA_e, 1)
-        
-        embedded_payload = len(inInf)
-        total_payload += embedded_payload
-        all_inInf.extend(inInf)
-        
-        print(f"Payload for this rotation: {embedded_payload}")
+        print(f"Payload for this rotation: {len(embedded_data)}")
         print(f"Total payload so far: {total_payload}")
         
-        if i < num_rotations:
+        if i < 4:  # Don't rotate after the last iteration
             current_img = np.rot90(current_img)
     
     print(f"\nFinal total payload: {total_payload}")
-    print(f"Total inInf length: {len(all_inInf)}")
+    print(f"Total embedded data length: {len(all_embedded_data)}")
     
-    return current_img, all_inInf, total_payload, diffIds, diffNums, diffIds_s, diffNums_s, diffIds_e, diffNums_e
+    return current_img, all_embedded_data, total_payload
 
 def generate_metadata(qr_data):
     return {
@@ -1192,7 +1213,7 @@ img_p = generate_perdict_image(origImg, weight)
 
 # X1: 改進的預測誤差擴展（PEE）嵌入法
 print("\nX1: 改進的預測誤差擴展（PEE）嵌入法")
-img_pee, inInf, payload_pee, diffIds, diffNums, diffIds_s, diffNums_s, diffIds_e, diffNums_e = improved_pee_embedding_split(origImg, weight, EL, range_x, QRCImg, num_rotations=num_rotations)
+img_pee, embedded_data, payload_pee = improved_pee_embedding_split(origImg, QRCImg)
 
 psnr_pee = calculate_psnr(origImg, img_pee)
 ssim_pee = calculate_ssim(origImg, img_pee)
