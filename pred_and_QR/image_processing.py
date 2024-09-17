@@ -1,151 +1,217 @@
 import numpy as np
 import cv2
-from scipy.signal import convolve2d
+import matplotlib.pyplot as plt
+import math
+from common import find_max, calculate_psnr, calculate_ssim, histogram_correlation
 
-def preprocess_image(image):
-    """
-    預處理圖像,包括分割和過濾
-    """
-    h, w = image.shape
-    parts = [
-        image[0:h:2, 0:w:2],
-        image[0:h:2, 1:w:2],
-        image[1:h:2, 0:w:2],
-        image[1:h:2, 1:w:2]
-    ]
-    
-    filter_kernel = np.array([
-        [1, 2, 3, 2, 1],
-        [2, 4, 6, 4, 2],
-        [3, 6, 9, 6, 3],
-        [2, 4, 6, 4, 2],
-        [1, 2, 3, 2, 1]
-    ]) / 81  # 預計算規範化因子
+def read_image(filepath, grayscale=True):
+    """讀取圖像"""
+    if grayscale:
+        return cv2.imread(filepath, cv2.IMREAD_GRAYSCALE)
+    return cv2.imread(filepath)
 
-    preprocessed_image = np.zeros_like(image)
-    for i, part in enumerate(parts):
-        filtered_part = convolve2d(part, filter_kernel, mode='same', boundary='symmetric')
-        preprocessed_image[i//2::2, i%2::2] = filtered_part
+def save_image(image, filepath):
+    """保存圖像"""
+    cv2.imwrite(filepath, image)
 
-    return preprocessed_image
+def save_histogram(img, filename, title):
+    plt.figure(figsize=(10, 6))
+    plt.hist(img.flatten(), bins=256, range=[0,255], density=True, alpha=0.7)
+    plt.title(title)
+    plt.xlabel("Pixel Value")
+    plt.ylabel("Frequency")
+    plt.savefig(filename)
+    plt.close()
+
+def save_difference_histogram(diff, filename, title):
+    plt.figure(figsize=(10, 6))
+    plt.hist(diff.flatten(), bins=100, range=[-50, 50], density=True, alpha=0.7)
+    plt.title(title)
+    plt.xlabel("Difference Value")
+    plt.ylabel("Frequency")
+    plt.savefig(filename)
+    plt.close()
+
+def calculate_correlation(img1, img2):
+    """計算兩個圖像的相關係數"""
+    img1_flat = img1.flatten()
+    img2_flat = img2.flatten()
+    correlation = np.corrcoef(img1_flat, img2_flat)[0, 1]
+    return round(correlation, 4)
 
 def generate_histogram(array2D):
-    """
-    生成二維陣列的直方圖
-    """
-    num = [0] * 256
+    """生成直方圖"""
     height, width = array2D.shape
-    for y in range(height):
-        for x in range(width):
-            value = int(array2D[y,x])
-            num[value] += 1
-    return num
+    values = array2D.flatten()
+    min_val = int(np.min(values))
+    max_val = int(np.max(values))
+    range_size = max_val - min_val + 1
+    num = [0] * range_size
+    for value in values:
+        num[int(value) - min_val] += 1
+    return num, min_val, max_val, range_size
 
-def generate_different_histogram_without_frame(array2d, histId, histNum):
-    """
-    累算二維陣列上的數值並生成直方圖，不包括邊框
-    """
-    height, width = array2d.shape
-    for y in range(1, height-1):
-        for x in range(1, width-1):
-            value = int(array2d[y,x])
-            for i, id_value in enumerate(histId):
-                if value == id_value:
-                    histNum[i] += 1
-    return histId, histNum
+def image_rerotation(image, times):
+    """影像轉回原方向"""
+    return np.rot90(image, -times % 4)
+
+def check_quality_after_stage(stage_name, original_img, embedded_img):
+    """檢查每個階段後的圖像質量"""
+    psnr = calculate_psnr(original_img, embedded_img)
+    ssim = calculate_ssim(original_img, embedded_img)
+    hist_orig, _, _, _ = generate_histogram(original_img)
+    hist_emb, _, _, _ = generate_histogram(embedded_img)
+    corr = histogram_correlation(hist_orig, hist_emb)
+    print(f"{stage_name}: PSNR={psnr:.2f}, SSIM={ssim:.4f}, Histogram Correlation={corr:.4f}")
+
+def array2D_transfer_to_array1D(array2D):
+    """二維陣列轉換為一維陣列"""
+    array1D = []
+    row, column = array2D.shape
+    for y in range(row):
+        for x in range(column):
+            value = array2D[y,x]
+            array1D.append(1 if value >= 128 else 0)
+    return array1D
+
+def array1D_transfer_to_array2D(array1D):
+    """一維陣列轉換為二維陣列"""
+    length = len(array1D)
+    side = int(length**0.5)
+    array2D = np.zeros((side, side), dtype=np.uint8)
+    i = 0
+    for y in range(side):
+        for x in range(side):
+            array2D[y,x] = 255 if array1D[i] == 1 else 0
+            i += 1
+    return array2D
 
 def two_array2D_add_or_subtract(array2D_1, array2D_2, sign):
-    """
-    兩個二維陣列的數值相加或相減
-    """
+    """兩個二維陣列的數值相加或相減"""
     return array2D_1 + sign * array2D_2
 
-def find_max(array1D):
-    """
-    找出一維陣列中最大值的索引
-    """
-    return np.argmax(array1D)
-
 def find_w(image):
-    """
-    找出模塊的大小
-    """
+    """找出模塊的大小"""
     height, width = image.shape
     RLArray = [0] * height
     for y in range(height):
         RunLength = 0
-        for x in range(width-1):
-            if image[y,x] == image[y,x+1]:
+        for x in range(width - 1):
+            if image[y, x] == image[y, x + 1]:
                 RunLength += 1
             else:
-                RLArray[RunLength+1] += 1
+                RLArray[RunLength + 1] += 1
                 RunLength = 0
-    w = find_max(RLArray)
-    return w
+    return find_max(RLArray)
 
-def array2D_transfer_to_array1D(array2D):
-    """
-    二維陣列轉換為一維陣列
-    """
-    return (array2D >= 128).flatten().astype(int)
+def simplified_qrcode(qrcode):
+    """簡化QRcode"""
+    height, width = qrcode.shape
+    same = 0
+    simQrcode = None
+    bits = 0
+    for y in range(height - 1):
+        if np.array_equal(qrcode[y], qrcode[y+1]):
+            same += 1
+        else:
+            same = 0
+        if same == 1:
+            bits += 1
+            if simQrcode is None:
+                simQrcode = [qrcode[y]]
+            else:
+                simQrcode.append(qrcode[y])
+    simQrcode = np.array(simQrcode)
+    outQrcode = np.zeros((bits, bits), np.uint8)
+    i = 0
+    same = 0
+    for x in range(width - 1):
+        if np.array_equal(qrcode[:, x], qrcode[:, x+1]):
+            same += 1
+        else:
+            same = 0
+        if same == 1:
+            outQrcode[:, i] = simQrcode[:, x]
+            i += 1
+    return bits, outQrcode
 
-def array1D_transfer_to_array2D(array1D):
-    """
-    一維陣列轉換為二維陣列
-    """
-    side = int(np.sqrt(len(array1D)))
-    array2D = np.array(array1D).reshape(side, side)
-    return array2D * 255
+def simplified_stego(qrcode, bits, w):
+    """簡化隱寫QRcode"""
+    simQrcode = np.zeros((bits, bits), np.uint8)
+    for j in range(bits):
+        for i in range(bits):
+            simQrcode[j, i] = qrcode[j*w, i*w]
+    return simQrcode
 
-def same_array1D(array1, array2):
-    """
-    檢查兩個一維陣列是否相同
-    """
-    return np.array_equal(array1, array2)
+def generate_perdict_image(img, weight):
+    """生成預測影像"""
+    height, width = img.shape
+    temp = img.copy()
+    for y in range(1, height-1):
+        for x in range(1, width-1):
+            ul = int(img[y-1,x-1])
+            up = int(img[y-1,x])
+            ur = int(img[y-1,x+1])
+            left = int(img[y,x-1])
+            p = (weight[0]*up+weight[1]*ul+weight[2]*ur+weight[3]*left)/(weight[0]+weight[1]+weight[2]+weight[3])
+            temp[y,x] = round(p)
+    return temp
 
-def same_array2D(array1, array2):
-    """
-    檢查兩個二維陣列是否相同
-    """
-    return np.array_equal(array1, array2)
-
-def image_rotation(image, times):
-    """
-    將圖像旋轉指定的次數（每次旋轉90度）
+def improved_predict_image(img, weight=None, block_size=8):
+    """改进的预测图像生成"""
+    height, width = img.shape
+    pred_img = np.zeros_like(img)
     
-    參數:
-    image: 輸入圖像
-    times: 旋轉次數（整數）
-    
-    返回:
-    旋轉後的圖像
-    """
-    return np.rot90(image, times)
+    for i in range(0, height, block_size):
+        for j in range(0, width, block_size):
+            block = img[i:i+block_size, j:j+block_size]
+            if i == 0 and j == 0:
+                pred_img[i:i+block_size, j:j+block_size] = np.mean(block)
+            elif i == 0:
+                pred_img[i:i+block_size, j:j+block_size] = block[:, 0][:, np.newaxis]
+            elif j == 0:
+                pred_img[i:i+block_size, j:j+block_size] = block[0, :][np.newaxis, :]
+            else:
+                if weight is None:
+                    left = img[i:i+block_size, j-1][:, np.newaxis]
+                    top = img[i-1, j:j+block_size][np.newaxis, :]
+                    pred_img[i:i+block_size, j:j+block_size] = (left + top) / 2
+                else:
+                    for y in range(i, min(i+block_size, height)):
+                        for x in range(j, min(j+block_size, width)):
+                            ul = int(img[y-1, x-1]) if y > 0 and x > 0 else 0
+                            up = int(img[y-1, x]) if y > 0 else 0
+                            ur = int(img[y-1, x+1]) if y > 0 and x < width-1 else 0
+                            left = int(img[y, x-1]) if x > 0 else 0
+                            p = (weight[0]*up + weight[1]*ul + weight[2]*ur + weight[3]*left) / sum(weight)
+                            pred_img[y, x] = round(p)
 
-def image_rerotation(image, times):
-    """
-    將圖像轉回原方向
-    
-    參數:
-    image: 輸入圖像
-    times: 原圖像已被90度旋轉的次數
-    
-    返回:
-    轉回原方向的圖像
-    """
-    return np.rot90(image, -times % 4)
+    return pred_img
 
-# 如果需要直接運行此文件進行測試
-if __name__ == "__main__":
-    # 這裡可以添加一些測試代碼
-    # 例如:
-    test_image = np.random.randint(0, 256, (100, 100), dtype=np.uint8)
-    processed_image = preprocess_image(test_image)
-    histogram = generate_histogram(processed_image)
-    print("Histogram sample:", histogram[:10])  # 打印直方圖的前10個值
+def image_difference_shift(array2D, a):
+    """影像差值偏移"""
+    row, column = array2D.shape
+    array2D_s = array2D.copy()
+    func = a % 2
+    r = np.floor(a/2)
+    for j in range(1, row-1):
+        for i in range(1, column-1):
+            value = array2D[j,i]
+            shift = value
+            if func == 1 or a == 1:
+                if value > r:
+                    shift = value+r
+                elif value < -r:
+                    shift = value-r-1
+            elif func == 0:
+                if value > r:
+                    shift = value+r
+                elif value < (-r+1):
+                    shift = value-r
+            array2D_s[j,i] = shift
+    return array2D_s
 
-    # 測試新添加的 generate_different_histogram_without_frame 函數
-    histId = list(range(-10, 11))  # 從 -10 到 10 的範圍
-    histNum = [0] * len(histId)
-    _, diff_histogram = generate_different_histogram_without_frame(processed_image, histId, histNum)
-    print("Different histogram sample:", diff_histogram[:10])  # 打印差異直方圖的前10個值
+def find_locaion(qrcode, bits):
+    """找出所有方格的左上角座標"""
+    pixOfBits = qrcode.shape[0] // bits
+    return np.array([np.arange(bits) * pixOfBits, np.arange(bits) * pixOfBits])
