@@ -1,8 +1,15 @@
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
-import math
 from common import find_max, calculate_psnr, calculate_ssim, histogram_correlation
+
+try:
+    import cupy as cp
+    from numba import cuda
+    CUDA_AVAILABLE = True
+except ImportError:
+    CUDA_AVAILABLE = False
+    print("CUDA libraries not found. Falling back to CPU implementation.")
 
 def read_image(filepath, grayscale=True):
     """讀取圖像"""
@@ -157,36 +164,46 @@ def generate_perdict_image(img, weight):
             temp[y,x] = round(p)
     return temp
 
-def improved_predict_image(img, weight=None, block_size=8):
-    """改进的预测图像生成"""
+def improved_predict_image(img, weight, block_size=8):
     height, width = img.shape
     pred_img = np.zeros_like(img)
     
-    for i in range(0, height, block_size):
-        for j in range(0, width, block_size):
-            block = img[i:i+block_size, j:j+block_size]
-            if i == 0 and j == 0:
-                pred_img[i:i+block_size, j:j+block_size] = np.mean(block)
-            elif i == 0:
-                pred_img[i:i+block_size, j:j+block_size] = block[:, 0][:, np.newaxis]
-            elif j == 0:
-                pred_img[i:i+block_size, j:j+block_size] = block[0, :][np.newaxis, :]
-            else:
-                if weight is None:
-                    left = img[i:i+block_size, j-1][:, np.newaxis]
-                    top = img[i-1, j:j+block_size][np.newaxis, :]
-                    pred_img[i:i+block_size, j:j+block_size] = (left + top) / 2
-                else:
-                    for y in range(i, min(i+block_size, height)):
-                        for x in range(j, min(j+block_size, width)):
-                            ul = int(img[y-1, x-1]) if y > 0 and x > 0 else 0
-                            up = int(img[y-1, x]) if y > 0 else 0
-                            ur = int(img[y-1, x+1]) if y > 0 and x < width-1 else 0
-                            left = int(img[y, x-1]) if x > 0 else 0
-                            p = (weight[0]*up + weight[1]*ul + weight[2]*ur + weight[3]*left) / sum(weight)
-                            pred_img[y, x] = round(p)
-
+    for i in range(1, height):
+        for j in range(1, width):
+            ul = int(img[i-1, j-1])
+            up = int(img[i-1, j])
+            ur = int(img[i-1, j+1]) if j < width - 1 else up
+            left = int(img[i, j-1])
+            p = (weight[0]*up + weight[1]*ul + weight[2]*ur + weight[3]*left) / sum(weight)
+            pred_img[i, j] = round(p)
+    
     return pred_img
+
+@cuda.jit
+def improved_predict_image_kernel(img, pred_img, weight):
+    x, y = cuda.grid(2)
+    if 1 <= x < img.shape[0] and 1 <= y < img.shape[1]:
+        ul = float(img[x-1, y-1])
+        up = float(img[x-1, y])
+        ur = float(img[x-1, y+1]) if y < img.shape[1] - 1 else up
+        left = float(img[x, y-1])
+        w_sum = weight[0] + weight[1] + weight[2] + weight[3]
+        p = (weight[0]*up + weight[1]*ul + weight[2]*ur + weight[3]*left) / w_sum
+        pred_img[x, y] = round(p)
+
+def improved_predict_image_cuda(img, weight, block_size=8):
+    d_img = cp.asarray(img)
+    d_pred_img = cp.zeros_like(d_img)
+    d_weight = cp.asarray(weight, dtype=cp.float32)  # 确保 weight 是 float32 类型
+
+    threads_per_block = (16, 16)
+    blocks_per_grid_x = int(np.ceil(img.shape[0] / threads_per_block[0]))
+    blocks_per_grid_y = int(np.ceil(img.shape[1] / threads_per_block[1]))
+    blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
+
+    improved_predict_image_kernel[blocks_per_grid, threads_per_block](d_img, d_pred_img, d_weight)
+
+    return d_pred_img  # 返回 CuPy 数组，而不是 NumPy 数组
 
 def image_difference_shift(array2D, a):
     """影像差值偏移"""

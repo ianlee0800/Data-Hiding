@@ -6,9 +6,7 @@ from image_processing import (
     image_difference_shift, 
     two_array2D_add_or_subtract,
     generate_histogram,
-    find_w,
-    simplified_qrcode,
-    find_locaion,
+    improved_predict_image_cuda,
     improved_predict_image,
     calculate_psnr,
     calculate_ssim
@@ -17,13 +15,19 @@ from utils import (
     find_max,
     generate_metadata,
     sign_data,
-    int_transfer_binary_single_intlist,
     MB_classification,
     find_least_common_multiple
 )
 
+try:
+    import cupy as cp
+    from numba import cuda
+    CUDA_AVAILABLE = True
+except ImportError:
+    CUDA_AVAILABLE = False
+    print("CUDA libraries not found. Falling back to CPU implementation.")
+
 def pee_embedding_adaptive(img, data, weight, block_size=8, threshold=3):
-    """改进的自适应预测误差扩展(PEE)嵌入"""
     height, width = img.shape
     pred_img = improved_predict_image(img, weight, block_size)
     diff = img - pred_img
@@ -38,9 +42,8 @@ def pee_embedding_adaptive(img, data, weight, block_size=8, threshold=3):
                 embedded[i, j] = diff[i, j]
                 continue
             
-            # 自适应阈值：使用局部方差来调整阈值
             local_var = np.var(img[max(0, i-1):min(height, i+2), max(0, j-1):min(width, j+2)])
-            adaptive_threshold = threshold * (1 + local_var / 1000)  # 可以根据需要调整这个公式
+            adaptive_threshold = threshold * (1 + local_var / 1000)
             
             if abs(diff[i, j]) < adaptive_threshold:
                 bit = data[data_index]
@@ -54,7 +57,49 @@ def pee_embedding_adaptive(img, data, weight, block_size=8, threshold=3):
                 embedded[i, j] = diff[i, j]
     
     embedded_img = pred_img + embedded
-    return embedded_img, embedded_data, data_index
+    return embedded_img, data_index, embedded_data
+
+@cuda.jit
+def pee_kernel(img, pred_img, data, embedded, payload, threshold):
+    x, y = cuda.grid(2)
+    if x < img.shape[0] and y < img.shape[1]:
+        diff = float(img[x, y]) - float(pred_img[x, y])
+        if abs(diff) < threshold:
+            if payload[0] < len(data):
+                bit = data[payload[0]]
+                cuda.atomic.add(payload, 0, 1)  # 原子操作来增加 payload
+                if diff >= 0:
+                    embedded[x, y] = pred_img[x, y] + 2 * diff + bit
+                else:
+                    embedded[x, y] = pred_img[x, y] + 2 * diff - bit
+            else:
+                embedded[x, y] = img[x, y]
+        else:
+            embedded[x, y] = img[x, y]
+
+def pee_embedding_adaptive_cuda(img, data, weight, block_size=8, threshold=3):
+    if not CUDA_AVAILABLE:
+        return pee_embedding_adaptive(img, data, weight, block_size, threshold)
+
+    d_img = cp.asarray(img)
+    d_data = cp.asarray(data)
+    
+    d_pred_img = improved_predict_image_cuda(d_img, weight, block_size)
+
+    d_embedded = cp.zeros_like(d_img)
+    d_payload = cp.zeros(1, dtype=int)
+
+    threads_per_block = (16, 16)
+    blocks_per_grid_x = int(np.ceil(img.shape[0] / threads_per_block[0]))
+    blocks_per_grid_y = int(np.ceil(img.shape[1] / threads_per_block[1]))
+    blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
+
+    pee_kernel[blocks_per_grid, threads_per_block](d_img, d_pred_img, d_data, d_embedded, d_payload, threshold)
+
+    embedded_img = cp.asnumpy(d_embedded)
+    payload = int(d_payload[0])
+
+    return embedded_img, payload, cp.asnumpy(d_data[:payload])
 
 def adaptive_embedding(diff, data, threshold):
     """自适应嵌入"""
@@ -177,7 +222,7 @@ def image_difference_embeding(array2D, array1D, a, flag):
     return array2D_e, inf
 
 def histogram_data_hiding(img, flag, embedding_info):
-    """直方图平移嵌入"""
+    """Histogram Shifting Embedding"""
     h_img, w_img = img.shape
     markedImg = img.copy()
     hist, _, _, _ = generate_histogram(img)
@@ -190,53 +235,42 @@ def histogram_data_hiding(img, flag, embedding_info):
     peak = find_max(hist)
     print(f"Peak found in histogram_data_hiding: {peak}")
     
-    payload_h = hist[peak]
-    i = 0
+    # Calculate the maximum embeddable payload
+    max_payload = hist[peak]
     
-    # 将embedding_info转换为二进制列表
-    array1D = []
+    # Convert embedding_info to binary string
+    embedding_data = ''
     for key, value in embedding_info.items():
         if isinstance(value, list):
             for item in value:
                 if isinstance(item, list):
-                    array1D.extend([bin(x)[2:].zfill(8) for x in item])
+                    embedding_data += ''.join([format(x, '08b') for x in item])
                 else:
-                    array1D.append(bin(item)[2:].zfill(32))
+                    embedding_data += format(item, '032b')
         else:
-            array1D.append(bin(value)[2:].zfill(32))
-    array1D = ''.join(array1D)
-    length = len(array1D)
+            embedding_data += format(value, '032b')
     
-    # 初始化 zero
-    zero = 255  # 假设最大像素值为 255
-    # 找出直方图为零的像素值，以避免右移溢位
-    for h in range(len(hist)):
-        if hist[h] == 0:
-            zero = h
-            break
+    # Ensure we don't exceed the maximum payload
+    embedding_data = embedding_data[:max_payload]
+    actual_payload = len(embedding_data)
     
-    # 长条图右移且嵌入隐藏值
+    i = 0
     for y in range(h_img):
         for x in range(w_img):
-            if i < length:
-                b = int(array1D[i])
-            else:
-                b = 0
-            value = img[y,x]
-            if flag == 0:
-                if value < peak:
-                    value -= 1
-                elif value == peak:
-                    value -= b
-            elif flag == 1:
-                if value > peak and value < zero:
-                    value += 1
-                elif value == peak:
-                    value += b
-            markedImg[y,x] = value
-            i += 1
+            if i < actual_payload and markedImg[y, x] == peak:
+                if flag == 0:
+                    markedImg[y, x] -= int(embedding_data[i])
+                elif flag == 1:
+                    markedImg[y, x] += int(embedding_data[i])
+                i += 1
+            elif markedImg[y, x] > peak:
+                if flag == 1:
+                    markedImg[y, x] += 1
+            elif markedImg[y, x] < peak:
+                if flag == 0:
+                    markedImg[y, x] -= 1
     
-    return markedImg, peak, i
+    return markedImg, peak, actual_payload
 
 def horizontal_embedding(qrcode, simQrcode, locArray, insertArray, k):
     """水平嵌入（垂直掃描）"""
