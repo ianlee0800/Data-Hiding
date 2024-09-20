@@ -188,7 +188,6 @@ def decode_pee_info(encoded_data):
 
     return total_rotations, weights, payloads, ELs
 
-
 def find_max(array1D):
     """找出一維陣列中最大值"""
     if not array1D:
@@ -197,52 +196,4 @@ def find_max(array1D):
         return max(range(len(array1D)), key=lambda i: max(array1D[i]) if len(array1D[i]) > 0 else float('-inf'))
     else:
         return max(range(len(array1D)), key=lambda i: array1D[i])
-
-def same_array2D(array1, array2):
-    """檢查兩個二維陣列是否相同"""
-    return np.array_equal(array1, array2)
-
-def verify_signature(public_key, signature, data):
-    """驗證簽名"""
-    try:
-        public_key.verify(
-            signature,
-            data,
-            padding.PSS(
-                mgf=padding.MGF1(hashes.SHA256()),
-                salt_length=padding.PSS.MAX_LENGTH
-            ),
-            hashes.SHA256()
-        )
-        return True
-    except:
-        return False
-
-def calculate_payload(array2D, a):
-    """計算陣列中正負a之間的累加值"""
-    row, column = array2D.shape
-    payload = 0
-    r = np.floor(a/2)
-    func = a % 2
-    for j in range(1, row-1):
-        for i in range(1, column-1):
-            value = array2D[j,i]
-            if func == 0 or r == 0:
-                if -r < value <= r:
-                    payload += 1
-            elif func == 1:
-                if -r <= value <= r:
-                    payload += 1
-    return payload
-
-def MB_classification(m1, m2, m3, m4):
-    """模塊組的類別"""
-    if m1 == m2 and m3 == m4:
-        return 1
-    elif m1 != m2 and m3 == m4:
-        return 2
-    elif m1 == m2 and m3 != m4:
-        return 3
-    elif m1 != m2 and m3 != m4:
-        return 4
 
