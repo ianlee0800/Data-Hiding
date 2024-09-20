@@ -1,5 +1,6 @@
 import numpy as np
 import json
+import math
 from cryptography.hazmat.primitives.asymmetric import rsa
 from image_processing import (
     generate_perdict_image, 
@@ -7,7 +8,6 @@ from image_processing import (
     two_array2D_add_or_subtract,
     generate_histogram,
     improved_predict_image_cuda,
-    improved_predict_image,
     calculate_psnr,
     calculate_ssim
 )
@@ -16,7 +16,8 @@ from utils import (
     generate_metadata,
     sign_data,
     MB_classification,
-    find_least_common_multiple
+    find_least_common_multiple,
+    decode_pee_info
 )
 
 try:
@@ -29,7 +30,7 @@ except ImportError:
 
 def pee_embedding_adaptive(img, data, weight, block_size=8, threshold=3):
     height, width = img.shape
-    pred_img = improved_predict_image(img, weight, block_size)
+    pred_img = improved_predict_image_cuda(img, weight, block_size)
     diff = img - pred_img
     
     embedded = np.zeros_like(diff)
@@ -60,26 +61,39 @@ def pee_embedding_adaptive(img, data, weight, block_size=8, threshold=3):
     return embedded_img, data_index, embedded_data
 
 @cuda.jit
-def pee_kernel(img, pred_img, data, embedded, payload, threshold):
+def pee_kernel_adaptive(img, pred_img, data, embedded, payload, base_threshold, EL):
     x, y = cuda.grid(2)
     if x < img.shape[0] and y < img.shape[1]:
         diff = float(img[x, y]) - float(pred_img[x, y])
-        if abs(diff) < threshold:
+        
+        # 計算局部標準差
+        local_std = 0.0
+        count = 0
+        for i in range(max(0, x-1), min(img.shape[0], x+2)):
+            for j in range(max(0, y-1), min(img.shape[1], y+2)):
+                local_std += (float(img[i, j]) - float(pred_img[i, j])) ** 2
+                count += 1
+        local_std = math.sqrt(local_std / count)
+        
+        # 自適應閾值
+        threshold = min(base_threshold + int(local_std), EL // 2)
+        
+        if abs(diff) <= threshold:
             if payload[0] < len(data):
                 bit = data[payload[0]]
-                cuda.atomic.add(payload, 0, 1)  # 原子操作来增加 payload
+                cuda.atomic.add(payload, 0, 1)
                 if diff >= 0:
-                    embedded[x, y] = pred_img[x, y] + 2 * diff + bit
+                    embedded[x, y] = pred_img[x, y] + EL * diff + bit
                 else:
-                    embedded[x, y] = pred_img[x, y] + 2 * diff - bit
+                    embedded[x, y] = pred_img[x, y] + EL * diff - bit
             else:
                 embedded[x, y] = img[x, y]
         else:
             embedded[x, y] = img[x, y]
 
-def pee_embedding_adaptive_cuda(img, data, weight, block_size=8, threshold=3):
+def pee_embedding_adaptive_cuda(img, data, weight, EL, block_size=8):
     if not CUDA_AVAILABLE:
-        return pee_embedding_adaptive(img, data, weight, block_size, threshold)
+        return pee_embedding_adaptive(img, data, weight, EL, block_size)
 
     d_img = cp.asarray(img)
     d_data = cp.asarray(data)
@@ -90,16 +104,22 @@ def pee_embedding_adaptive_cuda(img, data, weight, block_size=8, threshold=3):
     d_payload = cp.zeros(1, dtype=int)
 
     threads_per_block = (16, 16)
-    blocks_per_grid_x = int(np.ceil(img.shape[0] / threads_per_block[0]))
-    blocks_per_grid_y = int(np.ceil(img.shape[1] / threads_per_block[1]))
+    blocks_per_grid_x = int(cp.ceil(img.shape[0] / threads_per_block[0]))
+    blocks_per_grid_y = int(cp.ceil(img.shape[1] / threads_per_block[1]))
     blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
 
-    pee_kernel[blocks_per_grid, threads_per_block](d_img, d_pred_img, d_data, d_embedded, d_payload, threshold)
+    # 計算全局標準差作為基礎閾值
+    global_std = cp.std(d_img - d_pred_img).get()
+    base_threshold = min(EL // 2, int(global_std))
 
-    embedded_img = cp.asnumpy(d_embedded)
+    pee_kernel_adaptive[blocks_per_grid, threads_per_block](d_img, d_pred_img, d_data, d_embedded, d_payload, base_threshold, EL)
+
+    embedded_img = d_embedded
     payload = int(d_payload[0])
 
-    return embedded_img, payload, cp.asnumpy(d_data[:payload])
+    print(f"Debug: EL={EL}, base_threshold={base_threshold}, actual_payload={payload}")
+
+    return embedded_img, payload, d_data[:payload]
 
 def adaptive_embedding(diff, data, threshold):
     """自适应嵌入"""
@@ -221,8 +241,12 @@ def image_difference_embeding(array2D, array1D, a, flag):
 
     return array2D_e, inf
 
-def histogram_data_hiding(img, flag, embedding_info):
+def histogram_data_hiding(img, flag, encoded_pee_info):
     """Histogram Shifting Embedding"""
+    # 確保輸入是 NumPy 陣列
+    if isinstance(img, cp.ndarray):
+        img = cp.asnumpy(img)
+
     h_img, w_img = img.shape
     markedImg = img.copy()
     hist, _, _, _ = generate_histogram(img)
@@ -235,24 +259,33 @@ def histogram_data_hiding(img, flag, embedding_info):
     peak = find_max(hist)
     print(f"Peak found in histogram_data_hiding: {peak}")
     
-    # Calculate the maximum embeddable payload
+    try:
+        # 解碼 PEE 資訊
+        total_rotations, weights, payloads, ELs = decode_pee_info(encoded_pee_info)
+    except (TypeError, ValueError) as e:
+        print(f"Error decoding PEE info: {e}")
+        print(f"Encoded PEE info type: {type(encoded_pee_info)}")
+        print(f"Encoded PEE info length: {len(encoded_pee_info)} bytes")
+        raise
+
+    # 計算最大可嵌入載荷
     max_payload = hist[peak]
     
-    # Convert embedding_info to binary string
+    # 將 PEE 資訊轉換為二進制字符串
     embedding_data = ''
-    for key, value in embedding_info.items():
-        if isinstance(value, list):
-            for item in value:
-                if isinstance(item, list):
-                    embedding_data += ''.join([format(x, '08b') for x in item])
-                else:
-                    embedding_data += format(item, '032b')
-        else:
-            embedding_data += format(value, '032b')
+    embedding_data += format(total_rotations, '08b')
+    for i in range(total_rotations):
+        for w in weights[i]:
+            embedding_data += format(w, '08b')
+        embedding_data += format(ELs[i], '08b')
+        embedding_data += format(payloads[i], '016b')
     
-    # Ensure we don't exceed the maximum payload
+    # 確保我們不超過最大載荷
     embedding_data = embedding_data[:max_payload]
     actual_payload = len(embedding_data)
+    
+    print(f"Debug: Embedding data length: {actual_payload} bits")
+    print(f"Debug: Max payload: {max_payload} bits")
     
     i = 0
     for y in range(h_img):
@@ -270,72 +303,9 @@ def histogram_data_hiding(img, flag, embedding_info):
                 if flag == 0:
                     markedImg[y, x] -= 1
     
+    print(f"Debug: Actually embedded {i} bits")
+    
     return markedImg, peak, actual_payload
-
-def horizontal_embedding(qrcode, simQrcode, locArray, insertArray, k):
-    """水平嵌入（垂直掃描）"""
-    i_b = 0
-    length = len(insertArray)
-    bits = simQrcode.shape[0]
-    stegoImg = qrcode.copy()
-    for i in range(bits-1):
-        for j in range(bits-1):
-            m11 = simQrcode[j,i]
-            m12 = simQrcode[j,i+1]
-            m21 = simQrcode[j+1,i]
-            m22 = simQrcode[j+1,i+1]
-            sort = MB_classification(m11, m12, m21, m22)
-            if j == 0 and m11 != m12:
-                if i_b < length:
-                    b = insertArray[i_b]
-                else:
-                    b = 0
-                i_b += 1
-                embedding(stegoImg, locArray, j, i+1, b, k, 1)
-            if sort == 3:
-                if i_b < length:
-                    b = insertArray[i_b]
-                else:
-                    b = 0
-                i_b += 1
-                embedding(stegoImg, locArray, j+1, i+1, b, k, 1)
-            elif sort == 4:
-                b = find_embedding_bits(stegoImg, locArray, j, i+1, 1)
-                adjustment(stegoImg, locArray, j+1, i+1, b, k, 1)
-    return stegoImg
-
-def vertical_embedding(qrcode, simQrcode, locArray, insertArray, k):
-    """垂直嵌入（水平掃描）"""
-    i_b = 0
-    length = len(insertArray)
-    bits = simQrcode.shape[0]
-    stegoImg = qrcode.copy()
-    for j in range(bits-1):
-        for i in range(bits-1):
-            m11 = simQrcode[j,i]
-            m12 = simQrcode[j,i+1]
-            m21 = simQrcode[j+1,i]
-            m22 = simQrcode[j+1,i+1]
-            sort = MB_classification(m11, m21, m12, m22)
-            if i == 0 and m11 != m21:
-                if i_b < length:
-                    b = insertArray[i_b]
-                else:
-                    b = 0
-                i_b += 1
-                embedding(stegoImg, locArray, j+1, i, b, k, 2)
-                insertArray.append(b)
-            if sort == 3:
-                if i_b < length:
-                    b = insertArray[i_b]
-                else:
-                    b = 0
-                i_b += 1
-                embedding(stegoImg, locArray, j+1, i+1, b, k, 2)
-            elif sort == 4:
-                b = find_embedding_bits(stegoImg, locArray, j+1, i, 2)
-                adjustment(stegoImg, locArray, j+1, i+1, b, k, 2)
-    return stegoImg
 
 def embedding(image, locArray, j, i, b, k, mode):
     """影藏数据嵌入"""

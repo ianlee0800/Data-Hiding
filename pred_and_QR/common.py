@@ -1,4 +1,5 @@
 import numpy as np
+import cupy as cp
 import cv2
 import math
 
@@ -30,6 +31,12 @@ def calculate_psnr(img1, img2):
 
 def calculate_ssim(img1, img2):
     """計算結構相似性SSIM"""
+    # 確保輸入是 NumPy 陣列
+    if isinstance(img1, cp.ndarray):
+        img1 = cp.asnumpy(img1)
+    if isinstance(img2, cp.ndarray):
+        img2 = cp.asnumpy(img2)
+
     C1 = (0.01 * 255)**2
     C2 = (0.03 * 255)**2
 

@@ -21,7 +21,15 @@ def save_image(image, filepath):
     """保存圖像"""
     cv2.imwrite(filepath, image)
 
+def image_rerotation(image, times):
+    """將影像旋轉回原方向"""
+    if isinstance(image, np.ndarray):
+        image = cp.asarray(image)
+    return cp.rot90(image, -times % 4)
+
 def save_histogram(img, filename, title):
+    if isinstance(img, cp.ndarray):
+        img = cp.asnumpy(img)
     plt.figure(figsize=(10, 6))
     plt.hist(img.flatten(), bins=256, range=[0,255], density=True, alpha=0.7)
     plt.title(title)
@@ -111,45 +119,6 @@ def find_w(image):
                 RunLength = 0
     return find_max(RLArray)
 
-def simplified_qrcode(qrcode):
-    """簡化QRcode"""
-    height, width = qrcode.shape
-    same = 0
-    simQrcode = None
-    bits = 0
-    for y in range(height - 1):
-        if np.array_equal(qrcode[y], qrcode[y+1]):
-            same += 1
-        else:
-            same = 0
-        if same == 1:
-            bits += 1
-            if simQrcode is None:
-                simQrcode = [qrcode[y]]
-            else:
-                simQrcode.append(qrcode[y])
-    simQrcode = np.array(simQrcode)
-    outQrcode = np.zeros((bits, bits), np.uint8)
-    i = 0
-    same = 0
-    for x in range(width - 1):
-        if np.array_equal(qrcode[:, x], qrcode[:, x+1]):
-            same += 1
-        else:
-            same = 0
-        if same == 1:
-            outQrcode[:, i] = simQrcode[:, x]
-            i += 1
-    return bits, outQrcode
-
-def simplified_stego(qrcode, bits, w):
-    """簡化隱寫QRcode"""
-    simQrcode = np.zeros((bits, bits), np.uint8)
-    for j in range(bits):
-        for i in range(bits):
-            simQrcode[j, i] = qrcode[j*w, i*w]
-    return simQrcode
-
 def generate_perdict_image(img, weight):
     """生成預測影像"""
     height, width = img.shape
@@ -164,23 +133,8 @@ def generate_perdict_image(img, weight):
             temp[y,x] = round(p)
     return temp
 
-def improved_predict_image(img, weight, block_size=8):
-    height, width = img.shape
-    pred_img = np.zeros_like(img)
-    
-    for i in range(1, height):
-        for j in range(1, width):
-            ul = int(img[i-1, j-1])
-            up = int(img[i-1, j])
-            ur = int(img[i-1, j+1]) if j < width - 1 else up
-            left = int(img[i, j-1])
-            p = (weight[0]*up + weight[1]*ul + weight[2]*ur + weight[3]*left) / sum(weight)
-            pred_img[i, j] = round(p)
-    
-    return pred_img
-
 @cuda.jit
-def improved_predict_image_kernel(img, pred_img, weight):
+def improved_predict_image_kernel(img, weight, pred_img, block_size):
     x, y = cuda.grid(2)
     if 1 <= x < img.shape[0] and 1 <= y < img.shape[1]:
         ul = float(img[x-1, y-1])
@@ -189,21 +143,24 @@ def improved_predict_image_kernel(img, pred_img, weight):
         left = float(img[x, y-1])
         w_sum = weight[0] + weight[1] + weight[2] + weight[3]
         p = (weight[0]*up + weight[1]*ul + weight[2]*ur + weight[3]*left) / w_sum
-        pred_img[x, y] = round(p)
+        pred_img[x, y] = int(round(p))  # 確保結果是整數
 
 def improved_predict_image_cuda(img, weight, block_size=8):
-    d_img = cp.asarray(img)
+    if isinstance(img, np.ndarray):
+        img = cp.asarray(img)
+    
+    d_img = img
+    d_weight = cp.asarray(weight)
     d_pred_img = cp.zeros_like(d_img)
-    d_weight = cp.asarray(weight, dtype=cp.float32)  # 确保 weight 是 float32 类型
 
     threads_per_block = (16, 16)
-    blocks_per_grid_x = int(np.ceil(img.shape[0] / threads_per_block[0]))
-    blocks_per_grid_y = int(np.ceil(img.shape[1] / threads_per_block[1]))
+    blocks_per_grid_x = int(cp.ceil(img.shape[0] / threads_per_block[0]))
+    blocks_per_grid_y = int(cp.ceil(img.shape[1] / threads_per_block[1]))
     blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
 
-    improved_predict_image_kernel[blocks_per_grid, threads_per_block](d_img, d_pred_img, d_weight)
+    improved_predict_image_kernel[blocks_per_grid, threads_per_block](d_img, d_weight, d_pred_img, block_size)
 
-    return d_pred_img  # 返回 CuPy 数组，而不是 NumPy 数组
+    return d_pred_img
 
 def image_difference_shift(array2D, a):
     """影像差值偏移"""
@@ -227,8 +184,3 @@ def image_difference_shift(array2D, a):
                     shift = value-r
             array2D_s[j,i] = shift
     return array2D_s
-
-def find_locaion(qrcode, bits):
-    """找出所有方格的左上角座標"""
-    pixOfBits = qrcode.shape[0] // bits
-    return np.array([np.arange(bits) * pixOfBits, np.arange(bits) * pixOfBits])

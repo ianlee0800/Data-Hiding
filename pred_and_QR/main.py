@@ -1,27 +1,29 @@
-import numpy as np
 import cupy as cp
-import matplotlib.pyplot as plt
 import os
+import sys
 from image_processing import (
     read_image, 
     save_image,
     save_histogram,
     save_difference_histogram,
-    improved_predict_image,
+    improved_predict_image_cuda,
     generate_histogram,
-    CUDA_AVAILABLE
+    CUDA_AVAILABLE,
+    image_rerotation
 )
 from embedding import histogram_data_hiding, pee_embedding_adaptive_cuda
-from extraction import histogram_data_extraction
-from utils import generate_random_binary_array, find_best_weights
+from utils import *
 from common import calculate_psnr, calculate_ssim, histogram_correlation
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+parent_dir = os.path.dirname(current_dir)
+sys.path.append(parent_dir)
 
 def main():
     # Parameter settings
-    imgName = "baboon" # Image name without extension
+    imgName = "airplane"  # Image name without extension
     filetype = "png"
     total_rotations = 4  # Total number of rotations
-    EL = 3  # Embedding Limit (greater than 1)
     ratio_of_ones = 0.5  # Ratio of ones in random data, easily adjustable
 
     # Create necessary directories
@@ -29,87 +31,114 @@ def main():
     os.makedirs(f"./pred_and_QR/outcome/histogram/{imgName}/difference", exist_ok=True)
 
     # Read original image
-    origImg = read_image(f"./pred_and_QR/image/{imgName}.{filetype}")
+    origImg = cp.asarray(read_image(f"./pred_and_QR/image/{imgName}.{filetype}"))
 
     # Save original image histogram
-    save_histogram(origImg, f"./pred_and_QR/outcome/histogram/{imgName}/original_histogram.png", "Original Image Histogram")
+    save_histogram(cp.asnumpy(origImg), f"./pred_and_QR/outcome/histogram/{imgName}/original_histogram.png", "Original Image Histogram")
 
     print(f"Starting encoding process... ({'CUDA' if CUDA_AVAILABLE else 'CPU'} mode)")
 
     # X1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding
-    print("\nX1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding")
+    print("\nX1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding with Genetic Algorithm")
     pee_stages = []
-    current_img = origImg.copy()
+    current_img = cp.asarray(origImg.copy())
     total_payload = 0
     total_pixels = origImg.size
     
     for i in range(total_rotations + 1):
-        weights = find_best_weights(current_img)
-        random_data = generate_random_binary_array(current_img.size, ratio_of_ones=ratio_of_ones)
+        if i > 0:
+            current_img = cp.rot90(current_img)
+        
+        current_EL = choose_el(current_img, i, total_payload)
+        random_data = cp.asarray(generate_random_binary_array(current_img.size, ratio_of_ones=ratio_of_ones))
+        
+        weights, (payload, psnr) = find_best_weights_ga(current_img, random_data, current_EL)
         
         img_pee, payload_pee, embedded_data = pee_embedding_adaptive_cuda(
             current_img,
             random_data,
-            weights
+            weights,
+            base_EL=current_EL
         )
         
-        # 如果 img_pee 是 CuPy 数组，转换为 NumPy 数组
-        if isinstance(img_pee, cp.ndarray):
-            img_pee = cp.asnumpy(img_pee)
+        total_payload += payload_pee
         
-        pee_stages.append({
-            'image': img_pee,
-            'payload': payload_pee,
-            'weights': weights
-        })
-        
-        # Calculate and save results
-        psnr = calculate_psnr(origImg, img_pee)
-        ssim = calculate_ssim(origImg, img_pee)
-        hist_orig, _, _, _ = generate_histogram(origImg)
-        hist_pee, _, _, _ = generate_histogram(img_pee)
+        # 計算和保存結果
+        rotated_img_pee = image_rerotation(img_pee, i)
+        psnr = calculate_psnr(cp.asnumpy(origImg), cp.asnumpy(rotated_img_pee))
+        ssim = calculate_ssim(cp.asnumpy(origImg), cp.asnumpy(rotated_img_pee))
+        hist_orig, _, _, _ = generate_histogram(cp.asnumpy(origImg))
+        hist_pee, _, _, _ = generate_histogram(cp.asnumpy(rotated_img_pee))
         corr = histogram_correlation(hist_orig, hist_pee)
         
         current_bpp = payload_pee / total_pixels
         
-        print(f"X1 Rotation {i}: Payload={payload_pee}, BPP={current_bpp:.4f}, PSNR={psnr:.2f}, SSIM={ssim:.4f}, Histogram Correlation={corr:.4f}")
+        print(f"X1 Rotation {i}: EL={current_EL}, Weights={weights}, Payload={payload_pee}, BPP={current_bpp:.4f}, PSNR={psnr:.2f}, SSIM={ssim:.4f}, Histogram Correlation={corr:.4f}")
+        print(f"Total Payload so far: {total_payload}")
         
-        # Save image
-        save_image(img_pee, f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_rotation_{i}.{filetype}")
+        pee_stages.append({
+            'image': img_pee,
+            'payload': payload_pee,
+            'weights': weights,
+            'EL': current_EL
+        })
         
-        # Save histogram
-        save_histogram(img_pee, 
-                       f"./pred_and_QR/outcome/histogram/{imgName}/X1_rotation_{i}_histogram.png", 
-                       f"Histogram of PEE Rotation {i}")
+        # 計算和保存結果
+        rotated_img_pee = image_rerotation(img_pee, i)
         
-        # Save difference histograms
-        diff_before = current_img - improved_predict_image(current_img, weights)
-        save_difference_histogram(diff_before, 
-                                  f"./pred_and_QR/outcome/histogram/{imgName}/difference/X1_rotation_{i}_diff_before.png", 
-                                  f"Difference Histogram Before PEE (Rotation {i})")
+        psnr = calculate_psnr(cp.asnumpy(origImg), cp.asnumpy(rotated_img_pee))
+        ssim = calculate_ssim(cp.asnumpy(origImg), cp.asnumpy(rotated_img_pee))
+        hist_orig, _, _, _ = generate_histogram(cp.asnumpy(origImg))
+        hist_pee, _, _, _ = generate_histogram(cp.asnumpy(rotated_img_pee))
+        corr = histogram_correlation(hist_orig, hist_pee)
         
-        diff_after = img_pee - current_img
-        save_difference_histogram(diff_after, 
-                                  f"./pred_and_QR/outcome/histogram/{imgName}/difference/X1_rotation_{i}_diff_after.png", 
-                                  f"Difference Histogram After PEE (Rotation {i})")
+        current_bpp = payload_pee / total_pixels
+               
+        # 保存圖像
+        save_image(cp.asnumpy(img_pee), f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_rotation_{i}.{filetype}")
         
-        if i < total_rotations:
-            current_img = np.rot90(img_pee)
+        # 保存直方圖
+        save_histogram(cp.asnumpy(rotated_img_pee), 
+                    f"./pred_and_QR/outcome/histogram/{imgName}/X1_rotation_{i}_histogram.png", 
+                    f"Histogram of PEE Rotation {i}")
+        
+        # 保存差異直方圖
+        diff_before = current_img - improved_predict_image_cuda(current_img, weights)
+        save_difference_histogram(cp.asnumpy(diff_before), 
+                                f"./pred_and_QR/outcome/histogram/{imgName}/difference/X1_rotation_{i}_diff_before.png", 
+                                f"Difference Histogram Before PEE (Rotation {i})")
+        
+        diff_after = rotated_img_pee - current_img
+        save_difference_histogram(cp.asnumpy(diff_after), 
+                                f"./pred_and_QR/outcome/histogram/{imgName}/difference/X1_rotation_{i}_diff_after.png", 
+                                f"Difference Histogram After PEE (Rotation {i})")
+        
+        current_img = img_pee  # 為下一次迭代準備
+    
+    # Prepare PEE info for HS stage
+    print("Debug: Preparing to encode PEE info")
+    print(f"Total rotations: {total_rotations + 1}")
+    print(f"Weights: {[stage['weights'] for stage in pee_stages]}")
+    print(f"Payloads: {[stage['payload'] for stage in pee_stages]}")
+    print(f"ELs: {[stage['EL'] for stage in pee_stages]}")
+
+    encoded_pee_info = encode_pee_info(
+        total_rotations + 1,
+        [stage['weights'] for stage in pee_stages],
+        [stage['payload'] for stage in pee_stages],
+        [stage['EL'] for stage in pee_stages]
+    )
+
+    print("Debug: PEE info encoded successfully")
+    print(f"Encoded PEE info length: {len(encoded_pee_info)} bytes")
 
     # X2: Histogram Shifting Embedding
     print("\nX2: Histogram Shifting Embedding")
-    embedding_info = {
-        'total_rotations': total_rotations + 1,
-        'EL': EL,
-        'weights': [stage['weights'] for stage in pee_stages],
-        'payloads': [stage['payload'] for stage in pee_stages]
-    }
-    
-    img_hs, peak, payload_hs = histogram_data_hiding(pee_stages[-1]['image'], 1, embedding_info)
+    img_hs, peak, payload_hs = histogram_data_hiding(cp.asnumpy(pee_stages[-1]['image']), 1, encoded_pee_info)
     
     # Calculate and save results
-    psnr_hs = calculate_psnr(origImg, img_hs)
-    ssim_hs = calculate_ssim(origImg, img_hs)
+    psnr_hs = calculate_psnr(cp.asnumpy(origImg), img_hs)
+    ssim_hs = calculate_ssim(cp.asnumpy(origImg), img_hs)
     hist_hs, _, _, _ = generate_histogram(img_hs)
     corr_hs = histogram_correlation(hist_orig, hist_hs)
     
@@ -129,10 +158,10 @@ def main():
     # Output final results
     print("\nEncoding Process Summary:")
     print(f"Original Image: {imgName}")
-    print(f"Total Rotations: {total_rotations + 1}, EL={EL}")
+    print(f"Total Rotations: {total_rotations + 1}")
     for i, stage in enumerate(pee_stages):
         stage_bpp = stage['payload'] / total_pixels
-        print(f"X1 Rotation {i}: Weights={stage['weights']}, Payload={stage['payload']}, BPP={stage_bpp:.4f}")
+        print(f"X1 Rotation {i}: Weights={stage['weights']}, EL={stage['EL']}, Payload={stage['payload']}, BPP={stage_bpp:.4f}")
     print(f"X2 (Histogram Shifting): Peak={peak}, Payload={payload_hs}, BPP={final_bpp:.4f}")
     total_payload = sum(stage['payload'] for stage in pee_stages) + payload_hs
     total_bpp = total_payload / total_pixels
