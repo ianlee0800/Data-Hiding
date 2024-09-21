@@ -3,6 +3,27 @@ import cupy as cp
 import cv2
 import math
 
+class DataType:
+    INT8 = np.int8
+    UINT8 = np.uint8
+    INT32 = np.int32
+    FLOAT32 = np.float32
+
+def to_numpy(data):
+    if isinstance(data, cp.ndarray):
+        return cp.asnumpy(data)
+    return np.asarray(data)
+
+def to_cupy(data):
+    if isinstance(data, np.ndarray):
+        return cp.asarray(data)
+    return cp.asarray(to_numpy(data))
+
+def ensure_type(data, dtype):
+    if isinstance(data, cp.ndarray):
+        return data.astype(dtype)
+    return np.asarray(data, dtype=dtype)
+
 def find_max(array1D):
     """找出一維陣列中最大值"""
     if not array1D:
@@ -83,54 +104,14 @@ def improved_predict_image_cpu(img, weight, block_size=8):
     
     return pred_img
 
-def pee_embedding_adaptive_cpu(img, data, pred_img, EL):
-    embedded = np.zeros_like(img)
-    payload = 0
-    height, width = img.shape
-    
-    for x in range(height):
-        for y in range(width):
-            local_window = img[max(0, x-1):min(height, x+2), max(0, y-1):min(width, y+2)]
-            local_std = np.std(local_window)
-            
-            adaptive_EL = min(EL, max(3, int(EL * (1 - local_std / 255))))
-            
-            diff = int(img[x, y]) - int(pred_img[x, y])
-            if abs(diff) < adaptive_EL and payload < len(data):
-                bit = data[payload]
-                payload += 1
-                if diff >= 0:
-                    embedded[x, y] = min(255, max(0, img[x, y] + bit))
-                else:
-                    embedded[x, y] = min(255, max(0, img[x, y] - bit))
-            else:
-                embedded[x, y] = img[x, y]
-    
-    embedded_data = data[:payload]
-    return embedded, payload, embedded_data
-
-def pee_embedding_adaptive_cpu(img, data, pred_img, EL):
-    embedded = np.zeros_like(img)
-    payload = 0
-    
-    for x in range(img.shape[0]):
-        for y in range(img.shape[1]):
-            # 計算局部標準差
-            local_std = np.std(img[max(0, x-1):min(img.shape[0], x+2), max(0, y-1):min(img.shape[1], y+2)])
-            
-            # 自適應 EL
-            adaptive_EL = min(EL, max(3, int(EL * (1 - local_std / 255))))
-            
-            diff = int(img[x, y]) - int(pred_img[x, y])
-            if abs(diff) < adaptive_EL and payload < len(data):
-                bit = data[payload]
-                payload += 1
-                if diff >= 0:
-                    embedded[x, y] = min(255, max(0, img[x, y] + bit))
-                else:
-                    embedded[x, y] = min(255, max(0, img[x, y] - bit))
-            else:
-                embedded[x, y] = img[x, y]
-    
-    embedded_data = data[:payload]
-    return embedded, payload, embedded_data
+def choose_el(img, rotation, current_payload):
+    target_payload = 480000
+    if current_payload < target_payload:
+        if rotation == 0:
+            return 7  # 第一次旋轉使用較大的 EL
+        elif rotation == 1:
+            return 5
+        else:
+            return 3
+    else:
+        return 3  # 如果已達到目標，使用較小的 EL 以維持圖像質量

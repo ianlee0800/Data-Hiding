@@ -126,42 +126,39 @@ def generate_perdict_image(img, weight):
             temp[y,x] = round(p)
     return temp
 
-@cuda.jit(nrt=True)
+@cuda.jit
 def improved_predict_image_kernel(img, weight, pred_img):
     x, y = cuda.grid(2)
-    if 1 <= x < img.shape[0] and 1 <= y < img.shape[1]:
-        ul = np.float32(img[x-1, y-1])
-        up = np.float32(img[x-1, y])
-        ur = np.float32(img[x-1, y+1]) if y < img.shape[1] - 1 else up
-        left = np.float32(img[x, y-1])
-        
-        # 將整個weight轉換成float32型態的array
-        weight = weight.astype(np.float32)
-        w0, w1, w2, w3 = weight[0], weight[1], weight[2], weight[3]
-        w_sum = w0 + w1 + w2 + w3
-        
-        if w_sum > 0:
-            p = (w0 * up + w1 * ul + w2 * ur + w3 * left) / w_sum
-            pred_img[x, y] = min(max(int(p + 0.5), 0), 255)
+    if x < img.shape[0] and y < img.shape[1]:
+        if x > 0 and y > 0:
+            ul = float(img[x-1, y-1])
+            up = float(img[x-1, y])
+            ur = float(img[x-1, y+1]) if y < img.shape[1] - 1 else up
+            left = float(img[x, y-1])
+            
+            w0, w1, w2, w3 = weight[0], weight[1], weight[2], weight[3]
+            w_sum = w0 + w1 + w2 + w3
+            
+            if w_sum > 0:
+                p = (w0*up + w1*ul + w2*ur + w3*left) / w_sum
+                pred_img[x, y] = min(max(int(p + 0.5), 0), 255)
+            else:
+                pred_img[x, y] = img[x, y]
         else:
             pred_img[x, y] = img[x, y]
 
 def improved_predict_image_cuda(img, weight):
-    if not isinstance(img, cp.ndarray):
-        img = cp.asarray(img)
-    weight = cp.asarray(weight, dtype=cp.float32)
+    threads_per_block = (32, 32)
+    blocks_per_grid = ((img.shape[0] + threads_per_block[0] - 1) // threads_per_block[0],
+                       (img.shape[1] + threads_per_block[1] - 1) // threads_per_block[1])
     
-    pred_img = cp.zeros_like(img)
+    d_img = cuda.to_device(img)
+    d_weight = cuda.to_device(weight)
+    d_pred_img = cuda.device_array_like(img)
     
-    threads_per_block = (16, 16)
-    blocks_per_grid = (
-        (img.shape[0] + threads_per_block[0] - 1) // threads_per_block[0],
-        (img.shape[1] + threads_per_block[1] - 1) // threads_per_block[1]
-    )
+    improved_predict_image_kernel[blocks_per_grid, threads_per_block](d_img, d_weight, d_pred_img)
     
-    improved_predict_image_kernel[blocks_per_grid, threads_per_block](img, weight, pred_img)
-    
-    return pred_img
+    return d_pred_img
 
 def image_difference_shift(array2D, a):
     """影像差值偏移"""
@@ -226,3 +223,15 @@ def merge_sub_images(top_left, top_right, bottom_left, bottom_right):
     merged[1::2, 1::2] = bottom_right
     
     return merged
+
+if __name__ == "__main__":
+    import numpy as np
+    from numba import cuda
+
+    # 測試 improved_predict_image_cuda
+    test_img = np.random.randint(0, 256, (100, 100), dtype=np.uint8)
+    test_weight = np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32)
+    
+    result = improved_predict_image_cuda(test_img, test_weight)
+    print("improved_predict_image_cuda test result shape:", result.shape)
+    print("improved_predict_image_cuda test result sample:", result[0:5, 0:5])
