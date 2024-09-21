@@ -47,13 +47,6 @@ def save_difference_histogram(diff, filename, title):
     plt.savefig(filename)
     plt.close()
 
-def calculate_correlation(img1, img2):
-    """計算兩個圖像的相關係數"""
-    img1_flat = img1.flatten()
-    img2_flat = img2.flatten()
-    correlation = np.corrcoef(img1_flat, img2_flat)[0, 1]
-    return round(correlation, 4)
-
 def generate_histogram(array2D):
     """生成直方圖"""
     height, width = array2D.shape
@@ -133,34 +126,42 @@ def generate_perdict_image(img, weight):
             temp[y,x] = round(p)
     return temp
 
-@cuda.jit
-def improved_predict_image_kernel(img, weight, pred_img, block_size):
+@cuda.jit(nrt=True)
+def improved_predict_image_kernel(img, weight, pred_img):
     x, y = cuda.grid(2)
     if 1 <= x < img.shape[0] and 1 <= y < img.shape[1]:
-        ul = float(img[x-1, y-1])
-        up = float(img[x-1, y])
-        ur = float(img[x-1, y+1]) if y < img.shape[1] - 1 else up
-        left = float(img[x, y-1])
-        w_sum = weight[0] + weight[1] + weight[2] + weight[3]
-        p = (weight[0]*up + weight[1]*ul + weight[2]*ur + weight[3]*left) / w_sum
-        pred_img[x, y] = int(round(p))  # 確保結果是整數
+        ul = np.float32(img[x-1, y-1])
+        up = np.float32(img[x-1, y])
+        ur = np.float32(img[x-1, y+1]) if y < img.shape[1] - 1 else up
+        left = np.float32(img[x, y-1])
+        
+        # 將整個weight轉換成float32型態的array
+        weight = weight.astype(np.float32)
+        w0, w1, w2, w3 = weight[0], weight[1], weight[2], weight[3]
+        w_sum = w0 + w1 + w2 + w3
+        
+        if w_sum > 0:
+            p = (w0 * up + w1 * ul + w2 * ur + w3 * left) / w_sum
+            pred_img[x, y] = min(max(int(p + 0.5), 0), 255)
+        else:
+            pred_img[x, y] = img[x, y]
 
-def improved_predict_image_cuda(img, weight, block_size=8):
-    if isinstance(img, np.ndarray):
+def improved_predict_image_cuda(img, weight):
+    if not isinstance(img, cp.ndarray):
         img = cp.asarray(img)
+    weight = cp.asarray(weight, dtype=cp.float32)
     
-    d_img = img
-    d_weight = cp.asarray(weight)
-    d_pred_img = cp.zeros_like(d_img)
-
+    pred_img = cp.zeros_like(img)
+    
     threads_per_block = (16, 16)
-    blocks_per_grid_x = int(cp.ceil(img.shape[0] / threads_per_block[0]))
-    blocks_per_grid_y = int(cp.ceil(img.shape[1] / threads_per_block[1]))
-    blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
-
-    improved_predict_image_kernel[blocks_per_grid, threads_per_block](d_img, d_weight, d_pred_img, block_size)
-
-    return d_pred_img
+    blocks_per_grid = (
+        (img.shape[0] + threads_per_block[0] - 1) // threads_per_block[0],
+        (img.shape[1] + threads_per_block[1] - 1) // threads_per_block[1]
+    )
+    
+    improved_predict_image_kernel[blocks_per_grid, threads_per_block](img, weight, pred_img)
+    
+    return pred_img
 
 def image_difference_shift(array2D, a):
     """影像差值偏移"""
@@ -184,3 +185,44 @@ def image_difference_shift(array2D, a):
                     shift = value-r
             array2D_s[j,i] = shift
     return array2D_s
+
+def split_image_into_blocks(image):
+    """
+    將圖像分割成2x2的塊，並提取每個塊的四個角落像素。
+    
+    Args:
+    image (numpy.ndarray): 輸入圖像
+    
+    Returns:
+    tuple: 包含四個numpy.ndarray的元組，每個代表一個子圖像（左上、右上、左下、右下）
+    """
+    height, width = image.shape
+    sub_height, sub_width = height // 2, width // 2
+    
+    top_left = image[0::2, 0::2]
+    top_right = image[0::2, 1::2]
+    bottom_left = image[1::2, 0::2]
+    bottom_right = image[1::2, 1::2]
+    
+    return top_left, top_right, bottom_left, bottom_right
+
+def merge_sub_images(top_left, top_right, bottom_left, bottom_right):
+    """
+    將四個子圖像合併成一個完整的圖像。
+    
+    Args:
+    top_left, top_right, bottom_left, bottom_right (numpy.ndarray): 四個子圖像
+    
+    Returns:
+    numpy.ndarray: 合併後的完整圖像
+    """
+    sub_height, sub_width = top_left.shape
+    height, width = sub_height * 2, sub_width * 2
+    
+    merged = np.zeros((height, width), dtype=top_left.dtype)
+    merged[0::2, 0::2] = top_left
+    merged[0::2, 1::2] = top_right
+    merged[1::2, 0::2] = bottom_left
+    merged[1::2, 1::2] = bottom_right
+    
+    return merged

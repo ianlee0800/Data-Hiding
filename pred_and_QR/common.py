@@ -56,3 +56,81 @@ def calculate_ssim(img1, img2):
 
     ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
     return round(ssim_map.mean(), 4)
+
+def calculate_correlation(img1, img2):
+    """計算兩個圖像的相關係數"""
+    img1_flat = img1.flatten()
+    img2_flat = img2.flatten()
+    correlation = np.corrcoef(img1_flat, img2_flat)[0, 1]
+    return round(correlation, 4)
+
+def improved_predict_image_cpu(img, weight, block_size=8):
+    height, width = img.shape
+    pred_img = np.zeros_like(img)
+    
+    for x in range(1, height):
+        for y in range(1, width):
+            ul = float(img[x-1, y-1])
+            up = float(img[x-1, y])
+            ur = float(img[x-1, y+1]) if y < width - 1 else up
+            left = float(img[x, y-1])
+            
+            w0, w1, w2, w3 = weight[0], weight[1], weight[2], weight[3]
+            w_sum = w0 + w1 + w2 + w3
+            p = (w0*up + w1*ul + w2*ur + w3*left) / w_sum
+            
+            pred_img[x, y] = min(max(int(round(p)), 0), 255)
+    
+    return pred_img
+
+def pee_embedding_adaptive_cpu(img, data, pred_img, EL):
+    embedded = np.zeros_like(img)
+    payload = 0
+    height, width = img.shape
+    
+    for x in range(height):
+        for y in range(width):
+            local_window = img[max(0, x-1):min(height, x+2), max(0, y-1):min(width, y+2)]
+            local_std = np.std(local_window)
+            
+            adaptive_EL = min(EL, max(3, int(EL * (1 - local_std / 255))))
+            
+            diff = int(img[x, y]) - int(pred_img[x, y])
+            if abs(diff) < adaptive_EL and payload < len(data):
+                bit = data[payload]
+                payload += 1
+                if diff >= 0:
+                    embedded[x, y] = min(255, max(0, img[x, y] + bit))
+                else:
+                    embedded[x, y] = min(255, max(0, img[x, y] - bit))
+            else:
+                embedded[x, y] = img[x, y]
+    
+    embedded_data = data[:payload]
+    return embedded, payload, embedded_data
+
+def pee_embedding_adaptive_cpu(img, data, pred_img, EL):
+    embedded = np.zeros_like(img)
+    payload = 0
+    
+    for x in range(img.shape[0]):
+        for y in range(img.shape[1]):
+            # 計算局部標準差
+            local_std = np.std(img[max(0, x-1):min(img.shape[0], x+2), max(0, y-1):min(img.shape[1], y+2)])
+            
+            # 自適應 EL
+            adaptive_EL = min(EL, max(3, int(EL * (1 - local_std / 255))))
+            
+            diff = int(img[x, y]) - int(pred_img[x, y])
+            if abs(diff) < adaptive_EL and payload < len(data):
+                bit = data[payload]
+                payload += 1
+                if diff >= 0:
+                    embedded[x, y] = min(255, max(0, img[x, y] + bit))
+                else:
+                    embedded[x, y] = min(255, max(0, img[x, y] - bit))
+            else:
+                embedded[x, y] = img[x, y]
+    
+    embedded_data = data[:payload]
+    return embedded, payload, embedded_data

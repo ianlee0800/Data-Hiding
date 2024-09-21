@@ -1,14 +1,11 @@
 import numpy as np
 import struct
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import padding
-import time
 import cupy as cp
 import random
 import math
 from numba import cuda
 from image_processing import improved_predict_image_cuda
-from common import calculate_psnr
+from common import calculate_psnr, improved_predict_image_cpu, pee_embedding_adaptive_cpu
 from deap import base, creator, tools, algorithms
 
 @cuda.jit
@@ -69,7 +66,6 @@ def pee_embedding_adaptive_cuda(img, data, weight, base_EL):
     
 def choose_el(img, rotation, current_payload):
     target_payload = 480000
-    remaining_rotations = 5 - rotation
     if current_payload < target_payload:
         if rotation == 0:
             return 7  # 第一次旋轉使用較大的 EL
@@ -83,12 +79,6 @@ def choose_el(img, rotation, current_payload):
 def generate_random_binary_array(size, ratio_of_ones=0.5):
     """生成指定大小的随机二进制数组，可调整1的比例"""
     return np.random.choice([0, 1], size=size, p=[1-ratio_of_ones, ratio_of_ones])
-
-def evaluate_weights(weights, img, data, EL):
-    pred_img = improved_predict_image_cuda(img, weights)
-    embedded_img, payload, _ = pee_embedding_adaptive_cuda(img, data, weights, EL)
-    psnr = calculate_psnr(cp.asnumpy(img), cp.asnumpy(embedded_img))
-    return payload, psnr
 
 # 全局變量來追蹤是否已經創建了類
 _created_classes = False
@@ -106,59 +96,64 @@ def find_best_weights_ga(img, data, EL, population_size=50, generations=20, max_
     ensure_deap_classes()
     toolbox = base.Toolbox()
 
-    toolbox.register("attr_int", random.randint, 1, max_weight)
-    toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_int, n=4)
+    toolbox.register("attr_float", random.uniform, 0.1, max_weight)
+    toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_float, n=4)
     toolbox.register("population", tools.initRepeat, list, toolbox.individual)
 
-    def eval_wrapper(individual):
-        return evaluate_weights(individual, img, data, EL)
+    def evaluate_weights(individual):
+        try:
+            weights = cp.asarray(individual, dtype=cp.float32)
+            img_gpu = cp.asarray(img)
+            data_gpu = cp.asarray(data)
 
-    toolbox.register("evaluate", eval_wrapper)
-    toolbox.register("mate", tools.cxTwoPoint)
-    toolbox.register("mutate", tools.mutUniformInt, low=1, up=max_weight, indpb=0.2)
+            pred_img = improved_predict_image_cuda(img_gpu, weights)
+            embedded, payload, _ = pee_embedding_adaptive_cuda(img_gpu, data_gpu, pred_img, EL)
+            
+            psnr = calculate_psnr(cp.asnumpy(img_gpu), cp.asnumpy(embedded))
+            return payload, psnr
+        except cp.cuda.runtime.CUDARuntimeError as e:
+            print(f"CUDA error in evaluate_weights: {e}")
+            return 0, 0
+
+    toolbox.register("evaluate", evaluate_weights)
+    toolbox.register("mate", tools.cxBlend, alpha=0.5)
+    toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=1, indpb=0.2)
     toolbox.register("select", tools.selNSGA2)
 
     population = toolbox.population(n=population_size)
-    algorithms.eaMuPlusLambda(population, toolbox, mu=population_size, 
-                              lambda_=population_size, cxpb=0.7, mutpb=0.2, 
-                              ngen=generations, verbose=False)
+    
+    try:
+        algorithms.eaMuPlusLambda(population, toolbox, mu=population_size, 
+                                  lambda_=population_size, cxpb=0.7, mutpb=0.2, 
+                                  ngen=generations, verbose=False)
+    except Exception as e:
+        print(f"Error in genetic algorithm: {e}")
+        return [1.0, 1.0, 1.0, 1.0], (0, 0)
 
     best_ind = tools.selBest(population, 1)[0]
     return best_ind, best_ind.fitness.values
 
-def encode_pee_info(total_rotations, weights, payloads, ELs):
+def encode_pee_info(total_rotations, pee_stages):
     print(f"Debug: Encoding PEE info")
     print(f"Total rotations: {total_rotations}")
-    print(f"Weights: {weights}")
-    print(f"Payloads: {payloads}")
-    print(f"ELs: {ELs}")
-    
-    if not isinstance(total_rotations, int):
-        raise TypeError(f"Expected total_rotations to be an integer, got {type(total_rotations)}")
-    if not isinstance(weights, list) or len(weights) != total_rotations:
-        raise ValueError(f"Expected weights to be a list of {total_rotations} elements, got {weights}")
-    if not isinstance(payloads, list) or len(payloads) != total_rotations:
-        raise ValueError(f"Expected payloads to be a list of {total_rotations} elements, got {payloads}")
-    if not isinstance(ELs, list) or len(ELs) != total_rotations:
-        raise ValueError(f"Expected ELs to be a list of {total_rotations} elements, got {ELs}")
     
     encoded = struct.pack('B', total_rotations)
-    for rotation in range(total_rotations):
-        if not isinstance(weights[rotation], (list, tuple)) or len(weights[rotation]) != 4:
-            raise ValueError(f"Expected weights[{rotation}] to be a list or tuple of 4 integers, got {weights[rotation]}")
-        if not isinstance(ELs[rotation], int):
-            raise ValueError(f"Expected ELs[{rotation}] to be an integer, got {ELs[rotation]}")
-        if not isinstance(payloads[rotation], int):
-            raise ValueError(f"Expected payloads[{rotation}] to be an integer, got {payloads[rotation]}")
-        
-        try:
-            encoded += struct.pack('BBBBB', *weights[rotation], ELs[rotation])
-            encoded += struct.pack('I', payloads[rotation])  # 使用 'I' 代替 'H' 來存儲更大的整數
-        except struct.error as e:
-            print(f"Error packing data for rotation {rotation}: {e}")
-            print(f"Weights: {weights[rotation]}, EL: {ELs[rotation]}, Payload: {payloads[rotation]}")
-            raise
+    for stage in pee_stages:
+        block_params = stage['block_params']
+        encoded += struct.pack('H', len(block_params))
+        for block in block_params:
+            weights = block['weights']
+            EL = block['EL']
+            payload = block['payload']
+            
+            # 確保 payload 是兩個 unsigned short（16 bits）
+            payload_high = payload >> 16
+            payload_low = payload & 0xFFFF
+            
+            # 打包為 19 bytes的數據
+            encoded += struct.pack('ffffBHH', *weights, EL, payload_high, payload_low)
     
+    print(f"Debug: Encoded data length: {len(encoded)} bytes")
     return encoded
 
 def decode_pee_info(encoded_data):
@@ -168,25 +163,44 @@ def decode_pee_info(encoded_data):
     if len(encoded_data) < 1:
         raise ValueError("Encoded data is too short")
 
-    total_rotations = struct.unpack('B', encoded_data[:1])[0]
-    weights = []
-    payloads = []
-    ELs = []
-    offset = 1
+    offset = 0
+    total_rotations = struct.unpack('B', encoded_data[offset:offset+1])[0]
+    offset += 1
+
+    pee_stages = []
     try:
         for _ in range(total_rotations):
-            if offset + 9 > len(encoded_data):  # 改為 9，因為我們現在用 4 bytes 存儲 payload
-                raise ValueError("Encoded data is incomplete")
-            weight_and_el = struct.unpack('BBBBB', encoded_data[offset:offset+5])
-            weights.append(list(weight_and_el[:4]))
-            ELs.append(weight_and_el[4])
-            offset += 5
-            payloads.append(struct.unpack('I', encoded_data[offset:offset+4])[0])  # 使用 'I' 來解包
-            offset += 4
+            if offset + 2 > len(encoded_data):
+                raise ValueError("Encoded data is incomplete (block count)")
+            
+            num_blocks = struct.unpack('H', encoded_data[offset:offset+2])[0]
+            offset += 2
+            
+            block_params = []
+            for _ in range(num_blocks):
+                if offset + 19 > len(encoded_data):
+                    raise ValueError("Encoded data is incomplete (block data)")
+                
+                # 解包為 19 bytes的數據
+                data = struct.unpack('ffffBHH', encoded_data[offset:offset+19])
+                weights = list(data[:4])
+                EL = data[4]
+                payload = (data[5] << 16) | data[6]
+                block_params.append({
+                    'weights': weights,
+                    'EL': EL,
+                    'payload': payload
+                })
+                offset += 19
+            
+            pee_stages.append({'block_params': block_params})
     except struct.error as e:
         raise ValueError(f"Error decoding data: {e}")
 
-    return total_rotations, weights, payloads, ELs
+    print(f"Debug: Decoded data length: {offset} bytes")
+    print(f"Debug: Decoded rotations: {total_rotations}")
+    print(f"Debug: Number of stages: {len(pee_stages)}")
+    return total_rotations, pee_stages
 
 def find_max(array1D):
     """找出一維陣列中最大值"""
