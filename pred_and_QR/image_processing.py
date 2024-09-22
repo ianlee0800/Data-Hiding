@@ -2,14 +2,8 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 from common import find_max, calculate_psnr, calculate_ssim, histogram_correlation
-
-try:
-    import cupy as cp
-    from numba import cuda
-    CUDA_AVAILABLE = True
-except ImportError:
-    CUDA_AVAILABLE = False
-    print("CUDA libraries not found. Falling back to CPU implementation.")
+import cupy as cp
+from numba import cuda
 
 def read_image(filepath, grayscale=True):
     """讀取圖像"""
@@ -112,54 +106,6 @@ def find_w(image):
                 RunLength = 0
     return find_max(RLArray)
 
-def generate_perdict_image(img, weight):
-    """生成預測影像"""
-    height, width = img.shape
-    temp = img.copy()
-    for y in range(1, height-1):
-        for x in range(1, width-1):
-            ul = int(img[y-1,x-1])
-            up = int(img[y-1,x])
-            ur = int(img[y-1,x+1])
-            left = int(img[y,x-1])
-            p = (weight[0]*up+weight[1]*ul+weight[2]*ur+weight[3]*left)/(weight[0]+weight[1]+weight[2]+weight[3])
-            temp[y,x] = round(p)
-    return temp
-
-@cuda.jit
-def improved_predict_image_kernel(img, weight, pred_img):
-    x, y = cuda.grid(2)
-    if x < img.shape[0] and y < img.shape[1]:
-        if x > 0 and y > 0:
-            ul = float(img[x-1, y-1])
-            up = float(img[x-1, y])
-            ur = float(img[x-1, y+1]) if y < img.shape[1] - 1 else up
-            left = float(img[x, y-1])
-            
-            w0, w1, w2, w3 = weight[0], weight[1], weight[2], weight[3]
-            w_sum = w0 + w1 + w2 + w3
-            
-            if w_sum > 0:
-                p = (w0*up + w1*ul + w2*ur + w3*left) / w_sum
-                pred_img[x, y] = min(max(int(p + 0.5), 0), 255)
-            else:
-                pred_img[x, y] = img[x, y]
-        else:
-            pred_img[x, y] = img[x, y]
-
-def improved_predict_image_cuda(img, weight):
-    threads_per_block = (32, 32)
-    blocks_per_grid = ((img.shape[0] + threads_per_block[0] - 1) // threads_per_block[0],
-                       (img.shape[1] + threads_per_block[1] - 1) // threads_per_block[1])
-    
-    d_img = cuda.to_device(img)
-    d_weight = cuda.to_device(weight)
-    d_pred_img = cuda.device_array_like(img)
-    
-    improved_predict_image_kernel[blocks_per_grid, threads_per_block](d_img, d_weight, d_pred_img)
-    
-    return d_pred_img
-
 def image_difference_shift(array2D, a):
     """影像差值偏移"""
     row, column = array2D.shape
@@ -183,55 +129,67 @@ def image_difference_shift(array2D, a):
             array2D_s[j,i] = shift
     return array2D_s
 
-def split_image_into_blocks(image):
-    """
-    將圖像分割成2x2的塊，並提取每個塊的四個角落像素。
-    
-    Args:
-    image (numpy.ndarray): 輸入圖像
-    
-    Returns:
-    tuple: 包含四個numpy.ndarray的元組，每個代表一個子圖像（左上、右上、左下、右下）
-    """
-    height, width = image.shape
+def split_image(img):
+    """將圖像分割成四個子圖像"""
+    height, width = img.shape
     sub_height, sub_width = height // 2, width // 2
-    
-    top_left = image[0::2, 0::2]
-    top_right = image[0::2, 1::2]
-    bottom_left = image[1::2, 0::2]
-    bottom_right = image[1::2, 1::2]
-    
-    return top_left, top_right, bottom_left, bottom_right
+    sub_images = [
+        img[0::2, 0::2],  # 左上
+        img[0::2, 1::2],  # 右上
+        img[1::2, 0::2],  # 左下
+        img[1::2, 1::2]   # 右下
+    ]
+    return sub_images
 
-def merge_sub_images(top_left, top_right, bottom_left, bottom_right):
-    """
-    將四個子圖像合併成一個完整的圖像。
-    
-    Args:
-    top_left, top_right, bottom_left, bottom_right (numpy.ndarray): 四個子圖像
-    
-    Returns:
-    numpy.ndarray: 合併後的完整圖像
-    """
-    sub_height, sub_width = top_left.shape
+def merge_image(sub_images):
+    """將四個子圖像合併成一個完整的圖像"""
+    sub_height, sub_width = sub_images[0].shape
     height, width = sub_height * 2, sub_width * 2
-    
-    merged = np.zeros((height, width), dtype=top_left.dtype)
-    merged[0::2, 0::2] = top_left
-    merged[0::2, 1::2] = top_right
-    merged[1::2, 0::2] = bottom_left
-    merged[1::2, 1::2] = bottom_right
-    
+    merged = np.zeros((height, width), dtype=sub_images[0].dtype)
+    merged[0::2, 0::2] = sub_images[0]
+    merged[0::2, 1::2] = sub_images[1]
+    merged[1::2, 0::2] = sub_images[2]
+    merged[1::2, 1::2] = sub_images[3]
     return merged
 
-if __name__ == "__main__":
-    import numpy as np
-    from numba import cuda
+@cuda.jit
+def improved_predict_kernel(img, weight, pred_img, height, width):
+    x, y = cuda.grid(2)
+    if x < width and y < height:
+        if 0 < x < width-1 and 0 < y < height-1:
+            ul = img[y-1, x-1]
+            up = img[y-1, x]
+            ur = img[y-1, x+1]
+            left = img[y, x-1]
+            p = (weight[0]*up + weight[1]*ul + weight[2]*ur + weight[3]*left) / \
+                (weight[0] + weight[1] + weight[2] + weight[3])
+            pred_img[y, x] = round(p)
+        else:
+            pred_img[y, x] = img[y, x]
 
-    # 測試 improved_predict_image_cuda
-    test_img = np.random.randint(0, 256, (100, 100), dtype=np.uint8)
-    test_weight = np.array([1.0, 1.0, 1.0, 1.0], dtype=np.float32)
+def improved_predict_image_cuda(img, weights):
+    """
+    CUDA 版本的改進預測圖像函數
     
-    result = improved_predict_image_cuda(test_img, test_weight)
-    print("improved_predict_image_cuda test result shape:", result.shape)
-    print("improved_predict_image_cuda test result sample:", result[0:5, 0:5])
+    :param img: numpy array，輸入圖像
+    :param weights: numpy array，預測權重
+    :return: numpy array，預測圖像
+    """
+    height, width = img.shape
+    d_img = cuda.to_device(img)
+    d_weights = cuda.to_device(weights)
+    d_pred_img = cuda.device_array_like(img)
+
+    # 設置網格和塊大小
+    threads_per_block = (16, 16)
+    blocks_per_grid_x = (width + threads_per_block[0] - 1) // threads_per_block[0]
+    blocks_per_grid_y = (height + threads_per_block[1] - 1) // threads_per_block[1]
+    blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
+
+    # 執行 kernel
+    improved_predict_kernel[blocks_per_grid, threads_per_block](d_img, d_weights, d_pred_img, height, width)
+
+    # 將結果複製回主機
+    pred_img = d_pred_img.copy_to_host()
+
+    return pred_img

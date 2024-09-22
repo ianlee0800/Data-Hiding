@@ -24,6 +24,12 @@ def ensure_type(data, dtype):
         return data.astype(dtype)
     return np.asarray(data, dtype=dtype)
 
+def to_gpu(data):
+    return cp.asarray(data)
+
+def to_cpu(data):
+    return cp.asnumpy(data)
+
 def find_max(array1D):
     """找出一維陣列中最大值"""
     if not array1D:
@@ -85,22 +91,18 @@ def calculate_correlation(img1, img2):
     correlation = np.corrcoef(img1_flat, img2_flat)[0, 1]
     return round(correlation, 4)
 
-def improved_predict_image_cpu(img, weight, block_size=8):
+def improved_predict_image_cpu(img, weight):
     height, width = img.shape
     pred_img = np.zeros_like(img)
     
-    for x in range(1, height):
-        for y in range(1, width):
-            ul = float(img[x-1, y-1])
-            up = float(img[x-1, y])
-            ur = float(img[x-1, y+1]) if y < width - 1 else up
-            left = float(img[x, y-1])
-            
-            w0, w1, w2, w3 = weight[0], weight[1], weight[2], weight[3]
-            w_sum = w0 + w1 + w2 + w3
-            p = (w0*up + w1*ul + w2*ur + w3*left) / w_sum
-            
-            pred_img[x, y] = min(max(int(round(p)), 0), 255)
+    for y in range(1, height-1):
+        for x in range(1, width-1):
+            ul = int(img[y-1,x-1])
+            up = int(img[y-1,x])
+            ur = int(img[y-1,x+1])
+            left = int(img[y,x-1])
+            p = (weight[0]*up+weight[1]*ul+weight[2]*ur+weight[3]*left)/np.sum(weight)
+            pred_img[y,x] = round(p)
     
     return pred_img
 

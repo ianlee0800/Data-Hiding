@@ -1,26 +1,16 @@
 import numpy as np
 import struct
 import cupy as cp
-from numba import cuda
-import random
-from image_processing import improved_predict_image_cuda
 from common import *
 from deap import base, creator, tools, algorithms
 from pee import *
+import random
+from prettytable import PrettyTable
+
 
 def generate_random_binary_array(size, ratio_of_ones=0.5):
     """生成指定大小的随机二进制数组，可调整1的比例"""
     return np.random.choice([0, 1], size=size, p=[1-ratio_of_ones, ratio_of_ones])
-
-@cuda.jit
-def evaluate_population_kernel(population, img, data, EL, results):
-    idx = cuda.grid(1)
-    if idx < population.shape[0]:
-        weights = population[idx]
-        # 注意：这里我们无法直接在 CUDA kernel 中调用其他函数，
-        # 所以我们需要在 CPU 上执行这些操作
-        results[idx, 0] = -1  # 标记为需要在 CPU 上计算
-        results[idx, 1] = -1
 
 def custom_selNSGA2(individuals, k):
     try:
@@ -29,60 +19,24 @@ def custom_selNSGA2(individuals, k):
         # 如果出現索引錯誤，使用一個更簡單的選擇方法
         return sorted(individuals, key=lambda ind: ind.fitness.values[0], reverse=True)[:k]
 
-def gpu_evaluate_population(population, img, data, EL):
-    pop_size = len(population)
-    d_population = cuda.to_device(np.array([ind[:] for ind in population]))
-    d_img = cuda.to_device(img)
-    d_data = cuda.to_device(data)
-    d_results = cuda.device_array((pop_size, 2), dtype=np.float32)
-
-    threads_per_block = 256
-    blocks = (pop_size + threads_per_block - 1) // threads_per_block
-
-    evaluate_population_kernel[blocks, threads_per_block](d_population, d_img, d_data, EL, d_results)
-
-    results = d_results.copy_to_host()
-
-    # 在 CPU 上完成計算
-    for i, result in enumerate(results):
-        if result[0] == -1:
-            weights = cp.asarray(population[i])
-            pred_img = improved_predict_image_cuda(cp.asarray(img), weights)
-            embedded, payload, _ = pee_embedding_adaptive_cuda(cp.asarray(img), cp.asarray(data), pred_img, EL)
-            psnr = calculate_psnr(img, cp.asnumpy(embedded))
-            results[i] = [max(0, payload), max(0, psnr)]  # 確保值非負
-
-    return [(float(r[0]), float(r[1])) for r in results]
-
-def safe_stats(x):
-    if not x:
-        return [0.0, 0.0]
-    valid_fitness = [ind.fitness.values for ind in x if hasattr(ind, 'fitness') and ind.fitness.valid]
-    if not valid_fitness:
-        return [0.0, 0.0]
-    return np.mean(valid_fitness, axis=0).tolist()
-
-def find_best_weights_ga(img, data, EL, toolbox, population_size=50, generations=20, early_stop=5):
-    creator.create("FitnessMax", base.Fitness, weights=(1.0, -1.0))
+# 確保這些只被創建一次
+if 'FitnessMax' not in creator.__dict__:
+    creator.create("FitnessMax", base.Fitness, weights=(1.0, 1.0))
+if 'Individual' not in creator.__dict__:
     creator.create("Individual", list, fitness=creator.FitnessMax)
 
-    toolbox = base.Toolbox()
-    toolbox.register("attr_int", random.randint, 1, 15)
-    toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_int, n=4)
-    toolbox.register("population", tools.initRepeat, list, toolbox.individual)
-
-    def evaluate(individual):
-        weights = np.array(individual, dtype=np.float32)
-        pred_img = improved_predict_image_cuda(cp.asarray(img, dtype=cp.uint8), cp.asarray(weights))
-        embedded, payload, _ = pee_embedding_adaptive_cuda(cp.asarray(img, dtype=cp.uint8), 
-                                                          cp.asarray(data, dtype=cp.uint8), 
-                                                          pred_img, EL)
-        psnr = calculate_psnr(img, cp.asnumpy(embedded))
+def find_best_weights_ga(img, data, EL, toolbox, population_size=50, generations=20):
+    
+    def evaluate(individual, img=img, data=data, EL=EL):
+        weights = np.array(individual)
+        pred_img = improved_predict_image_cpu(img, weights)
+        embedded, payload, _ = pee_embedding_adaptive(img, data, pred_img, EL)
+        psnr = calculate_psnr(img, embedded)
         return payload, psnr
 
     toolbox.register("evaluate", evaluate)
     toolbox.register("mate", tools.cxTwoPoint)
-    toolbox.register("mutate", tools.mutUniformInt, low=1, up=15, indpb=0.2)
+    toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=1, indpb=0.2)
     toolbox.register("select", tools.selTournament, tournsize=3)
 
     pop = toolbox.population(n=population_size)
@@ -97,7 +51,47 @@ def find_best_weights_ga(img, data, EL, toolbox, population_size=50, generations
                                        halloffame=hof, verbose=True)
 
     best_ind = tools.selBest(pop, 1)[0]
-    return np.array(best_ind), (-best_ind.fitness.values[1], best_ind.fitness.values[0])  # 返回 (PSNR, payload)
+    return np.array(best_ind), best_ind.fitness.values
+
+def find_best_weights_ga_cuda(img, data, EL, population_size=50, generations=20):
+    def evaluate(individual):
+        weights = cp.array(individual, dtype=cp.float32)
+        pred_img = improved_predict_image_cuda(img, weights)
+        embedded, payload, _ = pee_embedding_adaptive_cuda(img, data, pred_img, EL)
+        psnr = calculate_psnr(to_cpu(img), to_cpu(embedded))
+        return int(payload), float(psnr)
+
+    creator.create("FitnessMax", base.Fitness, weights=(1.0, 1.0))
+    creator.create("Individual", list, fitness=creator.FitnessMax)
+
+    toolbox = base.Toolbox()
+    toolbox.register("attr_float", random.uniform, 0, 1)
+    toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_float, n=4)
+    toolbox.register("population", tools.initRepeat, list, toolbox.individual)
+    toolbox.register("evaluate", evaluate)
+    toolbox.register("mate", tools.cxTwoPoint)
+    toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=1, indpb=0.2)
+    toolbox.register("select", tools.selTournament, tournsize=3)
+
+    pop = toolbox.population(n=population_size)
+    hof = tools.HallOfFame(1)
+    stats = tools.Statistics(lambda ind: ind.fitness.values)
+    stats.register("avg", np.mean, axis=0)
+    stats.register("min", np.min, axis=0)
+    stats.register("max", np.max, axis=0)
+
+    pop, logbook = algorithms.eaSimple(pop, toolbox, cxpb=0.7, mutpb=0.2, 
+                                       ngen=generations, stats=stats, 
+                                       halloffame=hof, verbose=True)
+
+    best_ind = tools.selBest(pop, 1)[0]
+    return cp.array(best_ind), best_ind.fitness.values
+
+def choose_ga_implementation(use_cuda=True):
+    if use_cuda and cp.cuda.is_available():
+        return find_best_weights_ga_cuda
+    else:
+        return find_best_weights_ga
 
 def encode_pee_info(pee_info):
     encoded = struct.pack('B', pee_info['total_rotations'])
@@ -149,5 +143,16 @@ def decode_pee_info(encoded_data):
         'stages': stages
     }
 
-
-
+def create_pee_info_table(pee_stages):
+    table = PrettyTable()
+    table.field_names = ["Rotation", "Payload", "BPP", "PSNR", "SSIM", "Hist Corr"]
+    for stage in pee_stages:
+        table.add_row([
+            stage['rotation'],
+            stage['payload'],
+            f"{stage['bpp']:.4f}",
+            f"{stage['psnr']:.2f}",
+            f"{stage['ssim']:.4f}",
+            f"{stage['hist_corr']:.4f}"
+        ])
+    return table

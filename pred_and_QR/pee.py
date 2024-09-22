@@ -1,151 +1,117 @@
 import numpy as np
-from image_processing import (
-    improved_predict_image_cuda,
-)
-
+from numba import cuda
+import math
+from image_processing import improved_predict_image_cuda
 from common import *
-try:
-    import cupy as cp
-    from numba import cuda
-    CUDA_AVAILABLE = True
-except ImportError:
-    CUDA_AVAILABLE = False
-    print("CUDA libraries not found. Falling back to CPU implementation.")
 
-def pee_embedding_adaptive(img, data, weight, block_size=8, threshold=3):
+def pee_embedding_adaptive(img, data, pred_img, EL):
     height, width = img.shape
-    pred_img = improved_predict_image_cuda(img, weight, block_size)
-    diff = img - pred_img
+    embedded = np.zeros_like(img)
+    payload = 0
     
-    embedded = np.zeros_like(diff)
-    embedded_data = []
-    data_index = 0
-    
-    for i in range(height):
-        for j in range(width):
-            if data_index >= len(data):
-                embedded[i, j] = diff[i, j]
-                continue
+    for x in range(height):
+        for y in range(width):
+            local_std = np.std(img[max(0, x-1):min(height, x+2), max(0, y-1):min(width, y+2)])
+            adaptive_EL = min(EL, max(3, int(EL * (1 - local_std / 255))))
             
-            local_var = np.var(img[max(0, i-1):min(height, i+2), max(0, j-1):min(width, j+2)])
-            adaptive_threshold = threshold * (1 + local_var / 1000)
-            
-            if abs(diff[i, j]) < adaptive_threshold:
-                bit = data[data_index]
-                if diff[i, j] >= 0:
-                    embedded[i, j] = 2 * diff[i, j] + bit
+            diff = int(img[x, y]) - int(pred_img[x, y])
+            if abs(diff) < adaptive_EL and payload < len(data):
+                bit = int(data[payload])
+                payload += 1
+                if diff >= 0:
+                    embedded[x, y] = min(255, max(0, int(img[x, y]) + bit))
                 else:
-                    embedded[i, j] = 2 * diff[i, j] - bit
-                embedded_data.append(bit)
-                data_index += 1
+                    embedded[x, y] = min(255, max(0, int(img[x, y]) - bit))
             else:
-                embedded[i, j] = diff[i, j]
+                embedded[x, y] = img[x, y]
     
-    embedded_img = pred_img + embedded
-    return embedded_img, data_index, embedded_data
+    embedded_data = data[:payload].tolist()
+    return embedded, payload, embedded_data
 
 @cuda.jit
-def pee_kernel_adaptive(img, pred_img, data, embedded, payload, EL):
+def pee_embedding_kernel(img, pred_img, data, embedded, payload, EL, height, width):
     x, y = cuda.grid(2)
-    if x < img.shape[0] and y < img.shape[1]:
-        local_std = 0.0
+    if x < width and y < height:
+        local_sum = 0.0
         count = 0
-        for i in range(max(0, x-1), min(img.shape[0], x+2)):
-            for j in range(max(0, y-1), min(img.shape[1], y+2)):
-                local_std += (float(img[i, j]) - float(pred_img[i, j])) ** 2
-                count += 1
-        if count > 0:
-            local_std = (local_std / count) ** 0.5
+        for dy in range(-1, 2):
+            for dx in range(-1, 2):
+                nx, ny = x + dx, y + dy
+                if 0 <= nx < width and 0 <= ny < height:
+                    diff = float(img[ny, nx]) - float(pred_img[ny, nx])
+                    local_sum += diff * diff
+                    count += 1
         
+        local_std = math.sqrt(local_sum / count) if count > 0 else 0
+
         adaptive_EL = min(EL, max(3, int(EL * (1 - local_std / 255))))
-        
-        diff = int(img[x, y]) - int(pred_img[x, y])
+
+        diff = int(img[y, x]) - int(pred_img[y, x])
+
         if abs(diff) < adaptive_EL and payload[0] < len(data):
-            bit = int(data[int(payload[0])])
+            bit = data[payload[0]]
             cuda.atomic.add(payload, 0, 1)
             if diff >= 0:
-                embedded[x, y] = min(255, max(0, int(img[x, y]) + bit))
+                embedded[y, x] = min(255, max(0, int(img[y, x]) + bit))
             else:
-                embedded[x, y] = min(255, max(0, int(img[x, y]) - bit))
+                embedded[y, x] = min(255, max(0, int(img[y, x]) - bit))
         else:
-            embedded[x, y] = img[x, y]
+            embedded[y, x] = img[y, x]
 
 def pee_embedding_adaptive_cuda(img, data, pred_img, EL):
-    try:
-        threadsperblock = (16, 16)
-        blockspergrid_x = (img.shape[0] + threadsperblock[0] - 1) // threadsperblock[0]
-        blockspergrid_y = (img.shape[1] + threadsperblock[1] - 1) // threadsperblock[1]
-        blockspergrid = (blockspergrid_x, blockspergrid_y)
-        
-        d_img = cuda.to_device(img.astype(np.uint8))
-        d_data = cuda.to_device(data.astype(np.uint8))
-        d_pred_img = cuda.to_device(pred_img.astype(np.uint8))
-        d_embedded = cuda.device_array_like(img)
-        d_payload = cuda.to_device(np.array([0], dtype=np.int32))
-        
-        pee_kernel_adaptive[blockspergrid, threadsperblock](d_img, d_pred_img, d_data, d_embedded, d_payload, EL)
-        
-        embedded = d_embedded.copy_to_host()
-        payload = int(d_payload.copy_to_host()[0])
-        embedded_data = d_data[:payload].copy_to_host()
+    height, width = img.shape
+    d_img = to_gpu(img)
+    d_pred_img = to_gpu(pred_img)
+    d_data = to_gpu(data)
+    d_embedded = cuda.device_array_like(d_img)
+    d_payload = cuda.to_device(np.array([0], dtype=np.int32))
 
-        return embedded, payload, embedded_data
-    except Exception as e:
-        print(f"CUDA error: {e}. Falling back to CPU implementation.")
-        return pee_embedding_adaptive_cpu(img, data, pred_img, EL)
+    threads_per_block = (16, 16)
+    blocks_per_grid_x = (width + threads_per_block[0] - 1) // threads_per_block[0]
+    blocks_per_grid_y = (height + threads_per_block[1] - 1) // threads_per_block[1]
+    blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
 
-def pee_embedding_adaptive_cpu(img, data, pred_img, EL):
-    embedded = np.zeros_like(img)
-    payload = 0
-    
-    for x in range(img.shape[0]):
-        for y in range(img.shape[1]):
-            # 计算局部标准差
-            local_std = np.std(img[max(0, x-1):min(img.shape[0], x+2), max(0, y-1):min(img.shape[1], y+2)])
-            
-            # 自适应 EL
-            adaptive_EL = min(EL, max(3, int(EL * (1 - local_std / 255))))
-            
-            diff = int(img[x, y]) - int(pred_img[x, y])
-            if abs(diff) < adaptive_EL and payload < len(data):
-                bit = data[payload]
-                payload += 1
-                if diff >= 0:
-                    # 使用 np.clip 来避免溢出
-                    embedded[x, y] = np.clip(int(img[x, y]) + bit, 0, 255)
-                else:
-                    # 使用 np.clip 来避免溢出
-                    embedded[x, y] = np.clip(int(img[x, y]) - bit, 0, 255)
-            else:
-                embedded[x, y] = img[x, y]
-    
-    embedded_data = data[:payload]
+    pee_embedding_kernel[blocks_per_grid, threads_per_block](
+        d_img, d_pred_img, d_data, d_embedded, d_payload, EL, height, width
+    )
+
+    embedded = to_cpu(d_embedded)
+    payload = int(d_payload.copy_to_host()[0])
+    embedded_data = to_cpu(d_data[:payload]).tolist()
+
     return embedded, payload, embedded_data
 
-def pee_embedding_adaptive_cpu(img, data, pred_img, EL):
-    embedded = np.zeros_like(img)
-    payload = 0
-    
-    for x in range(img.shape[0]):
-        for y in range(img.shape[1]):
-            # 計算局部標準差
-            local_std = np.std(img[max(0, x-1):min(img.shape[0], x+2), max(0, y-1):min(img.shape[1], y+2)])
-            
-            # 自適應 EL
-            adaptive_EL = min(EL, max(3, int(EL * (1 - local_std / 255))))
-            
-            diff = int(img[x, y]) - int(pred_img[x, y])
-            if abs(diff) < adaptive_EL and payload < len(data):
-                bit = data[payload]
-                payload += 1
-                if diff >= 0:
-                    embedded[x, y] = min(255, max(0, img[x, y] + bit))
-                else:
-                    embedded[x, y] = min(255, max(0, img[x, y] - bit))
-            else:
-                embedded[x, y] = img[x, y]
-    
-    embedded_data = data[:payload]
-    return embedded, payload, embedded_data
+def choose_pee_implementation(use_cuda=True):
+    if use_cuda and cuda.is_available():
+        return improved_predict_image_cuda, pee_embedding_adaptive_cuda
+    else:
+        return improved_predict_image_cpu, pee_embedding_adaptive
 
+# 測試函數
+def test_pee_functions():
+    # 創建測試數據
+    img = np.random.randint(0, 256, (512, 512), dtype=np.uint8)
+    weights = np.array([0.25, 0.25, 0.25, 0.25], dtype=np.float32)
+    data = np.random.randint(0, 2, 10000, dtype=np.uint8)
+    EL = 5
 
+    # 選擇實現（GPU 如果可用，否則 CPU）
+    predict_func, embed_func = choose_pee_implementation()
+
+    # 運行預測
+    pred_img = predict_func(img, weights)
+
+    # 運行嵌入
+    embedded, payload, embedded_data = embed_func(img, data, pred_img, EL)
+
+    # 使用 common.py 中的 calculate_psnr
+    psnr = calculate_psnr(img, embedded)
+
+    print(f"使用的實現: {'CUDA' if predict_func.__name__.endswith('cuda') else 'CPU'}")
+    print(f"嵌入的數據量: {payload}")
+    print(f"嵌入後圖像的形狀: {embedded.shape}")
+    print(f"PSNR: {psnr}")
+    print(f"原始圖像和嵌入後圖像的差異: {np.sum(img != embedded)}")
+
+if __name__ == "__main__":
+    test_pee_functions()
