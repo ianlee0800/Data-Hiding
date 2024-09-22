@@ -91,16 +91,19 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones):
     height, width = img.shape
     pee_stages = []
     total_payload = 0
-    current_img = cp.asarray(img)
+    current_img = cp.asarray(img)  # 确保转换为 cupy array
+    print(f"Current image type: {type(current_img)}")
     original_hist = cp.histogram(current_img, bins=256, range=(0, 256))[0]
 
-    # 获取必要的函数
+    # 获取 CUDA 版本的函数
     _, embed_func, predict_func = choose_pee_implementation(use_cuda=True)
 
     for rotation in range(total_rotations):
         print(f"\nProcessing rotation {rotation}")
         
+        # 将图像分割成四个子图像
         sub_images = split_image(current_img)
+        print(f"Sub-image type: {type(sub_images[0])}")
         embedded_sub_images = []
         stage_info = {
             'rotation': rotation,
@@ -113,25 +116,35 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones):
         }
         
         for i, sub_img in enumerate(sub_images):
+            print(f"Processing sub-image {i}")
             sub_data = cp.random.binomial(1, ratio_of_ones, sub_img.size).astype(cp.uint8)
-            EL = int(cp.random.choice([1, 3, 5, 7], size=1)[0])  # 修改这一行
+            EL = int(cp.random.choice([1, 3, 5, 7], size=1)[0])
             
+            print("Finding best weights...")
             weights, fitness = find_best_weights_ga_cuda(sub_img, sub_data, EL)
+            print(f"Weights type: {type(weights)}")
             
-            pred_sub_img = predict_func(sub_img, weights)
+            print("Predicting image...")
+            pred_sub_img = predict_func(sub_img, cp.asarray(weights))
+            print(f"Predicted sub-image type: {type(pred_sub_img)}")
+            
+            print("Embedding data...")
             embedded_sub, payload, _ = embed_func(sub_img, sub_data, pred_sub_img, EL)
+            print(f"Embedded sub-image type: {type(embedded_sub)}")
             
             embedded_sub_images.append(embedded_sub)
             
-            sub_psnr = calculate_psnr(to_cpu(sub_img), to_cpu(embedded_sub))
-            sub_ssim = calculate_ssim(to_cpu(sub_img), to_cpu(embedded_sub))
+            # 计算 PSNR, SSIM 和直方图相关性时，需要转换回 CPU
+            print("Calculating metrics...")
+            sub_psnr = calculate_psnr(cp.asnumpy(sub_img), cp.asnumpy(embedded_sub))
+            sub_ssim = calculate_ssim(cp.asnumpy(sub_img), cp.asnumpy(embedded_sub))
             sub_hist_corr = histogram_correlation(
-                cp.histogram(sub_img, bins=256, range=(0, 256))[0],
-                cp.histogram(embedded_sub, bins=256, range=(0, 256))[0]
+                cp.asnumpy(cp.histogram(sub_img, bins=256, range=(0, 256))[0]),
+                cp.asnumpy(cp.histogram(embedded_sub, bins=256, range=(0, 256))[0])
             )
             
             sub_info = {
-                'weights': weights.get().tolist(),
+                'weights': cp.asnumpy(weights).tolist(),
                 'EL': EL,
                 'payload': int(payload),
                 'psnr': float(sub_psnr),
@@ -141,22 +154,28 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones):
             stage_info['sub_images'].append(sub_info)
             stage_info['payload'] += payload
         
+        print("Merging sub-images...")
         embedded_img = merge_image(embedded_sub_images)
+        print(f"Merged image type: {type(embedded_img)}")
         
-        stage_info['psnr'] = float(calculate_psnr(to_cpu(current_img), to_cpu(embedded_img)))
-        stage_info['ssim'] = float(calculate_ssim(to_cpu(current_img), to_cpu(embedded_img)))
+        print("Calculating final metrics...")
+        stage_info['psnr'] = float(calculate_psnr(cp.asnumpy(current_img), cp.asnumpy(embedded_img)))
+        stage_info['ssim'] = float(calculate_ssim(cp.asnumpy(current_img), cp.asnumpy(embedded_img)))
         stage_info['hist_corr'] = float(histogram_correlation(
-            original_hist,
-            cp.histogram(embedded_img, bins=256, range=(0, 256))[0]
+            cp.asnumpy(original_hist),
+            cp.asnumpy(cp.histogram(embedded_img, bins=256, range=(0, 256))[0])
         ))
         stage_info['bpp'] = float(stage_info['payload'] / (height * width))
         
         pee_stages.append(stage_info)
         total_payload += stage_info['payload']
         
+        print("Rotating image...")
         current_img = cp.rot90(embedded_img)
+        print(f"Rotated image type: {type(current_img)}")
 
-    final_img = to_cpu(current_img)
+    print("Converting final image to numpy...")
+    final_img = cp.asnumpy(current_img)
     return final_img, int(total_payload), pee_stages
     
 def histogram_data_hiding(img, flag, encoded_pee_info):

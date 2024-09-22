@@ -7,7 +7,6 @@ from pee import *
 import random
 from prettytable import PrettyTable
 
-
 def generate_random_binary_array(size, ratio_of_ones=0.5):
     """生成指定大小的随机二进制数组，可调整1的比例"""
     return np.random.choice([0, 1], size=size, p=[1-ratio_of_ones, ratio_of_ones])
@@ -58,7 +57,7 @@ def find_best_weights_ga_cuda(img, data, EL, population_size=50, generations=20)
         weights = cp.array(individual, dtype=cp.float32)
         pred_img = improved_predict_image_cuda(img, weights)
         embedded, payload, _ = pee_embedding_adaptive_cuda(img, data, pred_img, EL)
-        psnr = calculate_psnr(to_cpu(img), to_cpu(embedded))
+        psnr = calculate_psnr(cp.asnumpy(img), cp.asnumpy(embedded))
         return int(payload), float(psnr)
 
     creator.create("FitnessMax", base.Fitness, weights=(1.0, 1.0))

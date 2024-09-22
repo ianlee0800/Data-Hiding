@@ -130,7 +130,10 @@ def image_difference_shift(array2D, a):
     return array2D_s
 
 def split_image(img):
-    """將圖像分割成四個子圖像"""
+    if isinstance(img, cp.ndarray):
+        xp = cp
+    else:
+        xp = np
     height, width = img.shape
     sub_height, sub_width = height // 2, width // 2
     sub_images = [
@@ -142,10 +145,13 @@ def split_image(img):
     return sub_images
 
 def merge_image(sub_images):
-    """將四個子圖像合併成一個完整的圖像"""
+    if isinstance(sub_images[0], cp.ndarray):
+        xp = cp
+    else:
+        xp = np
     sub_height, sub_width = sub_images[0].shape
     height, width = sub_height * 2, sub_width * 2
-    merged = np.zeros((height, width), dtype=sub_images[0].dtype)
+    merged = xp.zeros((height, width), dtype=sub_images[0].dtype)
     merged[0::2, 0::2] = sub_images[0]
     merged[0::2, 1::2] = sub_images[1]
     merged[1::2, 0::2] = sub_images[2]
@@ -168,6 +174,11 @@ def improved_predict_kernel(img, weight, pred_img, height, width):
             pred_img[y, x] = img[y, x]
 
 def improved_predict_image_cuda(img, weights):
+    # 确保输入是 cupy array
+    if not isinstance(img, cp.ndarray):
+        img = cp.asarray(img)
+    if not isinstance(weights, cp.ndarray):
+        weights = cp.asarray(weights)
     """
     CUDA 版本的改進預測圖像函數
     
