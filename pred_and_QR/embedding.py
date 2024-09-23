@@ -161,11 +161,15 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones):
 
         embedded_img = merge_image(embedded_sub_images)
         
-        stage_info['psnr'] = float(calculate_psnr(cp.asnumpy(original_img), cp.asnumpy(embedded_img)))
-        stage_info['ssim'] = float(calculate_ssim(cp.asnumpy(current_img), cp.asnumpy(embedded_img)))
+        # 将嵌入后的图像旋转回原始方向
+        rotated_back_img = cp.rot90(embedded_img, k=-rotation)
+        
+        # 使用旋转回原始方向的图像计算 PSNR 和 SSIM
+        stage_info['psnr'] = float(calculate_psnr(cp.asnumpy(original_img), cp.asnumpy(rotated_back_img)))
+        stage_info['ssim'] = float(calculate_ssim(cp.asnumpy(original_img), cp.asnumpy(rotated_back_img)))
         stage_info['hist_corr'] = float(histogram_correlation(
             cp.asnumpy(original_hist),
-            cp.asnumpy(cp.histogram(embedded_img, bins=256, range=(0, 255))[0])
+            cp.asnumpy(cp.histogram(rotated_back_img, bins=256, range=(0, 255))[0])
         ))
         stage_info['bpp'] = float(stage_info['payload'] / (height * width))
         
@@ -176,7 +180,7 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones):
             print(f"Warning: No change in image after rotation {rotation}")
         
         current_img = cp.rot90(embedded_img)
-        rotation_images.append(cp.asnumpy(embedded_img))
+        rotation_images.append(cp.asnumpy(embedded_img))  # 这里保存的是未旋转回去的图像，用于后续处理
 
     print("\nPEE process summary:")
     for i, stage in enumerate(pee_stages):
