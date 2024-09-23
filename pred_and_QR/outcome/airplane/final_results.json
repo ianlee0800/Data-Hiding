@@ -1,9 +1,9 @@
 {
-  "pee_total_payload": 392076,
+  "pee_total_payload": 554952,
   "hs_payload": 4032,
-  "total_payload": 396108,
-  "final_bpp": 1.5110321044921875,
-  "final_psnr": 28.29068733809492,
-  "final_ssim": 0.3811,
-  "final_hist_corr": 0.9624
+  "total_payload": 558984,
+  "final_bpp": 2.132354736328125,
+  "final_psnr": 28.29351831312243,
+  "final_ssim": 0.3729,
+  "final_hist_corr": 0.9561
 }

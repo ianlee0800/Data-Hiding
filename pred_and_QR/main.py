@@ -52,7 +52,24 @@ def main():
     ensure_dir(f"./pred_and_QR/outcome/{imgName}/pee_info.json")
     ensure_dir(f"./pred_and_QR/outcome/histogram/{imgName}")
     ensure_dir(f"./pred_and_QR/outcome/image/{imgName}")
-
+    
+    # 定义 save_stage_image 函数
+    def save_stage_image(img, stage, rotation=None):
+        """
+        保存每个阶段的图像
+        
+        :param img: 要保存的图像
+        :param stage: 阶段标识符（'X1' 或 'X2'）
+        :param rotation: 旋转次数（仅适用于 X1 阶段）
+        """
+        if stage == 'X1':
+            filename = f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_rotation_{rotation}.png"
+        else:
+            filename = f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X2.png"
+        
+        save_image(img, filename)
+        print(f"Saved {filename}")
+    
     try:
         # 清理 GPU 内存
         cp.get_default_memory_pool().free_all_blocks()
@@ -67,11 +84,15 @@ def main():
         pee_process, _, _ = choose_pee_implementation(use_cuda=True)
         
         print(f"Starting encoding process... ({'CUDA' if cp.cuda.is_available() else 'CPU'} mode)")
-
+        
         # X1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding
         print("\nX1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding")
         try:
-            final_img, total_payload, pee_stages = pee_process_with_rotation_cuda(origImg, total_rotations, ratio_of_ones)
+            final_img, total_payload, pee_stages, rotation_images = pee_process_with_rotation_cuda(origImg, total_rotations, ratio_of_ones)
+            
+            # 保存每次旋转后的图像
+            for i, img in enumerate(rotation_images):
+                save_stage_image(img, 'X1', i)
         except Exception as e:
             print(f"Error occurred in CUDA PEE process: {e}")
             print("Falling back to CPU implementation...")
@@ -139,6 +160,9 @@ def main():
         try:
             final_img_np = to_numpy(final_img)
             img_hs, peak, payload_hs = histogram_data_hiding(final_img_np, 1, encoded_pee_info)
+            
+            # 保存直方图移位后的图像
+            save_stage_image(img_hs, 'X2')
             
             # 计算和保存结果
             psnr_hs = calculate_psnr(to_numpy(origImg), img_hs)

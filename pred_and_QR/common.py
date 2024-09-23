@@ -106,14 +106,28 @@ def improved_predict_image_cpu(img, weight):
     
     return pred_img
 
-def choose_el(img, rotation, current_payload):
-    target_payload = 480000
-    if current_payload < target_payload:
-        if rotation == 0:
-            return 7  # 第一次旋轉使用較大的 EL
-        elif rotation == 1:
-            return 5
-        else:
-            return 3
+def choose_el_based_on_psnr(psnr, current_payload, total_pixels, target_bpp=0.5, min_el=1, max_el=7):
+    """
+    基于当前的 PSNR、已嵌入载荷和目标 bpp 动态选择 EL 值
+    
+    :param psnr: 当前的 PSNR 值
+    :param current_payload: 当前已嵌入的比特数
+    :param total_pixels: 图像总像素数
+    :param target_bpp: 目标比特每像素 (bpp)
+    :param min_el: 最小 EL 值
+    :param max_el: 最大 EL 值
+    :return: 选择的 EL 值
+    """
+    current_bpp = current_payload / total_pixels
+    remaining_bpp = max(0, target_bpp - current_bpp)
+    
+    if psnr > 40:
+        el = max_el
+    elif psnr > 35:
+        el = int(max_el * (remaining_bpp / target_bpp) + min_el)
+    elif psnr > 30:
+        el = int((max_el + min_el) / 2 * (remaining_bpp / target_bpp) + min_el)
     else:
-        return 3  # 如果已達到目標，使用較小的 EL 以維持圖像質量
+        el = min_el
+    
+    return max(min_el, min(el, max_el))
