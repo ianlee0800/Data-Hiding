@@ -1,12 +1,12 @@
 import numpy as np
 import cupy as cp
+import struct
 from image_processing import (
     generate_histogram,
     merge_image,
     split_image
 )
 from utils import (
-    decode_pee_info,
     find_best_weights_ga,
     find_best_weights_ga_cuda
 )
@@ -91,20 +91,12 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones):
     height, width = img.shape
     pee_stages = []
     total_payload = 0
-    current_img = cp.asarray(img)  # 确保转换为 cupy array
-    print(f"Current image type: {type(current_img)}")
-    original_hist = cp.histogram(current_img, bins=256, range=(0, 256))[0]
-
-    # 获取 CUDA 版本的函数
-    _, embed_func, predict_func = choose_pee_implementation(use_cuda=True)
+    current_img = cp.asarray(img)
+    original_hist = cp.histogram(current_img, bins=256, range=(0, 255))[0]
 
     for rotation in range(total_rotations):
-        print(f"\nProcessing rotation {rotation}")
-        
-        # 将图像分割成四个子图像
         sub_images = split_image(current_img)
-        print(f"Sub-image type: {type(sub_images[0])}")
-        embedded_sub_images = []
+        
         stage_info = {
             'rotation': rotation,
             'sub_images': [],
@@ -112,78 +104,68 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones):
             'psnr': 0,
             'ssim': 0,
             'hist_corr': 0,
-            'bpp': 0
+            'bpp': 0,
+            'block_params': []  # 添加这一行
         }
         
+        embedded_sub_images = []
         for i, sub_img in enumerate(sub_images):
-            print(f"Processing sub-image {i}")
+            sub_img = cp.asarray(sub_img)
             sub_data = cp.random.binomial(1, ratio_of_ones, sub_img.size).astype(cp.uint8)
             EL = int(cp.random.choice([1, 3, 5, 7], size=1)[0])
             
-            print("Finding best weights...")
             weights, fitness = find_best_weights_ga_cuda(sub_img, sub_data, EL)
-            print(f"Weights type: {type(weights)}")
-            
-            print("Predicting image...")
-            pred_sub_img = predict_func(sub_img, cp.asarray(weights))
-            print(f"Predicted sub-image type: {type(pred_sub_img)}")
-            
-            print("Embedding data...")
-            embedded_sub, payload, _ = embed_func(sub_img, sub_data, pred_sub_img, EL)
-            print(f"Embedded sub-image type: {type(embedded_sub)}")
+            pred_sub_img = improved_predict_image_cuda(sub_img, weights)
+            embedded_sub, payload, _ = pee_embedding_adaptive_cuda(sub_img, sub_data, pred_sub_img, EL)
             
             embedded_sub_images.append(embedded_sub)
+            stage_info['payload'] += payload
             
-            # 计算 PSNR, SSIM 和直方图相关性时，需要转换回 CPU
-            print("Calculating metrics...")
             sub_psnr = calculate_psnr(cp.asnumpy(sub_img), cp.asnumpy(embedded_sub))
             sub_ssim = calculate_ssim(cp.asnumpy(sub_img), cp.asnumpy(embedded_sub))
             sub_hist_corr = histogram_correlation(
-                cp.asnumpy(cp.histogram(sub_img, bins=256, range=(0, 256))[0]),
-                cp.asnumpy(cp.histogram(embedded_sub, bins=256, range=(0, 256))[0])
+                cp.asnumpy(cp.histogram(sub_img, bins=256, range=(0, 255))[0]),
+                cp.asnumpy(cp.histogram(embedded_sub, bins=256, range=(0, 255))[0])
             )
             
-            sub_info = {
+            block_info = {
                 'weights': cp.asnumpy(weights).tolist(),
-                'EL': EL,
+                'EL': int(EL),
                 'payload': int(payload),
                 'psnr': float(sub_psnr),
                 'ssim': float(sub_ssim),
                 'hist_corr': float(sub_hist_corr)
             }
-            stage_info['sub_images'].append(sub_info)
-            stage_info['payload'] += payload
-        
-        print("Merging sub-images...")
+            stage_info['sub_images'].append(block_info)
+            stage_info['block_params'].append(block_info)  # 添加这一行
+
         embedded_img = merge_image(embedded_sub_images)
-        print(f"Merged image type: {type(embedded_img)}")
         
-        print("Calculating final metrics...")
         stage_info['psnr'] = float(calculate_psnr(cp.asnumpy(current_img), cp.asnumpy(embedded_img)))
         stage_info['ssim'] = float(calculate_ssim(cp.asnumpy(current_img), cp.asnumpy(embedded_img)))
         stage_info['hist_corr'] = float(histogram_correlation(
             cp.asnumpy(original_hist),
-            cp.asnumpy(cp.histogram(embedded_img, bins=256, range=(0, 256))[0])
+            cp.asnumpy(cp.histogram(embedded_img, bins=256, range=(0, 255))[0])
         ))
         stage_info['bpp'] = float(stage_info['payload'] / (height * width))
         
         pee_stages.append(stage_info)
         total_payload += stage_info['payload']
         
-        print("Rotating image...")
         current_img = cp.rot90(embedded_img)
-        print(f"Rotated image type: {type(current_img)}")
 
-    print("Converting final image to numpy...")
+    print("\nPEE process summary:")
+    for i, stage in enumerate(pee_stages):
+        print(f"Rotation {i}:")
+        print(f"  Total payload: {stage['payload']}")
+        print(f"  PSNR: {stage['psnr']:.2f}")
+        print(f"  SSIM: {stage['ssim']:.4f}")
+        print(f"  BPP: {stage['bpp']:.4f}")
+
     final_img = cp.asnumpy(current_img)
     return final_img, int(total_payload), pee_stages
     
 def histogram_data_hiding(img, flag, encoded_pee_info):
-    """Histogram Shifting Embedding"""
-    # 確保輸入是 NumPy 陣列
-    if isinstance(img, cp.ndarray):
-        img = cp.asnumpy(img)
-
     h_img, w_img = img.shape
     markedImg = img.copy()
     hist, _, _, _ = generate_histogram(img)
@@ -197,33 +179,58 @@ def histogram_data_hiding(img, flag, encoded_pee_info):
     print(f"Peak found in histogram_data_hiding: {peak}")
     
     try:
-        # 解碼 PEE 資訊
-        total_rotations, pee_stages = decode_pee_info(encoded_pee_info)
-    except (TypeError, ValueError) as e:
+        # 解码 PEE 信息
+        offset = 0
+        total_rotations = struct.unpack('I', encoded_pee_info[offset:offset+4])[0]
+        offset += 4
+        
+        pee_stages = []
+        for _ in range(total_rotations):
+            rotation = struct.unpack('I', encoded_pee_info[offset:offset+4])[0]
+            offset += 4
+            num_blocks = struct.unpack('I', encoded_pee_info[offset:offset+4])[0]
+            offset += 4
+            
+            block_params = []
+            for _ in range(num_blocks):
+                weights = struct.unpack('4I', encoded_pee_info[offset:offset+16])
+                offset += 16
+                EL, payload = struct.unpack('II', encoded_pee_info[offset:offset+8])
+                offset += 8
+                block_params.append({
+                    'weights': weights,
+                    'EL': EL,
+                    'payload': payload
+                })
+            
+            pee_stages.append({
+                'rotation': rotation,
+                'block_params': block_params
+            })
+        
+        print(f"Decoded PEE info: {pee_stages}")
+    except Exception as e:
         print(f"Error decoding PEE info: {e}")
-        print(f"Encoded PEE info type: {type(encoded_pee_info)}")
-        print(f"Encoded PEE info length: {len(encoded_pee_info)} bytes")
-        print(f"Encoded PEE info content: {encoded_pee_info}")
         raise
 
-    # 計算最大可嵌入載荷
+    # 计算最大可嵌入载荷
     max_payload = hist[peak]
     
-    # 將 PEE 資訊轉換為二進制字符串
+    # 将 PEE 信息转换为二进制字符串
     embedding_data = ''
-    embedding_data += format(total_rotations, '08b')
+    embedding_data += format(total_rotations, '032b')
     for stage in pee_stages:
+        embedding_data += format(stage['rotation'], '032b')
         for block in stage['block_params']:
             weights = block['weights']
             EL = block['EL']
             payload = block['payload']
             for w in weights:
-                # 將浮點數轉換為整數（乘以100並四捨五入），然後轉換為16位二進制
-                embedding_data += format(int(round(w * 100)), '016b')
-            embedding_data += format(EL, '08b')
+                embedding_data += format(w, '032b')
+            embedding_data += format(EL, '032b')
             embedding_data += format(payload, '032b')
     
-    # 確保我們不超過最大載荷
+    # 确保我们不超过最大载荷
     embedding_data = embedding_data[:max_payload]
     actual_payload = len(embedding_data)
     
@@ -263,7 +270,7 @@ def test_pee_process():
     total_rotations = 2
     ratio_of_ones = 0.5
 
-    final_img, total_payload, pee_stages = pee_process_with_rotation(img, total_rotations, ratio_of_ones)
+    final_img, total_payload, pee_stages = pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones)
 
     print(f"Total payload: {total_payload}")
     print(f"Number of PEE stages: {len(pee_stages)}")

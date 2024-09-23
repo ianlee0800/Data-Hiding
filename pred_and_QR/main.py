@@ -16,6 +16,7 @@ from image_processing import (
 from embedding import (
     histogram_data_hiding,
     choose_pee_implementation,
+    pee_process_with_rotation_cuda
 )
 from utils import (
     encode_pee_info
@@ -30,9 +31,10 @@ if 'FitnessMax' not in creator.__dict__:
 if 'Individual' not in creator.__dict__:
     creator.create("Individual", list, fitness=creator.FitnessMax)
 
-current_dir = os.path.dirname(os.path.abspath(__file__))
-parent_dir = os.path.dirname(current_dir)
-sys.path.append(parent_dir)
+def ensure_dir(file_path):
+    directory = os.path.dirname(file_path)
+    if not os.path.exists(directory):
+        os.makedirs(directory)
 
 def main():
     # Parameter settings
@@ -45,13 +47,18 @@ def main():
     os.makedirs(f"./pred_and_QR/outcome/histogram/{imgName}", exist_ok=True)
     os.makedirs(f"./pred_and_QR/outcome/histogram/{imgName}/difference", exist_ok=True)
     os.makedirs(f"./pred_and_QR/outcome/image/{imgName}", exist_ok=True)
+    
+    # 确保必要的目录存在
+    ensure_dir(f"./pred_and_QR/outcome/{imgName}/pee_info.json")
+    ensure_dir(f"./pred_and_QR/outcome/histogram/{imgName}")
+    ensure_dir(f"./pred_and_QR/outcome/image/{imgName}")
 
     try:
         # 清理 GPU 内存
         cp.get_default_memory_pool().free_all_blocks()
 
         # Read original image
-        origImg = cp.asarray(read_image(f"./pred_and_QR/image/{imgName}.{filetype}").astype(np.uint8))
+        origImg = np.array(read_image(f"./pred_and_QR/image/{imgName}.{filetype}")).astype(np.uint8)
 
         # Save original image histogram
         save_histogram(origImg, f"./pred_and_QR/outcome/histogram/{imgName}/original_histogram.png", "Original Image Histogram")
@@ -64,7 +71,7 @@ def main():
         # X1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding
         print("\nX1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding")
         try:
-            final_img, total_payload, pee_stages = pee_process(origImg, total_rotations, ratio_of_ones)
+            final_img, total_payload, pee_stages = pee_process_with_rotation_cuda(origImg, total_rotations, ratio_of_ones)
         except Exception as e:
             print(f"Error occurred in CUDA PEE process: {e}")
             print("Falling back to CPU implementation...")
@@ -75,19 +82,18 @@ def main():
             table = PrettyTable()
             table.field_names = ["Rotation", "Sub-image", "Payload", "BPP", "PSNR", "SSIM", "Hist Corr", "EL", "Weights"]
             
-            total_pixels = origImg.size
             for i, stage in enumerate(pee_stages):
-                for j, sub_img in enumerate(stage['sub_images']):
+                for j, block in enumerate(stage['block_params']):
                     table.add_row([
                         i if j == 0 else "",
                         j,
-                        sub_img['payload'],
-                        f"{sub_img['payload'] / (total_pixels / 4):.4f}",
-                        f"{sub_img['psnr']:.2f}",
-                        f"{sub_img['ssim']:.4f}",
-                        f"{sub_img['hist_corr']:.4f}",
-                        sub_img['EL'],
-                        ", ".join([f"{w:.2f}" for w in sub_img['weights']])
+                        block['payload'],
+                        f"{block['payload'] / (origImg.size / 4):.4f}",
+                        f"{block['psnr']:.2f}",
+                        f"{block['ssim']:.4f}",
+                        f"{block['hist_corr']:.4f}",
+                        block['EL'],
+                        ", ".join([f"{w:.2f}" for w in block['weights']])
                     ])
                 table.add_row(["-" * 5] * 9)
                 table.add_row([
@@ -103,22 +109,21 @@ def main():
             
             print(table)
 
-            # 准备PEE信息用于histogram shifting和存储
+            # 准备PEE信息用于histogram shifting
             pee_info = {
                 'total_rotations': total_rotations,
-                'total_payload': total_payload,
-                'image_size': origImg.shape,
-                'stages': pee_stages,
-                'final_psnr': calculate_psnr(origImg, final_img),
-                'final_ssim': calculate_ssim(origImg, final_img),
-                'final_hist_corr': histogram_correlation(
-                    np.histogram(origImg, bins=256, range=(0, 256))[0],
-                    np.histogram(final_img, bins=256, range=(0, 256))[0]
-                )
+                'stages': [
+                    {
+                        'rotation': stage['rotation'],
+                        'block_params': stage['block_params']
+                    } for stage in pee_stages
+                ]
             }
 
-            # 保存PEE信息
-            with open(f"./pred_and_QR/outcome/{imgName}/pee_info.json", 'w') as f:
+            # 保存 PEE 信息
+            pee_info_path = f"./pred_and_QR/outcome/{imgName}/pee_info.json"
+            ensure_dir(pee_info_path)
+            with open(pee_info_path, 'w') as f:
                 json.dump(pee_info, f, indent=2)
 
             # 编码PEE信息用于histogram shifting
@@ -132,13 +137,14 @@ def main():
         # X2: Histogram Shifting Embedding
         print("\nX2: Histogram Shifting Embedding")
         try:
-            img_hs, peak, payload_hs = histogram_data_hiding(to_numpy(final_img), 1, encoded_pee_info)
+            final_img_np = to_numpy(final_img)
+            img_hs, peak, payload_hs = histogram_data_hiding(final_img_np, 1, encoded_pee_info)
             
             # 计算和保存结果
-            psnr_hs = calculate_psnr(origImg, img_hs)
-            ssim_hs = calculate_ssim(origImg, img_hs)
+            psnr_hs = calculate_psnr(to_numpy(origImg), img_hs)
+            ssim_hs = calculate_ssim(to_numpy(origImg), img_hs)
             hist_hs, _, _, _ = generate_histogram(img_hs)
-            hist_orig, _, _, _ = generate_histogram(origImg)
+            hist_orig, _, _, _ = generate_histogram(to_numpy(origImg))
             corr_hs = histogram_correlation(hist_orig, hist_hs)
             
             total_pixels = origImg.size

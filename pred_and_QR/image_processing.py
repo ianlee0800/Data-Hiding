@@ -145,17 +145,28 @@ def split_image(img):
     return sub_images
 
 def merge_image(sub_images):
+    if not sub_images:
+        raise ValueError("No sub-images to merge")
+    
+    print(f"Number of sub-images to merge: {len(sub_images)}")
+    print(f"Sub-image shapes: {[img.shape for img in sub_images]}")
+    
     if isinstance(sub_images[0], cp.ndarray):
         xp = cp
     else:
         xp = np
+    
     sub_height, sub_width = sub_images[0].shape
     height, width = sub_height * 2, sub_width * 2
+    
     merged = xp.zeros((height, width), dtype=sub_images[0].dtype)
     merged[0::2, 0::2] = sub_images[0]
     merged[0::2, 1::2] = sub_images[1]
     merged[1::2, 0::2] = sub_images[2]
     merged[1::2, 1::2] = sub_images[3]
+    
+    print(f"Merged image shape: {merged.shape}")
+    
     return merged
 
 @cuda.jit
@@ -174,11 +185,9 @@ def improved_predict_kernel(img, weight, pred_img, height, width):
             pred_img[y, x] = img[y, x]
 
 def improved_predict_image_cuda(img, weights):
-    # 确保输入是 cupy array
-    if not isinstance(img, cp.ndarray):
-        img = cp.asarray(img)
-    if not isinstance(weights, cp.ndarray):
-        weights = cp.asarray(weights)
+    # 确保输入是 CuPy 数组
+    img = cp.asarray(img)
+    weights = cp.asarray(weights)
     """
     CUDA 版本的改進預測圖像函數
     
@@ -202,5 +211,5 @@ def improved_predict_image_cuda(img, weights):
 
     # 將結果複製回主機
     pred_img = d_pred_img.copy_to_host()
-
-    return pred_img
+    
+    return cp.asarray(pred_img)  # 确保返回 CuPy 数组

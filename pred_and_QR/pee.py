@@ -59,14 +59,10 @@ def pee_embedding_kernel(img, pred_img, data, embedded, payload, EL, height, wid
             embedded[y, x] = img[y, x]
 
 def pee_embedding_adaptive_cuda(img, data, pred_img, EL):
-    
-    # 确保输入是 cupy array
-    if not isinstance(img, cp.ndarray):
-        img = cp.asarray(img)
-    if not isinstance(data, cp.ndarray):
-        data = cp.asarray(data)
-    if not isinstance(pred_img, cp.ndarray):
-        pred_img = cp.asarray(pred_img)
+    # 确保输入是 CuPy 数组
+    img = cp.asarray(img)
+    data = cp.asarray(data)
+    pred_img = cp.asarray(pred_img)
     
     height, width = img.shape
     d_img = to_gpu(img)
@@ -88,7 +84,7 @@ def pee_embedding_adaptive_cuda(img, data, pred_img, EL):
     payload = int(d_payload.copy_to_host()[0])
     embedded_data = to_cpu(d_data[:payload]).tolist()
 
-    return embedded, payload, embedded_data  # 确保返回 cupy array
+    return cp.asarray(embedded), payload, cp.asarray(embedded_data)  # 确保返回 CuPy 数组
 
 def choose_pee_implementation(use_cuda=True):
     if use_cuda and cuda.is_available():

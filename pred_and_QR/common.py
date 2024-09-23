@@ -40,29 +40,29 @@ def find_max(array1D):
         return max(range(len(array1D)), key=lambda i: array1D[i])
 
 def histogram_correlation(hist1, hist2):
-    """計算兩個直方圖的相關係數"""
+    hist1 = to_numpy(hist1)
+    hist2 = to_numpy(hist2)
+    
     max_length = max(len(hist1), len(hist2))
-    hist1_padded = hist1 + [0] * (max_length - len(hist1))
-    hist2_padded = hist2 + [0] * (max_length - len(hist2))
+    hist1_padded = np.pad(hist1, (0, max_length - len(hist1)), 'constant')
+    hist2_padded = np.pad(hist2, (0, max_length - len(hist2)), 'constant')
+    
     correlation = np.corrcoef(hist1_padded, hist2_padded)[0, 1]
     return round(correlation, 4)
 
 def calculate_psnr(img1, img2):
-    """計算峰值訊噪比PSNR"""
+    img1 = to_numpy(img1)
+    img2 = to_numpy(img2)
     mse = np.mean((img1 - img2) ** 2)
     if mse == 0:
         return float('inf')
     max_pixel = 255.0
-    psnr = 20 * math.log10(max_pixel / math.sqrt(mse))
-    return round(psnr, 2)
+    psnr = 20 * np.log10(max_pixel / np.sqrt(mse))
+    return psnr
 
 def calculate_ssim(img1, img2):
-    """計算結構相似性SSIM"""
-    # 確保輸入是 NumPy 陣列
-    if isinstance(img1, cp.ndarray):
-        img1 = cp.asnumpy(img1)
-    if isinstance(img2, cp.ndarray):
-        img2 = cp.asnumpy(img2)
+    img1 = to_numpy(img1)
+    img2 = to_numpy(img2)
 
     C1 = (0.01 * 255)**2
     C2 = (0.03 * 255)**2

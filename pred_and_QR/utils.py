@@ -54,7 +54,7 @@ def find_best_weights_ga(img, data, EL, toolbox, population_size=50, generations
 
 def find_best_weights_ga_cuda(img, data, EL, population_size=50, generations=20):
     def evaluate(individual):
-        weights = cp.array(individual, dtype=cp.float32)
+        weights = cp.array([int(w) for w in individual], dtype=cp.int32)
         pred_img = improved_predict_image_cuda(img, weights)
         embedded, payload, _ = pee_embedding_adaptive_cuda(img, data, pred_img, EL)
         psnr = calculate_psnr(cp.asnumpy(img), cp.asnumpy(embedded))
@@ -64,12 +64,12 @@ def find_best_weights_ga_cuda(img, data, EL, population_size=50, generations=20)
     creator.create("Individual", list, fitness=creator.FitnessMax)
 
     toolbox = base.Toolbox()
-    toolbox.register("attr_float", random.uniform, 0, 1)
-    toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_float, n=4)
+    toolbox.register("attr_int", random.randint, 1, 15)
+    toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_int, n=4)
     toolbox.register("population", tools.initRepeat, list, toolbox.individual)
     toolbox.register("evaluate", evaluate)
     toolbox.register("mate", tools.cxTwoPoint)
-    toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=1, indpb=0.2)
+    toolbox.register("mutate", tools.mutUniformInt, low=1, up=15, indpb=0.2)
     toolbox.register("select", tools.selTournament, tournsize=3)
 
     pop = toolbox.population(n=population_size)
@@ -84,7 +84,7 @@ def find_best_weights_ga_cuda(img, data, EL, population_size=50, generations=20)
                                        halloffame=hof, verbose=True)
 
     best_ind = tools.selBest(pop, 1)[0]
-    return cp.array(best_ind), best_ind.fitness.values
+    return cp.array([int(w) for w in best_ind], dtype=cp.int32), best_ind.fitness.values
 
 def choose_ga_implementation(use_cuda=True):
     if use_cuda and cp.cuda.is_available():
@@ -93,12 +93,13 @@ def choose_ga_implementation(use_cuda=True):
         return find_best_weights_ga
 
 def encode_pee_info(pee_info):
-    encoded = struct.pack('B', pee_info['total_rotations'])
+    encoded = struct.pack('I', pee_info['total_rotations'])
     for stage in pee_info['stages']:
-        encoded += struct.pack('B', stage['rotation'])
-        encoded += struct.pack('B', len(stage['block_params']))
+        encoded += struct.pack('I', stage['rotation'])
+        encoded += struct.pack('I', len(stage['block_params']))
         for block in stage['block_params']:
-            encoded += struct.pack('ffffBI', *block['weights'], block['EL'], block['payload'])
+            encoded += struct.pack('4I', *[int(w) for w in block['weights']])
+            encoded += struct.pack('II', block['EL'], block['payload'])
     return encoded
 
 def decode_pee_info(encoded_data):
