@@ -1,7 +1,7 @@
 import warnings
 from numba.core.errors import NumbaPerformanceWarning
 import os
-import sys
+import matplotlib.pyplot as plt
 import cupy as cp
 import numpy as np
 import json
@@ -11,7 +11,8 @@ from image_processing import (
     read_image, 
     save_image,
     save_histogram,
-    generate_histogram
+    generate_histogram,
+    save_difference_histogram
 )
 from embedding import (
     histogram_data_hiding,
@@ -85,14 +86,32 @@ def main():
         
         print(f"Starting encoding process... ({'CUDA' if cp.cuda.is_available() else 'CPU'} mode)")
         
+        # 创建保存直方图的目录
+        os.makedirs(f"./pred_and_QR/outcome/histogram/{imgName}", exist_ok=True)
+
+        # 保存原始图像的直方图
+        save_histogram(origImg, f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_original_histogram.png", "Original Image Histogram")
+
         # X1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding
         print("\nX1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding")
         try:
-            final_img, total_payload, pee_stages, rotation_images = pee_process_with_rotation_cuda(origImg, total_rotations, ratio_of_ones)
-            
-            # 保存每次旋转后的图像
-            for i, img in enumerate(rotation_images):
+            final_img, total_payload, pee_stages, rotation_images, rotation_histograms, total_rotations = pee_process_with_rotation_cuda(origImg, total_rotations, ratio_of_ones)
+
+            # 保存每次旋转后的图像和直方图
+            for i, (img, hist) in enumerate(zip(rotation_images, rotation_histograms)):
+                # 保存图像
                 save_stage_image(img, 'X1', i)
+                
+                # 保存直方图
+                histogram_filename = f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X1_rotation_{i}_histogram.png"
+                plt.figure(figsize=(10, 6))
+                plt.bar(range(256), hist, alpha=0.7)
+                plt.title(f"Histogram after PEE Rotation {i}")
+                plt.xlabel("Pixel Value")
+                plt.ylabel("Frequency")
+                plt.savefig(histogram_filename)
+                plt.close()
+        
         except Exception as e:
             print(f"Error occurred in CUDA PEE process: {e}")
             print("Falling back to CPU implementation...")
@@ -158,8 +177,20 @@ def main():
         # X2: Histogram Shifting Embedding
         print("\nX2: Histogram Shifting Embedding")
         try:
-            final_img_np = to_numpy(final_img)
+            # 将图像旋转回原始方向
+            final_img_np = np.rot90(to_numpy(final_img), k=-total_rotations)
+            
             img_hs, peak, payload_hs = histogram_data_hiding(final_img_np, 1, encoded_pee_info)
+            
+            # 保存直方图移位后的图像
+            save_stage_image(img_hs, 'X2')
+            
+            # 保存直方图移位后的直方图
+            save_histogram(img_hs, f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X2_histogram.png", "Histogram after X2 (Histogram Shifting)")
+
+            # 保存差异直方图
+            diff = origImg.astype(np.float32) - img_hs.astype(np.float32)
+            save_difference_histogram(diff, f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_difference_histogram.png", "Difference Histogram (Original - Final)")
             
             # 保存直方图移位后的图像
             save_stage_image(img_hs, 'X2')

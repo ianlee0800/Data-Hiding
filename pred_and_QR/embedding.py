@@ -4,7 +4,8 @@ import struct
 from image_processing import (
     generate_histogram,
     merge_image,
-    split_image
+    split_image,
+    save_histogram
 )
 from utils import (
     find_best_weights_ga,
@@ -96,6 +97,7 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones):
     pee_stages = []
     total_payload = 0
     rotation_images = []
+    rotation_histograms = []
 
     # 计算原始图像的直方图
     original_hist = cp.histogram(original_img, bins=256, range=(0, 255))[0]
@@ -164,7 +166,7 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones):
         # 将嵌入后的图像旋转回原始方向
         rotated_back_img = cp.rot90(embedded_img, k=-rotation)
         
-        # 使用旋转回原始方向的图像计算 PSNR 和 SSIM
+        # 计算 PSNR、SSIM 和直方图相关性
         stage_info['psnr'] = float(calculate_psnr(cp.asnumpy(original_img), cp.asnumpy(rotated_back_img)))
         stage_info['ssim'] = float(calculate_ssim(cp.asnumpy(original_img), cp.asnumpy(rotated_back_img)))
         stage_info['hist_corr'] = float(histogram_correlation(
@@ -180,7 +182,8 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones):
             print(f"Warning: No change in image after rotation {rotation}")
         
         current_img = cp.rot90(embedded_img)
-        rotation_images.append(cp.asnumpy(embedded_img))  # 这里保存的是未旋转回去的图像，用于后续处理
+        rotation_images.append(cp.asnumpy(embedded_img))
+        rotation_histograms.append(cp.asnumpy(cp.histogram(rotated_back_img, bins=256, range=(0, 255))[0]))
 
     print("\nPEE process summary:")
     for i, stage in enumerate(pee_stages):
@@ -191,7 +194,7 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones):
         print(f"  BPP: {stage['bpp']:.4f}")
 
     final_img = cp.asnumpy(current_img)
-    return final_img, int(total_payload), pee_stages, rotation_images
+    return final_img, int(total_payload), pee_stages, rotation_images, rotation_histograms, total_rotations
     
 def histogram_data_hiding(img, flag, encoded_pee_info):
     h_img, w_img = img.shape
