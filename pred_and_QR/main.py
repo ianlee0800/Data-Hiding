@@ -42,7 +42,7 @@ def main():
     imgName = "airplane"  # Image name without extension
     filetype = "png"
     total_rotations = 5  # Total number of rotations
-    ratio_of_ones = 0.5  # Ratio of ones in random data, easily adjustable
+    ratio_of_ones = 1   # Ratio of ones in random data, easily adjustable
 
     # Create necessary directories
     os.makedirs(f"./pred_and_QR/outcome/histogram/{imgName}", exist_ok=True)
@@ -180,6 +180,9 @@ def main():
             # 將圖像旋轉回原始方向
             final_img_np = np.rot90(to_numpy(final_img), k=-total_rotations)
             
+            print(f"Before HS - Max pixel value: {np.max(final_img_np)}")
+            print(f"Before HS - Min pixel value: {np.min(final_img_np)}")
+            
             img_hs, payload_hs, hs_payloads, hs_rounds = histogram_data_hiding(final_img_np, encoded_pee_info, ratio_of_ones)
             
             if payload_hs == 0:
@@ -193,6 +196,7 @@ def main():
             save_stage_image(img_hs, 'X2')
             
             # 保存直方圖移位後的直方圖
+            hist_hs = generate_histogram(img_hs)
             save_histogram(img_hs, f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X2_histogram.png", "Histogram after X2 (Histogram Shifting)")
 
             # 保存差異直方圖
@@ -202,8 +206,7 @@ def main():
             # 計算和保存結果
             psnr_hs = calculate_psnr(to_numpy(origImg), img_hs)
             ssim_hs = calculate_ssim(to_numpy(origImg), img_hs)
-            hist_hs, _, _, _ = generate_histogram(img_hs)
-            hist_orig, _, _, _ = generate_histogram(to_numpy(origImg))
+            hist_orig = generate_histogram(to_numpy(origImg))
             corr_hs = histogram_correlation(hist_orig, hist_hs)
             
             final_bpp = (total_payload + payload_hs) / total_pixels

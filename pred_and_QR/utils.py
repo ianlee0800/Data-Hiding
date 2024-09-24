@@ -1,6 +1,8 @@
 import numpy as np
 import struct
 import cupy as cp
+import itertools
+import time
 from common import *
 from deap import base, creator, tools, algorithms
 from pee import *
@@ -23,6 +25,76 @@ if 'FitnessMax' not in creator.__dict__:
     creator.create("FitnessMax", base.Fitness, weights=(1.0, 1.0))
 if 'Individual' not in creator.__dict__:
     creator.create("Individual", list, fitness=creator.FitnessMax)
+
+def brute_force_weight_search(img, data, EL, weight_range=range(1, 16)):
+    best_weights = None
+    best_fitness = float('-inf')
+    start_time = time.time()
+    total_combinations = 0
+
+    for weights in itertools.product(weight_range, repeat=4):
+        total_combinations += 1
+        pred_img = improved_predict_image_cuda(img, weights)
+        embedded, payload, _ = pee_embedding_adaptive_cuda(img, data, pred_img, EL)
+        psnr = calculate_psnr(to_numpy(img), to_numpy(embedded))
+        fitness = (payload, psnr)
+        
+        if fitness > best_fitness:
+            best_fitness = fitness
+            best_weights = weights
+
+        if total_combinations % 1000 == 0:  # 每1000次組合輸出一次進度
+            elapsed_time = time.time() - start_time
+            print(f"Processed {total_combinations} combinations. Elapsed time: {elapsed_time:.2f} seconds")
+
+    total_time = time.time() - start_time
+    print(f"Total combinations: {total_combinations}")
+    print(f"Total search time: {total_time:.2f} seconds")
+    return best_weights, best_fitness
+
+# CUDA kernel for weight evaluation
+@cuda.jit
+def evaluate_weights_kernel(img, data, EL, weight_combinations, results):
+    idx = cuda.grid(1)
+    if idx < weight_combinations.shape[0]:
+        w1, w2, w3, w4 = weight_combinations[idx]
+        weights = cuda.local.array(4, dtype=np.int32)
+        weights[0], weights[1], weights[2], weights[3] = w1, w2, w3, w4
+
+        # Simplified prediction and embedding (you'll need to implement these)
+        pred_img = improved_predict_image_cuda(img, weights)
+        embedded, payload = pee_embedding_adaptive_cuda(img, data, pred_img, EL)
+        
+        psnr = calculate_psnr(img, embedded)
+        results[idx, 0] = payload
+        results[idx, 1] = psnr
+
+def brute_force_weight_search_cuda(img, data, EL, weight_range=range(1, 16)):
+    # Generate all weight combinations
+    weight_combinations = np.array(list(itertools.product(weight_range, repeat=4)), dtype=np.int32)
+    
+    # Move data to GPU
+    d_img = cuda.to_device(img)
+    d_data = cuda.to_device(data)
+    d_weight_combinations = cuda.to_device(weight_combinations)
+    d_results = cuda.device_array((len(weight_combinations), 2), dtype=np.float32)
+
+    # Set up grid and block dimensions
+    threads_per_block = 256
+    blocks_per_grid = (len(weight_combinations) + threads_per_block - 1) // threads_per_block
+
+    # Launch kernel
+    evaluate_weights_kernel[blocks_per_grid, threads_per_block](d_img, d_data, EL, d_weight_combinations, d_results)
+
+    # Retrieve results
+    results = d_results.copy_to_host()
+
+    # Find best result
+    best_idx = np.argmax(results[:, 0])  # Assuming we want to maximize payload
+    best_weights = weight_combinations[best_idx]
+    best_payload, best_psnr = results[best_idx]
+
+    return best_weights, (best_payload, best_psnr)
 
 def find_best_weights_ga(img, data, EL, toolbox, population_size=50, generations=20):
     
@@ -85,12 +157,6 @@ def find_best_weights_ga_cuda(img, data, EL, population_size=50, generations=20)
 
     best_ind = tools.selBest(pop, 1)[0]
     return cp.array([int(w) for w in best_ind], dtype=cp.int32), best_ind.fitness.values
-
-def choose_ga_implementation(use_cuda=True):
-    if use_cuda and cp.cuda.is_available():
-        return find_best_weights_ga_cuda
-    else:
-        return find_best_weights_ga
 
 def encode_pee_info(pee_info):
     encoded = struct.pack('I', pee_info['total_rotations'])

@@ -52,22 +52,22 @@ def pee_embedding_kernel(img, pred_img, data, embedded, payload, EL, height, wid
             bit = data[payload[0]]
             cuda.atomic.add(payload, 0, 1)
             if diff >= 0:
-                embedded[y, x] = min(255, max(0, int(img[y, x]) + bit))
+                embedded[y, x] = min(255, int(img[y, x]) + bit)  # 確保不超過 255
             else:
-                embedded[y, x] = min(255, max(0, int(img[y, x]) - bit))
+                embedded[y, x] = max(0, int(img[y, x]) - (1 - bit))  # 確保不小於 0
         else:
-            embedded[y, x] = img[y, x]
+            if diff >= adaptive_EL:
+                embedded[y, x] = min(255, int(img[y, x]) + adaptive_EL)  # 確保不超過 255
+            elif diff <= -adaptive_EL:
+                embedded[y, x] = max(0, int(img[y, x]) - adaptive_EL)  # 確保不小於 0
+            else:
+                embedded[y, x] = img[y, x]
 
 def pee_embedding_adaptive_cuda(img, data, pred_img, EL):
-    # 确保输入是 CuPy 数组
-    img = cp.asarray(img)
-    data = cp.asarray(data)
-    pred_img = cp.asarray(pred_img)
-    
     height, width = img.shape
-    d_img = to_gpu(img)
-    d_pred_img = to_gpu(pred_img)
-    d_data = to_gpu(data)
+    d_img = cuda.to_device(img)
+    d_pred_img = cuda.to_device(pred_img)
+    d_data = cuda.to_device(data)
     d_embedded = cuda.device_array_like(d_img)
     d_payload = cuda.to_device(np.array([0], dtype=np.int32))
 
@@ -80,11 +80,11 @@ def pee_embedding_adaptive_cuda(img, data, pred_img, EL):
         d_img, d_pred_img, d_data, d_embedded, d_payload, EL, height, width
     )
 
-    embedded = to_cpu(d_embedded)
+    embedded = d_embedded.copy_to_host()
     payload = int(d_payload.copy_to_host()[0])
-    embedded_data = to_cpu(d_data[:payload]).tolist()
+    embedded_data = d_data.copy_to_host()[:payload].tolist()
 
-    return cp.asarray(embedded), payload, cp.asarray(embedded_data)  # 确保返回 CuPy 数组
+    return cp.asarray(embedded), payload, cp.asarray(embedded_data)
 
 def choose_pee_implementation(use_cuda=True):
     if use_cuda and cuda.is_available():

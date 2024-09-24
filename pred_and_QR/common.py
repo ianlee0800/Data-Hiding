@@ -31,8 +31,17 @@ def to_cpu(data):
 
 def find_max(hist):
     """找到直方圖中的峰值"""
-    # 確保 hist 是一維數組
-    hist = np.asarray(hist).flatten()
+    if isinstance(hist, tuple):
+        print("Warning: hist is a tuple. Using the first element.")
+        hist = hist[0]
+    
+    if not isinstance(hist, np.ndarray):
+        print(f"Warning: hist is not a numpy array. Type: {type(hist)}")
+        hist = np.array(hist)
+    
+    if hist.ndim > 1:
+        print(f"Warning: hist has {hist.ndim} dimensions. Flattening.")
+        hist = hist.flatten()
     
     # 避免選擇 255 作為峰值
     peak = np.argmax(hist[:-1])
@@ -132,11 +141,11 @@ def choose_el_for_rotation(psnr, current_payload, total_pixels, rotation, total_
         base_el = 1
 
     # 根据 PSNR 和 payload 进度微调 EL 值
-    if psnr > 50 and payload_progress < 0.8:
+    if psnr > 40 and payload_progress < 0.8:
         el_adjustment = 2
-    elif psnr > 45 and payload_progress < 0.9:
+    elif psnr > 35 and payload_progress < 0.9:
         el_adjustment = 1
-    elif psnr < 40 or payload_progress > 0.95:
+    elif psnr < 30 or payload_progress > 0.95:
         el_adjustment = -1
     else:
         el_adjustment = 0
