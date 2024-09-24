@@ -105,7 +105,7 @@ def improved_predict_image_cpu(img, weight):
     
     return pred_img
 
-def choose_el_for_rotation(psnr, current_payload, total_pixels, rotation, total_rotations, target_payload=550000, target_bpp=0.5):
+def choose_el_for_rotation(psnr, current_payload, total_pixels, rotation, total_rotations, target_payload=480000):
     """
     基于当前的 PSNR、已嵌入载荷、目标 payload 和旋转次数动态选择 EL 值
     
@@ -115,35 +115,34 @@ def choose_el_for_rotation(psnr, current_payload, total_pixels, rotation, total_
     :param rotation: 当前旋转次数
     :param total_rotations: 总旋转次数
     :param target_payload: 目标总 payload
-    :param target_bpp: 目标比特每像素 (bpp)
     :return: 选择的 EL 值 (1, 3, 5, 或 7)
     """
-    current_bpp = current_payload / total_pixels
     remaining_payload = max(0, target_payload - current_payload)
     progress_factor = (total_rotations - rotation) / total_rotations
-    
+    payload_progress = current_payload / target_payload
+
     # 根据剩余 payload 和进度因子调整基础 EL 值
-    if remaining_payload > target_payload * 0.5 and progress_factor > 0.6:
+    if remaining_payload > target_payload * 0.5 and progress_factor > 0.4:
         base_el = 7
-    elif remaining_payload > target_payload * 0.3 and progress_factor > 0.4:
+    elif remaining_payload > target_payload * 0.3 and progress_factor > 0.2:
         base_el = 5
-    elif remaining_payload > target_payload * 0.1 and progress_factor > 0.2:
+    elif remaining_payload > target_payload * 0.1 or progress_factor > 0.1:
         base_el = 3
     else:
         base_el = 1
-    
-    # 根据 PSNR 微调 EL 值
-    if psnr > 50:
+
+    # 根据 PSNR 和 payload 进度微调 EL 值
+    if psnr > 50 and payload_progress < 0.8:
         el_adjustment = 2
-    elif psnr > 45:
+    elif psnr > 45 and payload_progress < 0.9:
         el_adjustment = 1
-    elif psnr < 40:
+    elif psnr < 40 or payload_progress > 0.95:
         el_adjustment = -1
     else:
         el_adjustment = 0
-    
+
     adjusted_el = base_el + el_adjustment
-    
+
     # 确保 EL 值在有效范围内 (1, 3, 5, 7)
     valid_els = [1, 3, 5, 7]
     return min(valid_els, key=lambda x: abs(x - adjusted_el))
