@@ -95,7 +95,7 @@ def main():
         # X1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding
         print("\nX1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding")
         try:
-            final_img, total_payload, pee_stages, rotation_images, rotation_histograms, total_rotations = pee_process_with_rotation_cuda(origImg, total_rotations, ratio_of_ones)
+            final_img, total_payload, pee_stages, rotation_images, rotation_histograms, total_rotations = pee_process_with_rotation_cuda(origImg, total_rotations, ratio_of_ones, target_payload=480000)
 
             # 保存每次旋转后的图像和直方图
             for i, (img, hist) in enumerate(zip(rotation_images, rotation_histograms)):
@@ -180,7 +180,11 @@ def main():
             # 将图像旋转回原始方向
             final_img_np = np.rot90(to_numpy(final_img), k=-total_rotations)
             
-            img_hs, peak, payload_hs = histogram_data_hiding(final_img_np, 1, encoded_pee_info)
+            img_hs, peak, payload_hs = histogram_data_hiding(final_img_np, 1, encoded_pee_info, ratio_of_ones)
+            
+            # 计算 bpp
+            total_pixels = origImg.size
+            bpp_hs = payload_hs / total_pixels
             
             # 保存直方图移位后的图像
             save_stage_image(img_hs, 'X2')
@@ -192,9 +196,6 @@ def main():
             diff = origImg.astype(np.float32) - img_hs.astype(np.float32)
             save_difference_histogram(diff, f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_difference_histogram.png", "Difference Histogram (Original - Final)")
             
-            # 保存直方图移位后的图像
-            save_stage_image(img_hs, 'X2')
-            
             # 计算和保存结果
             psnr_hs = calculate_psnr(to_numpy(origImg), img_hs)
             ssim_hs = calculate_ssim(to_numpy(origImg), img_hs)
@@ -202,7 +203,6 @@ def main():
             hist_orig, _, _, _ = generate_histogram(to_numpy(origImg))
             corr_hs = histogram_correlation(hist_orig, hist_hs)
             
-            total_pixels = origImg.size
             final_bpp = (total_payload + payload_hs) / total_pixels
             
             hs_table = PrettyTable()
@@ -210,21 +210,13 @@ def main():
             hs_table.add_row([
                 peak,
                 payload_hs,
-                f"{final_bpp:.4f}",
+                f"{bpp_hs:.4f}",
                 f"{psnr_hs:.2f}",
                 f"{ssim_hs:.4f}",
                 f"{corr_hs:.4f}"
             ])
             
             print(hs_table)
-
-            # 保存最终图像
-            save_image(img_hs, f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X2.{filetype}")
-            
-            # 保存直方图
-            save_histogram(img_hs, 
-                        f"./pred_and_QR/outcome/histogram/{imgName}/X2_final_histogram.png", 
-                        "Histogram of Final Image")
 
             # 输出最终结果
             print("\nEncoding Process Summary:")
@@ -236,7 +228,11 @@ def main():
                     stage_bpp = stage['bpp']
                     summary_table.add_row([f"X1 Rotation {i}", stage['payload'], f"{stage_bpp:.4f}"])
             
-            summary_table.add_row(["X2 (Histogram Shifting)", payload_hs, f"{payload_hs / total_pixels:.4f}"])
+            pee_info_size = len(encoded_pee_info) * 8  # PEE 信息的比特数
+            random_bits = payload_hs - pee_info_size  # 随机比特数
+            
+            summary_table.add_row(["X2 (Histogram Shifting - PEE Info)", pee_info_size, f"{pee_info_size / total_pixels:.4f}"])
+            summary_table.add_row(["X2 (Histogram Shifting - Random Bits)", random_bits, f"{random_bits / total_pixels:.4f}"])
             summary_table.add_row(["Total", total_payload + payload_hs, f"{final_bpp:.4f}"])
             
             print(summary_table)

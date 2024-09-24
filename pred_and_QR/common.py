@@ -1,7 +1,6 @@
 import numpy as np
 import cupy as cp
 import cv2
-import math
 
 class DataType:
     INT8 = np.int8
@@ -106,28 +105,45 @@ def improved_predict_image_cpu(img, weight):
     
     return pred_img
 
-def choose_el_based_on_psnr(psnr, current_payload, total_pixels, target_bpp=0.5, min_el=1, max_el=7):
+def choose_el_for_rotation(psnr, current_payload, total_pixels, rotation, total_rotations, target_payload=550000, target_bpp=0.5):
     """
-    基于当前的 PSNR、已嵌入载荷和目标 bpp 动态选择 EL 值
+    基于当前的 PSNR、已嵌入载荷、目标 payload 和旋转次数动态选择 EL 值
     
     :param psnr: 当前的 PSNR 值
     :param current_payload: 当前已嵌入的比特数
     :param total_pixels: 图像总像素数
+    :param rotation: 当前旋转次数
+    :param total_rotations: 总旋转次数
+    :param target_payload: 目标总 payload
     :param target_bpp: 目标比特每像素 (bpp)
-    :param min_el: 最小 EL 值
-    :param max_el: 最大 EL 值
-    :return: 选择的 EL 值
+    :return: 选择的 EL 值 (1, 3, 5, 或 7)
     """
     current_bpp = current_payload / total_pixels
-    remaining_bpp = max(0, target_bpp - current_bpp)
+    remaining_payload = max(0, target_payload - current_payload)
+    progress_factor = (total_rotations - rotation) / total_rotations
     
-    if psnr > 40:
-        el = max_el
-    elif psnr > 35:
-        el = int(max_el * (remaining_bpp / target_bpp) + min_el)
-    elif psnr > 30:
-        el = int((max_el + min_el) / 2 * (remaining_bpp / target_bpp) + min_el)
+    # 根据剩余 payload 和进度因子调整基础 EL 值
+    if remaining_payload > target_payload * 0.5 and progress_factor > 0.6:
+        base_el = 7
+    elif remaining_payload > target_payload * 0.3 and progress_factor > 0.4:
+        base_el = 5
+    elif remaining_payload > target_payload * 0.1 and progress_factor > 0.2:
+        base_el = 3
     else:
-        el = min_el
+        base_el = 1
     
-    return max(min_el, min(el, max_el))
+    # 根据 PSNR 微调 EL 值
+    if psnr > 50:
+        el_adjustment = 2
+    elif psnr > 45:
+        el_adjustment = 1
+    elif psnr < 40:
+        el_adjustment = -1
+    else:
+        el_adjustment = 0
+    
+    adjusted_el = base_el + el_adjustment
+    
+    # 确保 EL 值在有效范围内 (1, 3, 5, 7)
+    valid_els = [1, 3, 5, 7]
+    return min(valid_els, key=lambda x: abs(x - adjusted_el))

@@ -9,7 +9,8 @@ from image_processing import (
 )
 from utils import (
     find_best_weights_ga,
-    find_best_weights_ga_cuda
+    find_best_weights_ga_cuda,
+    generate_random_binary_array
 )
 from common import *
 from pee import *
@@ -89,7 +90,7 @@ def pee_process_with_rotation(img, total_rotations, ratio_of_ones):
 
     return current_img, total_payload, pee_stages
 
-def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones):
+def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones, target_payload=480000):
     original_img = cp.asarray(img)
     current_img = original_img.copy()
     height, width = img.shape
@@ -121,29 +122,24 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones):
         embedded_sub_images = []
         for i, sub_img in enumerate(sub_images):
             sub_img = cp.asarray(sub_img)
-            sub_data = cp.random.binomial(1, ratio_of_ones, sub_img.size).astype(cp.uint8)
+            # 使用 generate_random_binary_array 函数生成随机数据
+            sub_data = generate_random_binary_array(sub_img.size, ratio_of_ones)
+            sub_data = cp.asarray(sub_data, dtype=cp.uint8)
             
-            # 初始 EL 值设为最大
-            EL = 7
+            # 计算当前的 PSNR
+            current_psnr = calculate_psnr(cp.asnumpy(original_img), cp.asnumpy(current_img))
             
-            while EL > 0:
-                weights, fitness = find_best_weights_ga_cuda(sub_img, sub_data, EL)
-                pred_sub_img = improved_predict_image_cuda(sub_img, weights)
-                embedded_sub, payload, _ = pee_embedding_adaptive_cuda(sub_img, sub_data, pred_sub_img, EL)
-                
-                sub_psnr = calculate_psnr(cp.asnumpy(sub_img), cp.asnumpy(embedded_sub))
-                
-                # 更新这里的函数调用，加入 total_pixels 参数
-                new_EL = choose_el_based_on_psnr(sub_psnr, total_payload + stage_info['payload'] + payload, total_pixels)
-                
-                if new_EL >= EL or payload == 0:
-                    break
-                else:
-                    EL = new_EL
+            # 使用 choose_el_for_rotation 函数
+            EL = choose_el_for_rotation(current_psnr, total_payload, total_pixels, rotation, total_rotations, target_payload)
+            
+            weights, fitness = find_best_weights_ga_cuda(sub_img, sub_data, EL)
+            pred_sub_img = improved_predict_image_cuda(sub_img, weights)
+            embedded_sub, payload, _ = pee_embedding_adaptive_cuda(sub_img, sub_data, pred_sub_img, EL)
             
             embedded_sub_images.append(embedded_sub)
             stage_info['payload'] += payload
             
+            sub_psnr = calculate_psnr(cp.asnumpy(sub_img), cp.asnumpy(embedded_sub))
             sub_ssim = calculate_ssim(cp.asnumpy(sub_img), cp.asnumpy(embedded_sub))
             sub_hist_corr = histogram_correlation(
                 cp.asnumpy(cp.histogram(sub_img, bins=256, range=(0, 255))[0]),
@@ -163,17 +159,17 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones):
 
         embedded_img = merge_image(embedded_sub_images)
         
-        # 将嵌入后的图像旋转回原始方向
+        # 將嵌入後的圖像旋轉回原始方向
         rotated_back_img = cp.rot90(embedded_img, k=-rotation)
         
-        # 计算 PSNR、SSIM 和直方图相关性
+        # 計算 PSNR、SSIM 和直方圖相關性
         stage_info['psnr'] = float(calculate_psnr(cp.asnumpy(original_img), cp.asnumpy(rotated_back_img)))
         stage_info['ssim'] = float(calculate_ssim(cp.asnumpy(original_img), cp.asnumpy(rotated_back_img)))
         stage_info['hist_corr'] = float(histogram_correlation(
             cp.asnumpy(original_hist),
             cp.asnumpy(cp.histogram(rotated_back_img, bins=256, range=(0, 255))[0])
         ))
-        stage_info['bpp'] = float(stage_info['payload'] / (height * width))
+        stage_info['bpp'] = float(stage_info['payload'] / total_pixels)
         
         pee_stages.append(stage_info)
         total_payload += stage_info['payload']
@@ -195,8 +191,8 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones):
 
     final_img = cp.asnumpy(current_img)
     return final_img, int(total_payload), pee_stages, rotation_images, rotation_histograms, total_rotations
-    
-def histogram_data_hiding(img, flag, encoded_pee_info):
+
+def histogram_data_hiding(img, flag, encoded_pee_info, ratio_of_ones=0.5):
     h_img, w_img = img.shape
     markedImg = img.copy()
     hist, _, _, _ = generate_histogram(img)
@@ -209,56 +205,16 @@ def histogram_data_hiding(img, flag, encoded_pee_info):
     peak = find_max(hist)
     print(f"Peak found in histogram_data_hiding: {peak}")
     
-    try:
-        # 解码 PEE 信息
-        offset = 0
-        total_rotations = struct.unpack('I', encoded_pee_info[offset:offset+4])[0]
-        offset += 4
-        
-        pee_stages = []
-        for _ in range(total_rotations):
-            rotation = struct.unpack('I', encoded_pee_info[offset:offset+4])[0]
-            offset += 4
-            num_blocks = struct.unpack('I', encoded_pee_info[offset:offset+4])[0]
-            offset += 4
-            
-            block_params = []
-            for _ in range(num_blocks):
-                weights = struct.unpack('4I', encoded_pee_info[offset:offset+16])
-                offset += 16
-                EL, payload = struct.unpack('II', encoded_pee_info[offset:offset+8])
-                offset += 8
-                block_params.append({
-                    'weights': weights,
-                    'EL': EL,
-                    'payload': payload
-                })
-            
-            pee_stages.append({
-                'rotation': rotation,
-                'block_params': block_params
-            })
-        
-    except Exception as e:
-        print(f"Error decoding PEE info: {e}")
-        raise
-
     # 计算最大可嵌入载荷
     max_payload = hist[peak]
     
     # 将 PEE 信息转换为二进制字符串
-    embedding_data = ''
-    embedding_data += format(total_rotations, '032b')
-    for stage in pee_stages:
-        embedding_data += format(stage['rotation'], '032b')
-        for block in stage['block_params']:
-            weights = block['weights']
-            EL = block['EL']
-            payload = block['payload']
-            for w in weights:
-                embedding_data += format(w, '032b')
-            embedding_data += format(EL, '032b')
-            embedding_data += format(payload, '032b')
+    embedding_data = ''.join(format(byte, '08b') for byte in encoded_pee_info)
+    
+    # 如果 PEE 信息小于最大载荷，用随机比特填充
+    if len(embedding_data) < max_payload:
+        random_bits = generate_random_binary_array(max_payload - len(embedding_data), ratio_of_ones)
+        embedding_data += ''.join(map(str, random_bits))
     
     # 确保我们不超过最大载荷
     embedding_data = embedding_data[:max_payload]
