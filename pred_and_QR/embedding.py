@@ -192,56 +192,77 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones, target_p
     final_img = cp.asnumpy(current_img)
     return final_img, int(total_payload), pee_stages, rotation_images, rotation_histograms, total_rotations
 
-def histogram_data_hiding(img, flag, encoded_pee_info, ratio_of_ones=0.5):
+def histogram_data_hiding(img, encoded_pee_info, ratio_of_ones=0.5):
     h_img, w_img = img.shape
     markedImg = img.copy()
-    hist, _, _, _ = generate_histogram(img)
-    
-    print("Debug: Histogram in histogram_data_hiding")
-    print(f"Histogram type: {type(hist)}")
-    print(f"Histogram length: {len(hist)}")
-    print(f"Histogram sample: {hist[:10]}")
-    
-    peak = find_max(hist)
-    print(f"Peak found in histogram_data_hiding: {peak}")
-    
-    # 计算最大可嵌入载荷
-    max_payload = hist[peak]
-    
-    # 将 PEE 信息转换为二进制字符串
-    embedding_data = ''.join(format(byte, '08b') for byte in encoded_pee_info)
-    
-    # 如果 PEE 信息小于最大载荷，用随机比特填充
-    if len(embedding_data) < max_payload:
-        random_bits = generate_random_binary_array(max_payload - len(embedding_data), ratio_of_ones)
-        embedding_data += ''.join(map(str, random_bits))
-    
-    # 确保我们不超过最大载荷
-    embedding_data = embedding_data[:max_payload]
-    actual_payload = len(embedding_data)
-    
-    print(f"Debug: Embedding data length: {actual_payload} bits")
-    print(f"Debug: Max payload: {max_payload} bits")
-    
-    i = 0
-    for y in range(h_img):
-        for x in range(w_img):
-            if i < actual_payload and markedImg[y, x] == peak:
-                if flag == 0:
-                    markedImg[y, x] -= int(embedding_data[i])
-                elif flag == 1:
-                    markedImg[y, x] += int(embedding_data[i])
-                i += 1
-            elif markedImg[y, x] > peak:
-                if flag == 1:
-                    markedImg[y, x] += 1
-            elif markedImg[y, x] < peak:
-                if flag == 0:
-                    markedImg[y, x] -= 1
-    
-    print(f"Debug: Actually embedded {i} bits")
-    
-    return markedImg, peak, actual_payload
+    total_payload = 0
+    rounds = 0
+    payloads = []
+
+    print(f"Initial image shape: {markedImg.shape}")
+    print(f"Initial image dtype: {markedImg.dtype}")
+    print(f"Initial max pixel value: {np.max(markedImg)}")
+    print(f"Initial min pixel value: {np.min(markedImg)}")
+
+    try:
+        while np.max(markedImg) < 255:
+            rounds += 1
+            hist, min_val, max_val, hist_len = generate_histogram(markedImg)
+            
+            print(f"\nRound {rounds}:")
+            print(f"Histogram shape: {hist.shape}")
+            print(f"Histogram dtype: {hist.dtype}")
+            print(f"Histogram min: {min_val}, max: {max_val}, length: {hist_len}")
+            
+            peak = find_max(hist)
+            
+            print(f"Histogram peak: {peak}, value: {hist[peak]}")
+            print(f"Histogram sample: {hist[max(0, peak-5):min(256, peak+6)]}")
+            
+            max_payload = hist[peak]
+            
+            if max_payload == 0:
+                print("No more available peak values. Stopping embedding.")
+                break
+            
+            if rounds == 1:
+                embedding_data = ''.join(format(byte, '08b') for byte in encoded_pee_info)
+                if len(embedding_data) < max_payload:
+                    random_bits = generate_random_binary_array(max_payload - len(embedding_data), ratio_of_ones)
+                    embedding_data += ''.join(map(str, random_bits))
+            else:
+                embedding_data = ''.join(map(str, generate_random_binary_array(max_payload, ratio_of_ones)))
+            
+            embedding_data = embedding_data[:max_payload]
+            actual_payload = len(embedding_data)
+            
+            embedded_count = 0
+            for y in range(h_img):
+                for x in range(w_img):
+                    if embedded_count < actual_payload and markedImg[y, x] == peak:
+                        markedImg[y, x] += int(embedding_data[embedded_count])
+                        embedded_count += 1
+                    elif markedImg[y, x] > peak:
+                        markedImg[y, x] += 1
+            
+            total_payload += actual_payload
+            payloads.append(actual_payload)
+            
+            print(f"Embedded {actual_payload} bits")
+            print(f"Current max pixel value: {np.max(markedImg)}")
+            print(f"Current min pixel value: {np.min(markedImg)}")
+
+        print(f"Final max pixel value: {np.max(markedImg)}")
+        print(f"Final min pixel value: {np.min(markedImg)}")
+        print(f"Total rounds: {rounds}")
+        print(f"Total payload: {total_payload}")
+
+        return markedImg, total_payload, payloads, rounds
+    except Exception as e:
+        print(f"Error in histogram_data_hiding: {e}")
+        import traceback
+        traceback.print_exc()
+        return markedImg, total_payload, payloads, rounds
 
 def choose_pee_implementation(use_cuda=True):
     if use_cuda and cp.cuda.is_available():

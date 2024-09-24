@@ -43,15 +43,14 @@ def save_difference_histogram(diff, filename, title):
 
 def generate_histogram(array2D):
     """生成直方圖"""
-    height, width = array2D.shape
-    values = array2D.flatten()
-    min_val = int(np.min(values))
-    max_val = int(np.max(values))
-    range_size = max_val - min_val + 1
-    num = [0] * range_size
-    for value in values:
-        num[int(value) - min_val] += 1
-    return num, min_val, max_val, range_size
+    # 確保數組是 uint8 類型
+    array2D = array2D.astype(np.uint8)
+    
+    # 使用 numpy 的 histogram 函數
+    hist, _ = np.histogram(array2D.flatten(), bins=256, range=(0, 255))
+    
+    # 返回直方圖數組和其他必要的信息
+    return hist, np.min(array2D), np.max(array2D), len(hist)
 
 def image_rerotation(image, times):
     """影像轉回原方向"""

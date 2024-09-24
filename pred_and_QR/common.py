@@ -29,14 +29,14 @@ def to_gpu(data):
 def to_cpu(data):
     return cp.asnumpy(data)
 
-def find_max(array1D):
-    """找出一維陣列中最大值"""
-    if not array1D:
-        return None
-    if isinstance(array1D[0], (list, np.ndarray)):
-        return max(range(len(array1D)), key=lambda i: max(array1D[i]) if len(array1D[i]) > 0 else float('-inf'))
-    else:
-        return max(range(len(array1D)), key=lambda i: array1D[i])
+def find_max(hist):
+    """找到直方圖中的峰值"""
+    # 確保 hist 是一維數組
+    hist = np.asarray(hist).flatten()
+    
+    # 避免選擇 255 作為峰值
+    peak = np.argmax(hist[:-1])
+    return peak
 
 def histogram_correlation(hist1, hist2):
     hist1 = to_numpy(hist1)

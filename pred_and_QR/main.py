@@ -177,26 +177,29 @@ def main():
         # X2: Histogram Shifting Embedding
         print("\nX2: Histogram Shifting Embedding")
         try:
-            # 将图像旋转回原始方向
+            # 將圖像旋轉回原始方向
             final_img_np = np.rot90(to_numpy(final_img), k=-total_rotations)
             
-            img_hs, peak, payload_hs = histogram_data_hiding(final_img_np, 1, encoded_pee_info, ratio_of_ones)
+            img_hs, payload_hs, hs_payloads, hs_rounds = histogram_data_hiding(final_img_np, encoded_pee_info, ratio_of_ones)
             
-            # 计算 bpp
+            if payload_hs == 0:
+                print("Warning: No data embedded during Histogram Shifting.")
+            
+            # 計算 bpp
             total_pixels = origImg.size
             bpp_hs = payload_hs / total_pixels
             
-            # 保存直方图移位后的图像
+            # 保存直方圖移位後的圖像
             save_stage_image(img_hs, 'X2')
             
-            # 保存直方图移位后的直方图
+            # 保存直方圖移位後的直方圖
             save_histogram(img_hs, f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X2_histogram.png", "Histogram after X2 (Histogram Shifting)")
 
-            # 保存差异直方图
+            # 保存差異直方圖
             diff = origImg.astype(np.float32) - img_hs.astype(np.float32)
             save_difference_histogram(diff, f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_difference_histogram.png", "Difference Histogram (Original - Final)")
             
-            # 计算和保存结果
+            # 計算和保存結果
             psnr_hs = calculate_psnr(to_numpy(origImg), img_hs)
             ssim_hs = calculate_ssim(to_numpy(origImg), img_hs)
             hist_hs, _, _, _ = generate_histogram(img_hs)
@@ -206,10 +209,10 @@ def main():
             final_bpp = (total_payload + payload_hs) / total_pixels
             
             hs_table = PrettyTable()
-            hs_table.field_names = ["Peak", "Payload", "BPP", "PSNR", "SSIM", "Histogram Correlation"]
+            hs_table.field_names = ["Total Payload", "Rounds", "BPP", "PSNR", "SSIM", "Histogram Correlation"]
             hs_table.add_row([
-                peak,
                 payload_hs,
+                hs_rounds,
                 f"{bpp_hs:.4f}",
                 f"{psnr_hs:.2f}",
                 f"{ssim_hs:.4f}",
@@ -217,6 +220,14 @@ def main():
             ])
             
             print(hs_table)
+
+            # 輸出每輪 HS 的詳細信息
+            print("\nHistogram Shifting Rounds Details:")
+            hs_details_table = PrettyTable()
+            hs_details_table.field_names = ["Round", "Payload", "BPP"]
+            for i, payload in enumerate(hs_payloads):
+                hs_details_table.add_row([i+1, payload, f"{payload / total_pixels:.4f}"])
+            print(hs_details_table)
 
             # 输出最终结果
             print("\nEncoding Process Summary:")
@@ -229,10 +240,10 @@ def main():
                     summary_table.add_row([f"X1 Rotation {i}", stage['payload'], f"{stage_bpp:.4f}"])
             
             pee_info_size = len(encoded_pee_info) * 8  # PEE 信息的比特数
-            random_bits = payload_hs - pee_info_size  # 随机比特数
             
             summary_table.add_row(["X2 (Histogram Shifting - PEE Info)", pee_info_size, f"{pee_info_size / total_pixels:.4f}"])
-            summary_table.add_row(["X2 (Histogram Shifting - Random Bits)", random_bits, f"{random_bits / total_pixels:.4f}"])
+            for i, hs_payload in enumerate(hs_payloads[1:], start=1):  # 跳过第一轮，因为它包含在 PEE Info 中
+                summary_table.add_row([f"X2 (Histogram Shifting - Round {i})", hs_payload, f"{hs_payload / total_pixels:.4f}"])
             summary_table.add_row(["Total", total_payload + payload_hs, f"{final_bpp:.4f}"])
             
             print(summary_table)
@@ -252,6 +263,8 @@ def main():
 
         except Exception as e:
             print(f"Error in histogram data hiding: {e}")
+            import traceback
+            traceback.print_exc()
             print("Skipping histogram shifting embedding...")
 
         print("Encoding process completed.")
