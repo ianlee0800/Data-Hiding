@@ -196,13 +196,13 @@ def decode_pee_info(encoded_data):
 
 def create_pee_info_table(pee_stages, use_different_weights, total_pixels):
     table = PrettyTable()
-    table.field_names = ["Rotation", "Sub-image", "Payload", "BPP", "PSNR", "SSIM", "Hist Corr", "Weights"]
+    table.field_names = ["Embedding", "Sub-image", "Payload", "BPP", "PSNR", "SSIM", "Hist Corr", "Weights"]
     
     for stage in pee_stages:
         for i, block in enumerate(stage['block_params']):
-            sub_image_pixels = total_pixels // 4  # 假设每个子图像的像素数是总像素数的 1/4
+            sub_image_pixels = total_pixels // 4  # 假設每個子圖像的像素數是總像素數的 1/4
             table.add_row([
-                stage['rotation'] if i == 0 else "",
+                stage['embedding'] if i == 0 else "",
                 i,
                 block['payload'],
                 f"{block['payload'] / sub_image_pixels:.4f}",

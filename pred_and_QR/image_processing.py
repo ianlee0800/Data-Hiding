@@ -13,6 +13,12 @@ def read_image(filepath, grayscale=True):
 
 def save_image(image, filepath):
     """保存圖像"""
+    if not isinstance(image, np.ndarray):
+        raise TypeError("Image must be a NumPy array")
+    
+    if image.dtype != np.uint8:
+        image = image.astype(np.uint8)
+    
     cv2.imwrite(filepath, image)
 
 def image_rerotation(image, times):

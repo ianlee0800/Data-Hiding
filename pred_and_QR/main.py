@@ -16,8 +16,8 @@ from image_processing import (
 )
 from embedding import (
     histogram_data_hiding,
-    choose_pee_implementation,
-    pee_process_with_rotation_cuda
+    pee_process_with_rotation_cuda,
+    pee_process_with_split_cuda  # 新增這行
 )
 from utils import (
     encode_pee_info,
@@ -42,23 +42,21 @@ def main():
     # Parameter settings
     imgName = "airplane"  # Image name without extension
     filetype = "png"
-    total_rotations = 5  # Total number of rotations
-    ratio_of_ones = 1   # Ratio of ones in random data, easily adjustable
-    use_different_weights = False  # New parameter to control weight selection
-    target_payload = 550000  # Target payload for PEE embedding
+    total_embeddings = 3
+    ratio_of_ones = 0.5
+    use_different_weights = False
+    max_el = 7
+    split_first = True
 
     # Create necessary directories
     os.makedirs(f"./pred_and_QR/outcome/histogram/{imgName}", exist_ok=True)
     os.makedirs(f"./pred_and_QR/outcome/histogram/{imgName}/difference", exist_ok=True)
     os.makedirs(f"./pred_and_QR/outcome/image/{imgName}", exist_ok=True)
     
-    # 确保必要的目录存在
     ensure_dir(f"./pred_and_QR/outcome/{imgName}/pee_info.json")
-    ensure_dir(f"./pred_and_QR/outcome/histogram/{imgName}")
-    ensure_dir(f"./pred_and_QR/outcome/image/{imgName}")
     
     try:
-        # 清理 GPU 内存
+        # 清理 GPU 內存
         cp.get_default_memory_pool().free_all_blocks()
 
         # Read original image
@@ -72,36 +70,46 @@ def main():
         # X1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding
         print("\nX1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding")
         try:
-            final_img, total_payload, pee_stages, rotation_images, rotation_histograms, total_rotations = pee_process_with_rotation_cuda(
-                origImg, total_rotations, ratio_of_ones, use_different_weights, target_payload=target_payload
-            )
+            if split_first:
+                final_img, total_payload, pee_stages, sub_images, sub_rotations = pee_process_with_split_cuda(
+                    origImg, total_embeddings, ratio_of_ones, use_different_weights, max_el
+                )
+                images_to_save = sub_images
+            else:
+                final_img, total_payload, pee_stages, rotation_images, rotation_histograms, actual_embeddings = pee_process_with_rotation_cuda(
+                    origImg, total_embeddings, ratio_of_ones, use_different_weights, max_el
+                )
+                images_to_save = rotation_images
 
-            # 创建并打印PEE信息表
+            # 創建並打印PEE信息表
             total_pixels = origImg.size
             pee_table = create_pee_info_table(pee_stages, use_different_weights, total_pixels)
             print(pee_table)
 
-            # 保存每次旋转后的图像和直方图
-            for i, (img, hist) in enumerate(zip(rotation_images, rotation_histograms)):
-                # 保存图像
-                save_image(img, f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_rotation_{i}.png")
+            # 保存每次旋轉後的圖像和直方圖
+            for i, stage in enumerate(pee_stages):
+                # 保存圖像
+                stage_img = images_to_save[i]
+                if isinstance(stage_img, cp.ndarray):
+                    stage_img = cp.asnumpy(stage_img)
+                save_image(stage_img, f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}.png")
                 
-                # 保存直方图
-                histogram_filename = f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X1_rotation_{i}_histogram.png"
+                # 保存直方圖
+                histogram_filename = f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X1_stage_{i}_histogram.png"
                 plt.figure(figsize=(10, 6))
-                plt.bar(range(256), hist, alpha=0.7)
-                plt.title(f"Histogram after PEE Rotation {i}")
+                plt.bar(range(256), generate_histogram(stage_img), alpha=0.7)
+                plt.title(f"Histogram after PEE Stage {i}")
                 plt.xlabel("Pixel Value")
                 plt.ylabel("Frequency")
                 plt.savefig(histogram_filename)
                 plt.close()
 
-            # 准备PEE信息用于histogram shifting
+            # 準備PEE信息用於histogram shifting
             pee_info = {
-                'total_rotations': total_rotations,
+                'total_embeddings': total_embeddings,
                 'stages': [
                     {
-                        'rotation': stage['rotation'],
+                        'embedding': stage['embedding'],
                         'block_params': stage['block_params']
                     } for stage in pee_stages
                 ]
@@ -113,33 +121,29 @@ def main():
             with open(pee_info_path, 'w') as f:
                 json.dump(pee_info, f, indent=2)
 
-            # 读取 pee_info.json 文件内容
+            # 讀取 pee_info.json 文件內容
             with open(pee_info_path, 'rb') as f:
                 pee_info_content = f.read()
 
-            # 计算 PEE 信息的实际大小（以比特为单位）
+            # 計算 PEE 信息的實際大小（以比特為單位）
             pee_info_size = len(pee_info_content) * 8
 
             print(f"PEE info size: {pee_info_size} bits ({len(pee_info_content)} bytes)")
 
-            # 将 PEE 信息内容转换为比特流
+            # 將 PEE 信息內容轉換為比特流
             pee_info_bits = ''.join(format(byte, '08b') for byte in pee_info_content)
 
         except Exception as e:
-            print(f"Error occurred in CUDA PEE process: {e}")
-            print("Falling back to CPU implementation...")
-            pee_process, _, _ = choose_pee_implementation(use_cuda=False)
-            final_img, total_payload, pee_stages = pee_process(origImg, total_rotations, ratio_of_ones, use_different_weights)
-            
-            # 如果使用CPU实现，可能需要适当调整这里的代码
-            pee_info_bits = ''.join(format(byte, '08b') for byte in json.dumps(pee_stages).encode())
-            pee_info_size = len(pee_info_bits)
+            print(f"Error occurred in PEE process: {e}")
+            import traceback
+            traceback.print_exc()
+            return
 
         # X2: Histogram Shifting Embedding
         print("\nX2: Histogram Shifting Embedding")
         try:
             # 將圖像旋轉回原始方向
-            final_img_np = np.rot90(to_numpy(final_img), k=-total_rotations)
+            final_img_np = np.rot90(to_numpy(final_img), k=-total_embeddings)
             
             print(f"Before HS - Max pixel value: {np.max(final_img_np)}")
             print(f"Before HS - Min pixel value: {np.min(final_img_np)}")
@@ -193,24 +197,24 @@ def main():
                 hs_details_table.add_row([i+1, payload, f"{payload / total_pixels:.4f}"])
             print(hs_details_table)
 
-            # 输出最终结果
+            # 輸出最終結果
             print("\nEncoding Process Summary:")
             summary_table = PrettyTable()
             summary_table.field_names = ["Stage", "Payload", "BPP"]
             
             total_payload = 0
             
-            # 添加 X1 阶段（PEE）的数据
+            # 添加 X1 階段（PEE）的數據
             for i, stage in enumerate(pee_stages):
                 stage_payload = stage['payload']
                 total_payload += stage_payload
                 summary_table.add_row([
-                    f"X1 Rotation {i}",
+                    f"X1 Stage {i}",
                     stage_payload,
                     f"{stage_payload / total_pixels:.4f}"
                 ])
 
-            # 添加 X2 阶段（Histogram Shifting）的数据
+            # 添加 X2 階段（Histogram Shifting）的數據
             total_payload += pee_info_size
             summary_table.add_row([
                 "X2 (Histogram Shifting - PEE Info)",
@@ -218,7 +222,7 @@ def main():
                 f"{pee_info_size / total_pixels:.4f}"
             ])
 
-            for i, hs_payload in enumerate(hs_payloads[1:], start=1):  # 跳过第一轮，因为它包含在 PEE Info 中
+            for i, hs_payload in enumerate(hs_payloads[1:], start=1):  # 跳過第一輪，因為它包含在 PEE Info 中
                 total_payload += hs_payload
                 summary_table.add_row([
                     f"X2 (Histogram Shifting - Round {i})",
@@ -226,7 +230,7 @@ def main():
                     f"{hs_payload / total_pixels:.4f}"
                 ])
 
-            # 添加总计行
+            # 添加總計行
             summary_table.add_row([
                 "Total",
                 total_payload,
@@ -235,8 +239,9 @@ def main():
             
             print(summary_table)
 
-            # 保存最终结果
+            # 保存最終結果
             final_results = {
+                'method': 'Split' if split_first else 'Rotation',
                 'pee_total_payload': sum(stage['payload'] for stage in pee_stages),
                 'hs_payload': payload_hs,
                 'total_payload': total_payload,
@@ -252,7 +257,6 @@ def main():
             print(f"Error in histogram data hiding: {e}")
             import traceback
             traceback.print_exc()
-            print("Skipping histogram shifting embedding...")
 
         print("Encoding process completed.")
 
@@ -262,7 +266,7 @@ def main():
         traceback.print_exc()
     
     finally:
-        # 清理 GPU 内存
+        # 清理 GPU 內存
         cp.get_default_memory_pool().free_all_blocks()
 
 if __name__ == "__main__":

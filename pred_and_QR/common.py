@@ -48,19 +48,30 @@ def find_max(hist):
     return peak
 
 def histogram_correlation(hist1, hist2):
-    hist1 = to_numpy(hist1)
-    hist2 = to_numpy(hist2)
+    """
+    計算兩個直方圖之間的相關性
+    """
+    hist1 = hist1.astype(float)
+    hist2 = hist2.astype(float)
     
-    max_length = max(len(hist1), len(hist2))
-    hist1_padded = np.pad(hist1, (0, max_length - len(hist1)), 'constant')
-    hist2_padded = np.pad(hist2, (0, max_length - len(hist2)), 'constant')
+    # 正規化直方圖
+    hist1 = hist1 / np.sum(hist1)
+    hist2 = hist2 / np.sum(hist2)
     
-    correlation = np.corrcoef(hist1_padded, hist2_padded)[0, 1]
-    return round(correlation, 4)
+    mean1 = np.mean(hist1)
+    mean2 = np.mean(hist2)
+    
+    numerator = np.sum((hist1 - mean1) * (hist2 - mean2))
+    denominator = np.sqrt(np.sum((hist1 - mean1)**2) * np.sum((hist2 - mean2)**2))
+    
+    if denominator == 0:
+        return 1  # 如果兩個直方圖完全相同，返回 1
+    
+    correlation = numerator / denominator
+    
+    return correlation
 
 def calculate_psnr(img1, img2):
-    img1 = to_numpy(img1)
-    img2 = to_numpy(img2)
     mse = np.mean((img1 - img2) ** 2)
     if mse == 0:
         return float('inf')
@@ -114,44 +125,43 @@ def improved_predict_image_cpu(img, weight):
     
     return pred_img
 
-def choose_el_for_rotation(psnr, current_payload, total_pixels, rotation, total_rotations, target_payload=480000):
+def choose_el_for_rotation(psnr, current_payload, total_pixels, rotation, total_embeddings, max_el=7):
     """
-    基于当前的 PSNR、已嵌入载荷、目标 payload 和旋转次数动态选择 EL 值
+    基於當前的 PSNR、已嵌入載荷和旋轉次數動態選擇 EL 值，目標是最大化 payload
     
-    :param psnr: 当前的 PSNR 值
-    :param current_payload: 当前已嵌入的比特数
-    :param total_pixels: 图像总像素数
-    :param rotation: 当前旋转次数
-    :param total_rotations: 总旋转次数
-    :param target_payload: 目标总 payload
-    :return: 选择的 EL 值 (1, 3, 5, 或 7)
+    :param psnr: 當前的 PSNR 值
+    :param current_payload: 當前已嵌入的比特數
+    :param total_pixels: 圖像總像素數
+    :param rotation: 當前旋轉次數
+    :param total_embeddings: 總嵌入次數
+    :param max_el: 最大允許的 EL 值
+    :return: 選擇的 EL 值 (1, 3, 5, 或 7)
     """
-    remaining_payload = max(0, target_payload - current_payload)
-    progress_factor = (total_rotations - rotation) / total_rotations
-    payload_progress = current_payload / target_payload
+    progress_factor = (total_embeddings - rotation) / total_embeddings
+    current_bpp = current_payload / total_pixels
 
-    # 根据剩余 payload 和进度因子调整基础 EL 值
-    if remaining_payload > target_payload * 0.5 and progress_factor > 0.4:
-        base_el = 7
-    elif remaining_payload > target_payload * 0.3 and progress_factor > 0.2:
-        base_el = 5
-    elif remaining_payload > target_payload * 0.1 or progress_factor > 0.1:
-        base_el = 3
+    # 根據進度因子和當前 bpp 調整基礎 EL 值
+    if progress_factor > 0.75 and current_bpp < 0.5:
+        base_el = max_el
+    elif progress_factor > 0.5 and current_bpp < 0.75:
+        base_el = max(5, max_el - 2)
+    elif progress_factor > 0.25 and current_bpp < 1.0:
+        base_el = max(3, max_el - 4)
     else:
-        base_el = 1
+        base_el = max(1, max_el - 6)
 
-    # 根据 PSNR 和 payload 进度微调 EL 值
-    if psnr > 40 and payload_progress < 0.8:
+    # 根據 PSNR 微調 EL 值
+    if psnr > 40:
         el_adjustment = 2
-    elif psnr > 35 and payload_progress < 0.9:
+    elif psnr > 35:
         el_adjustment = 1
-    elif psnr < 30 or payload_progress > 0.95:
+    elif psnr < 30:
         el_adjustment = -1
     else:
         el_adjustment = 0
 
-    adjusted_el = base_el + el_adjustment
+    adjusted_el = min(max_el, base_el + el_adjustment)
 
-    # 确保 EL 值在有效范围内 (1, 3, 5, 7)
-    valid_els = [1, 3, 5, 7]
+    # 確保 EL 值在有效範圍內 (1, 3, 5, 7)
+    valid_els = [el for el in [1, 3, 5, 7] if el <= max_el]
     return min(valid_els, key=lambda x: abs(x - adjusted_el))

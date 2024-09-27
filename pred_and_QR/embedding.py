@@ -1,6 +1,7 @@
+from numba.core.errors import NumbaPerformanceWarning
+import warnings
 import numpy as np
 import cupy as cp
-import struct
 from image_processing import (
     generate_histogram,
     merge_image,
@@ -16,6 +17,14 @@ from common import *
 from pee import *
 import random
 from deap import base, creator, tools
+
+warnings.filterwarnings("ignore", category=RuntimeWarning, module="deap.creator")
+warnings.simplefilter('ignore', category=NumbaPerformanceWarning)
+
+if 'FitnessMax' not in creator.__dict__:
+    creator.create("FitnessMax", base.Fitness, weights=(1.0, 1.0))
+if 'Individual' not in creator.__dict__:
+    creator.create("Individual", list, fitness=creator.FitnessMax)
 
 def pee_process_with_rotation(img, total_rotations, ratio_of_ones):
     height, width = img.shape
@@ -90,7 +99,7 @@ def pee_process_with_rotation(img, total_rotations, ratio_of_ones):
 
     return current_img, total_payload, pee_stages
 
-def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones, use_different_weights, target_payload=480000):
+def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, max_el=7):
     original_img = cp.asarray(img)
     current_img = original_img.copy()
     height, width = img.shape
@@ -100,16 +109,15 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones, use_diff
     rotation_images = []
     rotation_histograms = []
 
-    # 计算原始图像的直方图
     original_hist = cp.histogram(original_img, bins=256, range=(0, 255))[0]
 
-    for rotation in range(total_rotations):
-        print(f"Starting rotation {rotation}")
+    for embedding in range(total_embeddings):
+        print(f"\nStarting embedding {embedding}")
         
         sub_images = split_image(current_img)
         
         stage_info = {
-            'rotation': rotation,
+            'embedding': embedding,
             'sub_images': [],
             'payload': 0,
             'psnr': 0,
@@ -127,9 +135,9 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones, use_diff
             
             current_psnr = calculate_psnr(cp.asnumpy(original_img), cp.asnumpy(current_img))
             
-            EL = choose_el_for_rotation(current_psnr, total_payload, total_pixels, rotation, total_rotations, target_payload)
+            EL = min(max_el, max(1, int(current_psnr / 5)))
             
-            if use_different_weights or i == 0:
+            if use_different_weights or (embedding == 0 and i == 0):
                 weights, fitness = find_best_weights_ga_cuda(sub_img, sub_data, EL)
             
             pred_sub_img = improved_predict_image_cuda(sub_img, weights)
@@ -145,6 +153,8 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones, use_diff
                 cp.asnumpy(cp.histogram(embedded_sub, bins=256, range=(0, 255))[0])
             )
             
+            print(f"  Sub-image {i} - PSNR: {sub_psnr:.2f}, SSIM: {sub_ssim:.4f}, Hist Corr: {sub_hist_corr:.4f}")
+            
             block_info = {
                 'weights': cp.asnumpy(weights).tolist(),
                 'EL': int(EL),
@@ -157,42 +167,126 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones, use_diff
             stage_info['block_params'].append(block_info)
 
         embedded_img = merge_image(embedded_sub_images)
-        
-        # 將嵌入後的圖像旋轉回原始方向
-        rotated_back_img = cp.rot90(embedded_img, k=-rotation)
-        
-        # 計算 PSNR、SSIM 和直方圖相關性
-        stage_info['psnr'] = float(calculate_psnr(cp.asnumpy(original_img), cp.asnumpy(rotated_back_img)))
-        stage_info['ssim'] = float(calculate_ssim(cp.asnumpy(original_img), cp.asnumpy(rotated_back_img)))
+    
+        stage_info['psnr'] = float(calculate_psnr(cp.asnumpy(original_img), cp.asnumpy(embedded_img)))
+        stage_info['ssim'] = float(calculate_ssim(cp.asnumpy(original_img), cp.asnumpy(embedded_img)))
         stage_info['hist_corr'] = float(histogram_correlation(
             cp.asnumpy(original_hist),
-            cp.asnumpy(cp.histogram(rotated_back_img, bins=256, range=(0, 255))[0])
+            cp.asnumpy(cp.histogram(embedded_img, bins=256, range=(0, 255))[0])
         ))
         stage_info['bpp'] = float(stage_info['payload'] / total_pixels)
         
         pee_stages.append(stage_info)
         total_payload += stage_info['payload']
 
-        if np.array_equal(cp.asnumpy(current_img), cp.asnumpy(embedded_img)):
-            print(f"Warning: No change in image after rotation {rotation}")
-        
-        current_img = cp.rot90(embedded_img)
-        rotation_images.append(cp.asnumpy(embedded_img))
-        rotation_histograms.append(cp.asnumpy(cp.histogram(rotated_back_img, bins=256, range=(0, 255))[0]))
+        print(f"Embedding {embedding} summary:")
+        print(f"  Payload: {stage_info['payload']}")
+        print(f"  PSNR: {stage_info['psnr']:.2f}")
+        print(f"  SSIM: {stage_info['ssim']:.4f}")
+        print(f"  Hist Corr: {stage_info['hist_corr']:.4f}")
 
-    print("\nPEE process summary:")
-    for i, stage in enumerate(pee_stages):
-        print(f"Rotation {i}:")
-        print(f"  Payload: {stage['payload']}")
-        print(f"  BPP: {stage['bpp']:.4f}")
-        print(f"  PSNR: {stage['psnr']:.2f}")
-        print(f"  SSIM: {stage['ssim']:.4f}")
-        print(f"  Histogram Correlation: {stage['hist_corr']:.4f}")  # 新增这一行
+        if embedding < total_embeddings - 1:
+            current_img = cp.rot90(embedded_img)
+        else:
+            current_img = embedded_img
+
+        rotation_images.append(cp.asnumpy(current_img))
+        rotation_histograms.append(cp.asnumpy(cp.histogram(current_img, bins=256, range=(0, 255))[0]))
 
     final_img = cp.asnumpy(current_img)
-    return final_img, int(total_payload), pee_stages, rotation_images, rotation_histograms, total_rotations
+    return final_img, int(total_payload), pee_stages, rotation_images, rotation_histograms, total_embeddings
 
+def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, max_el=7):
+    original_img = cp.asarray(img)
+    height, width = img.shape
+    total_pixels = height * width
+    pee_stages = []
+    total_payload = 0
 
+    sub_images = split_image(original_img)
+    sub_rotations = [0, 0, 0, 0]  # 初始化每個子圖像的旋轉次數
+    
+    for embedding in range(total_embeddings):
+        print(f"\nStarting embedding {embedding}")
+        
+        stage_info = {
+            'embedding': embedding,
+            'sub_images': [],
+            'payload': 0,
+            'psnr': 0,
+            'ssim': 0,
+            'hist_corr': 0,
+            'bpp': 0,
+            'block_params': []
+        }
+        
+        embedded_sub_images = []
+        for i, sub_img in enumerate(sub_images):
+            if sub_rotations[i] < 4:  # 只有在未達到最大旋轉次數時才進行旋轉
+                sub_img = cp.rot90(sub_img)
+                sub_rotations[i] += 1
+            
+            sub_data = generate_random_binary_array(sub_img.size, ratio_of_ones)
+            sub_data = cp.asarray(sub_data, dtype=cp.uint8)
+            
+            original_sub = original_img[i//2::2, i%2::2]
+            current_psnr = calculate_psnr(cp.asnumpy(original_sub), cp.asnumpy(sub_img))
+            
+            EL = min(max_el, max(1, int(current_psnr / 5)))
+            
+            if use_different_weights or (embedding == 0 and i == 0):
+                weights, fitness = find_best_weights_ga_cuda(sub_img, sub_data, EL)
+            
+            pred_sub_img = improved_predict_image_cuda(sub_img, weights)
+            embedded_sub, payload, _ = pee_embedding_adaptive_cuda(sub_img, sub_data, pred_sub_img, EL)
+            
+            embedded_sub_images.append(embedded_sub)
+            stage_info['payload'] += payload
+            
+            sub_psnr = calculate_psnr(cp.asnumpy(original_sub), cp.asnumpy(embedded_sub))
+            sub_ssim = calculate_ssim(cp.asnumpy(original_sub), cp.asnumpy(embedded_sub))
+            sub_hist_corr = histogram_correlation(
+                cp.asnumpy(cp.histogram(original_sub, bins=256, range=(0, 255))[0]),
+                cp.asnumpy(cp.histogram(embedded_sub, bins=256, range=(0, 255))[0])
+            )
+            
+            print(f"  Sub-image {i} - PSNR: {sub_psnr:.2f}, SSIM: {sub_ssim:.4f}, Hist Corr: {sub_hist_corr:.4f}")
+            
+            block_info = {
+                'weights': cp.asnumpy(weights).tolist(),
+                'EL': int(EL),
+                'payload': int(payload),
+                'psnr': float(sub_psnr),
+                'ssim': float(sub_ssim),
+                'hist_corr': float(sub_hist_corr)
+            }
+            stage_info['sub_images'].append(block_info)
+            stage_info['block_params'].append(block_info)
+
+        embedded_img = merge_image(embedded_sub_images)
+    
+        stage_info['psnr'] = float(calculate_psnr(cp.asnumpy(original_img), cp.asnumpy(embedded_img)))
+        stage_info['ssim'] = float(calculate_ssim(cp.asnumpy(original_img), cp.asnumpy(embedded_img)))
+        stage_info['hist_corr'] = float(histogram_correlation(
+            cp.asnumpy(cp.histogram(original_img, bins=256, range=(0, 255))[0]),
+            cp.asnumpy(cp.histogram(embedded_img, bins=256, range=(0, 255))[0])
+        ))
+        stage_info['bpp'] = float(stage_info['payload'] / total_pixels)
+        
+        pee_stages.append(stage_info)
+        total_payload += stage_info['payload']
+
+        print(f"Embedding {embedding} summary:")
+        print(f"  Payload: {stage_info['payload']}")
+        print(f"  PSNR: {stage_info['psnr']:.2f}")
+        print(f"  SSIM: {stage_info['ssim']:.4f}")
+        print(f"  Hist Corr: {stage_info['hist_corr']:.4f}")
+
+        sub_images = embedded_sub_images
+
+    final_img = cp.asnumpy(merge_image(sub_images))
+    
+    return final_img, int(total_payload), pee_stages, sub_images, sub_rotations
 
 def histogram_data_hiding(img, pee_info_bits, ratio_of_ones=1):
     print(f"HS Input - Max pixel value: {np.max(img)}")
@@ -280,31 +374,100 @@ def histogram_data_hiding(img, pee_info_bits, ratio_of_ones=1):
 
     return markedImg, total_payload, payloads, rounds
 
-def choose_pee_implementation(use_cuda=True):
-    if use_cuda and cp.cuda.is_available():
-        return pee_process_with_rotation_cuda, pee_embedding_adaptive_cuda, improved_predict_image_cuda
-    else:
-        return pee_process_with_rotation, pee_embedding_adaptive, improved_predict_image_cpu
-
 # 測試函數
 def test_pee_process():
     # 創建測試數據
-    img = np.random.randint(0, 256, (64, 64), dtype=np.uint8)
-    total_rotations = 2
+    img = np.random.randint(0, 256, (512, 512), dtype=np.uint8)
+    total_embeddings = 3
     ratio_of_ones = 0.5
+    use_different_weights = True
+    max_el = 7
 
-    final_img, total_payload, pee_stages = pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones)
+    print("Testing pee_process_with_rotation_cuda:")
+    final_img_rotation, total_payload_rotation, pee_stages_rotation, rotation_images, rotation_histograms, actual_embeddings = pee_process_with_rotation_cuda(
+        img, total_embeddings, ratio_of_ones, use_different_weights, max_el
+    )
 
-    print(f"Total payload: {total_payload}")
-    print(f"Number of PEE stages: {len(pee_stages)}")
-    for stage in pee_stages:
-        print(f"Rotation {stage['rotation']}:")
+    print(f"\nRotation method summary:")
+    print(f"Total payload: {total_payload_rotation}")
+    print(f"Number of PEE stages: {len(pee_stages_rotation)}")
+    for i, stage in enumerate(pee_stages_rotation):
+        print(f"\nStage {i}:")
         print(f"  Payload: {stage['payload']}")
         print(f"  PSNR: {stage['psnr']:.2f}")
         print(f"  SSIM: {stage['ssim']:.4f}")
-        print(f"  Sub-image payloads: {stage['sub_payloads']}")
-        print(f"  Sub-image PSNRs: {[f'{psnr:.2f}' for psnr in stage['sub_psnrs']]}")
-        print(f"  Sub-image SSIMs: {[f'{ssim:.4f}' for ssim in stage['sub_ssims']]}")
+        print(f"  Histogram Correlation: {stage['hist_corr']:.4f}")
+        print(f"  BPP: {stage['bpp']:.4f}")
+
+    print("\nTesting pee_process_with_split_cuda:")
+    final_img_split, total_payload_split, pee_stages_split, sub_images, sub_rotations = pee_process_with_split_cuda(
+        img, total_embeddings, ratio_of_ones, use_different_weights, max_el
+    )
+
+    print(f"\nSplit method summary:")
+    print(f"Total payload: {total_payload_split}")
+    print(f"Number of PEE stages: {len(pee_stages_split)}")
+    print(f"Number of sub-images: {len(sub_images)}")
+    print(f"Sub-rotation values: {sub_rotations}")
+    for i, stage in enumerate(pee_stages_split):
+        print(f"\nStage {i}:")
+        print(f"  Payload: {stage['payload']}")
+        print(f"  PSNR: {stage['psnr']:.2f}")
+        print(f"  SSIM: {stage['ssim']:.4f}")
+        print(f"  Histogram Correlation: {stage['hist_corr']:.4f}")
+        print(f"  BPP: {stage['bpp']:.4f}")
+
+    # 比較兩種方法的最終性能
+    original_hist = np.histogram(img, bins=256, range=(0, 255))[0]
+    
+    psnr_rotation = calculate_psnr(img, final_img_rotation)
+    ssim_rotation = calculate_ssim(img, final_img_rotation)
+    hist_corr_rotation = histogram_correlation(original_hist,
+                                               np.histogram(final_img_rotation, bins=256, range=(0, 255))[0])
+
+    psnr_split = calculate_psnr(img, final_img_split)
+    ssim_split = calculate_ssim(img, final_img_split)
+    hist_corr_split = histogram_correlation(original_hist,
+                                            np.histogram(final_img_split, bins=256, range=(0, 255))[0])
+
+    print("\nFinal Performance Comparison:")
+    print(f"Rotation method - PSNR: {psnr_rotation:.2f}, SSIM: {ssim_rotation:.4f}, Hist Corr: {hist_corr_rotation:.4f}")
+    print(f"Split method    - PSNR: {psnr_split:.2f}, SSIM: {ssim_split:.4f}, Hist Corr: {hist_corr_split:.4f}")
+
+    print("\nDiagnostic Information:")
+    print(f"Original image shape: {img.shape}")
+    print(f"Final rotation image shape: {final_img_rotation.shape}")
+    print(f"Final split image shape: {final_img_split.shape}")
+    print(f"Original image min/max: {np.min(img)}/{np.max(img)}")
+    print(f"Final rotation image min/max: {np.min(final_img_rotation)}/{np.max(final_img_rotation)}")
+    print(f"Final split image min/max: {np.min(final_img_split)}/{np.max(final_img_split)}")
+
+    # 添加直方圖比較
+    print("\nHistogram Comparison:")
+    print("Original Histogram:", original_hist[:10], "...")  # 只顯示前10個值
+    print("Final Rotation Histogram:", np.histogram(final_img_rotation, bins=256, range=(0, 255))[0][:10], "...")
+    print("Final Split Histogram:", np.histogram(final_img_split, bins=256, range=(0, 255))[0][:10], "...")
+
+    # 計算和顯示最終的 BPP (Bits Per Pixel)
+    bpp_rotation = total_payload_rotation / (img.shape[0] * img.shape[1])
+    bpp_split = total_payload_split / (img.shape[0] * img.shape[1])
+    print(f"\nFinal BPP (Bits Per Pixel):")
+    print(f"Rotation method: {bpp_rotation:.4f}")
+    print(f"Split method: {bpp_split:.4f}")
+
+    # 可視化結果（如果需要的話）
+    import matplotlib.pyplot as plt
+    plt.figure(figsize=(15, 5))
+    plt.subplot(131)
+    plt.imshow(img, cmap='gray')
+    plt.title("Original Image")
+    plt.subplot(132)
+    plt.imshow(final_img_rotation, cmap='gray')
+    plt.title("Rotation Method Result")
+    plt.subplot(133)
+    plt.imshow(final_img_split, cmap='gray')
+    plt.title("Split Method Result")
+    plt.show()
 
 if __name__ == "__main__":
     test_pee_process()
