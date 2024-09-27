@@ -159,66 +159,61 @@ def find_best_weights_ga_cuda(img, data, EL, population_size=50, generations=20)
     return cp.array([int(w) for w in best_ind], dtype=cp.int32), best_ind.fitness.values
 
 def encode_pee_info(pee_info):
-    encoded = struct.pack('I', pee_info['total_rotations'])
+    encoded = struct.pack('B', pee_info['total_rotations'])
     for stage in pee_info['stages']:
-        encoded += struct.pack('I', stage['rotation'])
-        encoded += struct.pack('I', len(stage['block_params']))
         for block in stage['block_params']:
-            encoded += struct.pack('4I', *[int(w) for w in block['weights']])
-            encoded += struct.pack('II', block['EL'], block['payload'])
+            # 编码权重（每个权重使用4位，4个权重共16位）
+            weights_packed = sum(w << (4 * i) for i, w in enumerate(block['weights']))
+            encoded += struct.pack('>HBH', 
+                weights_packed,
+                block['EL'],
+                block['payload']
+            )
     return encoded
 
 def decode_pee_info(encoded_data):
-    if len(encoded_data) < 2:
-        raise ValueError("Encoded data is too short")
-
-    offset = 0
-    total_rotations = struct.unpack('B', encoded_data[offset:offset+1])[0]
-    offset += 1
-
+    total_rotations = struct.unpack('B', encoded_data[:1])[0]
     stages = []
+    offset = 1
+
     for _ in range(total_rotations):
-        if offset + 2 > len(encoded_data):
-            raise ValueError("Encoded data is incomplete (rotation or block count)")
-        
-        rotation = struct.unpack('B', encoded_data[offset:offset+1])[0]
-        offset += 1
-        num_blocks = struct.unpack('B', encoded_data[offset:offset+1])[0]
-        offset += 1
-        
         block_params = []
-        for _ in range(num_blocks):
-            if offset + 21 > len(encoded_data):
-                raise ValueError("Encoded data is incomplete (block data)")
-            
-            data = struct.unpack('ffffBI', encoded_data[offset:offset+21])
+        for _ in range(4):  # 每次旋转有4个块
+            weights_packed, EL, payload = struct.unpack('>HBH', encoded_data[offset:offset+5])
+            weights = [(weights_packed >> (4 * i)) & 0xF for i in range(4)]
             block_params.append({
-                'weights': data[:4],
-                'EL': data[4],
-                'payload': data[5]
+                'weights': weights,
+                'EL': EL,
+                'payload': payload
             })
-            offset += 21
-        
-        stages.append({
-            'rotation': rotation,
-            'block_params': block_params
-        })
+            offset += 5
+        stages.append({'block_params': block_params})
 
     return {
         'total_rotations': total_rotations,
         'stages': stages
     }
 
-def create_pee_info_table(pee_stages):
+def create_pee_info_table(pee_stages, use_different_weights, total_pixels):
     table = PrettyTable()
-    table.field_names = ["Rotation", "Payload", "BPP", "PSNR", "SSIM", "Hist Corr"]
+    table.field_names = ["Rotation", "Sub-image", "Payload", "BPP", "PSNR", "SSIM", "Hist Corr", "Weights"]
+    
     for stage in pee_stages:
-        table.add_row([
-            stage['rotation'],
-            stage['payload'],
-            f"{stage['bpp']:.4f}",
-            f"{stage['psnr']:.2f}",
-            f"{stage['ssim']:.4f}",
-            f"{stage['hist_corr']:.4f}"
-        ])
+        for i, block in enumerate(stage['block_params']):
+            sub_image_pixels = total_pixels // 4  # 假设每个子图像的像素数是总像素数的 1/4
+            table.add_row([
+                stage['rotation'] if i == 0 else "",
+                i,
+                block['payload'],
+                f"{block['payload'] / sub_image_pixels:.4f}",
+                f"{block['psnr']:.2f}",
+                f"{block['ssim']:.4f}",
+                f"{block['hist_corr']:.4f}",
+                ", ".join([f"{w:.2f}" for w in block['weights']])
+            ])
+        table.add_row(["-" * 5] * 8)
+    
+    if not use_different_weights:
+        table.add_column("Note", ["Same weights" if i % 5 == 0 else "" for i in range(len(table._rows))])
+    
     return table

@@ -90,7 +90,7 @@ def pee_process_with_rotation(img, total_rotations, ratio_of_ones):
 
     return current_img, total_payload, pee_stages
 
-def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones, target_payload=480000):
+def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones, use_different_weights, target_payload=480000):
     original_img = cp.asarray(img)
     current_img = original_img.copy()
     height, width = img.shape
@@ -122,17 +122,16 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones, target_p
         embedded_sub_images = []
         for i, sub_img in enumerate(sub_images):
             sub_img = cp.asarray(sub_img)
-            # 使用 generate_random_binary_array 函数生成随机数据
             sub_data = generate_random_binary_array(sub_img.size, ratio_of_ones)
             sub_data = cp.asarray(sub_data, dtype=cp.uint8)
             
-            # 计算当前的 PSNR
             current_psnr = calculate_psnr(cp.asnumpy(original_img), cp.asnumpy(current_img))
             
-            # 使用 choose_el_for_rotation 函数
             EL = choose_el_for_rotation(current_psnr, total_payload, total_pixels, rotation, total_rotations, target_payload)
             
-            weights, fitness = find_best_weights_ga_cuda(sub_img, sub_data, EL)
+            if use_different_weights or i == 0:
+                weights, fitness = find_best_weights_ga_cuda(sub_img, sub_data, EL)
+            
             pred_sub_img = improved_predict_image_cuda(sub_img, weights)
             embedded_sub, payload, _ = pee_embedding_adaptive_cuda(sub_img, sub_data, pred_sub_img, EL)
             
@@ -184,15 +183,18 @@ def pee_process_with_rotation_cuda(img, total_rotations, ratio_of_ones, target_p
     print("\nPEE process summary:")
     for i, stage in enumerate(pee_stages):
         print(f"Rotation {i}:")
-        print(f"  Total payload: {stage['payload']}")
+        print(f"  Payload: {stage['payload']}")
+        print(f"  BPP: {stage['bpp']:.4f}")
         print(f"  PSNR: {stage['psnr']:.2f}")
         print(f"  SSIM: {stage['ssim']:.4f}")
-        print(f"  BPP: {stage['bpp']:.4f}")
+        print(f"  Histogram Correlation: {stage['hist_corr']:.4f}")  # 新增这一行
 
     final_img = cp.asnumpy(current_img)
     return final_img, int(total_payload), pee_stages, rotation_images, rotation_histograms, total_rotations
 
-def histogram_data_hiding(img, encoded_pee_info, ratio_of_ones=1):
+
+
+def histogram_data_hiding(img, pee_info_bits, ratio_of_ones=1):
     print(f"HS Input - Max pixel value: {np.max(img)}")
     print(f"HS Input - Min pixel value: {np.min(img)}")
     h_img, w_img = img.shape
@@ -201,15 +203,13 @@ def histogram_data_hiding(img, encoded_pee_info, ratio_of_ones=1):
     rounds = 0
     payloads = []
 
-    pee_info_binary = ''.join(format(byte, '08b') for byte in encoded_pee_info)
-    pee_info_length = len(pee_info_binary)
+    pee_info_length = len(pee_info_bits)
 
     # 创建一个掩码来跟踪已经用于嵌入的像素
     embedded_mask = np.zeros_like(markedImg, dtype=bool)
 
     while np.max(markedImg) < 255:
         rounds += 1
-        # 只考虑尚未用于嵌入的像素
         hist = np.bincount(markedImg[~embedded_mask].ravel(), minlength=256)
         
         print(f"\nRound {rounds}:")
@@ -229,8 +229,8 @@ def histogram_data_hiding(img, encoded_pee_info, ratio_of_ones=1):
             break
         
         if pee_info_length > 0:
-            embedding_data = pee_info_binary[:max_payload]
-            pee_info_binary = pee_info_binary[max_payload:]
+            embedding_data = pee_info_bits[:max_payload]
+            pee_info_bits = pee_info_bits[max_payload:]
             pee_info_length -= len(embedding_data)
             if len(embedding_data) < max_payload:
                 random_bits = generate_random_binary_array(max_payload - len(embedding_data), ratio_of_ones)
