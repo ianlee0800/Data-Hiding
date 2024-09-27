@@ -204,7 +204,7 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
     total_payload = 0
 
     sub_images = split_image(original_img)
-    sub_rotations = [0, 0, 0, 0]  # 初始化每個子圖像的旋轉次數
+    sub_rotations = [0, 0, 0, 0]  # 初始化每个子图像的旋转次数
     
     for embedding in range(total_embeddings):
         print(f"\nStarting embedding {embedding}")
@@ -222,7 +222,7 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         
         embedded_sub_images = []
         for i, sub_img in enumerate(sub_images):
-            if sub_rotations[i] < 4:  # 只有在未達到最大旋轉次數時才進行旋轉
+            if sub_rotations[i] < 4:  # 只有在未达到最大旋转次数时才进行旋转
                 sub_img = cp.rot90(sub_img)
                 sub_rotations[i] += 1
             
@@ -258,7 +258,8 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
                 'payload': int(payload),
                 'psnr': float(sub_psnr),
                 'ssim': float(sub_ssim),
-                'hist_corr': float(sub_hist_corr)
+                'hist_corr': float(sub_hist_corr),
+                'rotation': sub_rotations[i] * 90  # 记录旋转角度
             }
             stage_info['sub_images'].append(block_info)
             stage_info['block_params'].append(block_info)

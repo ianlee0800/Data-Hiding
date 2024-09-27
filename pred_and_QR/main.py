@@ -42,7 +42,7 @@ def main():
     # Parameter settings
     imgName = "airplane"  # Image name without extension
     filetype = "png"
-    total_embeddings = 3
+    total_embeddings = 5
     ratio_of_ones = 0.5
     use_different_weights = False
     max_el = 7
@@ -81,20 +81,18 @@ def main():
                 )
                 images_to_save = rotation_images
 
-            # 創建並打印PEE信息表
+            # 创建并打印PEE信息表
             total_pixels = origImg.size
             pee_table = create_pee_info_table(pee_stages, use_different_weights, total_pixels)
             print(pee_table)
 
-            # 保存每次旋轉後的圖像和直方圖
-            for i, stage in enumerate(pee_stages):
-                # 保存圖像
+            # 保存每个阶段的图像和直方图
+            for i in range(min(len(pee_stages), len(images_to_save))):
                 stage_img = images_to_save[i]
                 if isinstance(stage_img, cp.ndarray):
                     stage_img = cp.asnumpy(stage_img)
                 save_image(stage_img, f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}.png")
                 
-                # 保存直方圖
                 histogram_filename = f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X1_stage_{i}_histogram.png"
                 plt.figure(figsize=(10, 6))
                 plt.bar(range(256), generate_histogram(stage_img), alpha=0.7)

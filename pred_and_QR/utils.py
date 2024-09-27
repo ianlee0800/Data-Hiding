@@ -194,13 +194,14 @@ def decode_pee_info(encoded_data):
         'stages': stages
     }
 
+# 更新打印函数以包含新的信息
 def create_pee_info_table(pee_stages, use_different_weights, total_pixels):
     table = PrettyTable()
-    table.field_names = ["Embedding", "Sub-image", "Payload", "BPP", "PSNR", "SSIM", "Hist Corr", "Weights"]
+    table.field_names = ["Embedding", "Sub-image", "Payload", "BPP", "PSNR", "SSIM", "Hist Corr", "Weights", "EL", "Rotation", "Note"]
     
     for stage in pee_stages:
         for i, block in enumerate(stage['block_params']):
-            sub_image_pixels = total_pixels // 4  # 假設每個子圖像的像素數是總像素數的 1/4
+            sub_image_pixels = total_pixels // 4
             table.add_row([
                 stage['embedding'] if i == 0 else "",
                 i,
@@ -209,11 +210,12 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels):
                 f"{block['psnr']:.2f}",
                 f"{block['ssim']:.4f}",
                 f"{block['hist_corr']:.4f}",
-                ", ".join([f"{w:.2f}" for w in block['weights']])
+                ", ".join([f"{w:.2f}" for w in block['weights']]),
+                block['EL'],
+                f"{block['rotation']}°",
+                "Same weights" if not use_different_weights and i == 0 else ""
             ])
-        table.add_row(["-" * 5] * 8)
-    
-    if not use_different_weights:
-        table.add_column("Note", ["Same weights" if i % 5 == 0 else "" for i in range(len(table._rows))])
+        table.add_row(["-" * 5] * 11)
     
     return table
+
