@@ -12,7 +12,8 @@ from image_processing import (
     save_image,
     save_histogram,
     generate_histogram,
-    save_difference_histogram
+    save_difference_histogram,
+    merge_image
 )
 from embedding import (
     histogram_data_hiding,
@@ -70,37 +71,36 @@ def main():
         # X1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding
         print("\nX1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding")
         try:
-            if split_first:
-                final_img, total_payload, pee_stages, sub_images, sub_rotations = pee_process_with_split_cuda(
-                    origImg, total_embeddings, ratio_of_ones, use_different_weights, max_el
-                )
-                images_to_save = sub_images
-            else:
-                final_img, total_payload, pee_stages, rotation_images, rotation_histograms, actual_embeddings = pee_process_with_rotation_cuda(
-                    origImg, total_embeddings, ratio_of_ones, use_different_weights, max_el
-                )
-                images_to_save = rotation_images
+            final_img, total_payload, pee_stages, sub_images, sub_rotations = pee_process_with_split_cuda(
+                origImg, total_embeddings, ratio_of_ones, use_different_weights, max_el
+            )
 
-            # 创建并打印PEE信息表
+            # 創建並打印PEE信息表
             total_pixels = origImg.size
             pee_table = create_pee_info_table(pee_stages, use_different_weights, total_pixels)
             print(pee_table)
 
-            # 保存每个阶段的图像和直方图
-            for i in range(min(len(pee_stages), len(images_to_save))):
-                stage_img = images_to_save[i]
-                if isinstance(stage_img, cp.ndarray):
-                    stage_img = cp.asnumpy(stage_img)
-                save_image(stage_img, f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}.png")
+            # 保存每個階段的圖像和直方圖
+            for i, stage in enumerate(pee_stages):
+                # 保存整個階段的組合圖像
+                stage_img = merge_image([sub_img_info['embedded_img'] for sub_img_info in stage['sub_images']])
+                save_image(cp.asnumpy(stage_img), f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined.png")
                 
-                histogram_filename = f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X1_stage_{i}_histogram.png"
-                plt.figure(figsize=(10, 6))
-                plt.bar(range(256), generate_histogram(stage_img), alpha=0.7)
-                plt.title(f"Histogram after PEE Stage {i}")
-                plt.xlabel("Pixel Value")
-                plt.ylabel("Frequency")
-                plt.savefig(histogram_filename)
-                plt.close()
+                # 保存每個子圖像
+                for j, sub_img_info in enumerate(stage['sub_images']):
+                    sub_img = sub_img_info['embedded_img']
+                    if isinstance(sub_img, cp.ndarray):
+                        sub_img = cp.asnumpy(sub_img)
+                    save_image(sub_img, f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_subimg_{j}.png")
+                    
+                    histogram_filename = f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X1_stage_{i}_subimg_{j}_histogram.png"
+                    plt.figure(figsize=(10, 6))
+                    plt.bar(range(256), generate_histogram(sub_img), alpha=0.7)
+                    plt.title(f"Histogram after PEE Stage {i}, Sub-image {j}")
+                    plt.xlabel("Pixel Value")
+                    plt.ylabel("Frequency")
+                    plt.savefig(histogram_filename)
+                    plt.close()
 
             # 準備PEE信息用於histogram shifting
             pee_info = {
@@ -108,7 +108,15 @@ def main():
                 'stages': [
                     {
                         'embedding': stage['embedding'],
-                        'block_params': stage['block_params']
+                        'block_params': [
+                            {
+                                'weights': block['weights'],
+                                'EL': block['EL'],
+                                'payload': block['payload'],
+                                'rotation': block['rotation'],
+                                'rotation_direction': block['rotation_direction']
+                            } for block in stage['block_params']
+                        ]
                     } for stage in pee_stages
                 ]
             }

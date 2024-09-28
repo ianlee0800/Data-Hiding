@@ -204,7 +204,7 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
     total_payload = 0
 
     sub_images = split_image(original_img)
-    sub_rotations = [0, 0, 0, 0]  # 初始化每个子图像的旋转次数
+    sub_rotations = [0, 0, 0, 0]  # 初始化每個子圖像的旋轉次數
     
     for embedding in range(total_embeddings):
         print(f"\nStarting embedding {embedding}")
@@ -222,20 +222,23 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         
         embedded_sub_images = []
         for i, sub_img in enumerate(sub_images):
-            if sub_rotations[i] < 4:  # 只有在未达到最大旋转次数时才进行旋转
-                sub_img = cp.rot90(sub_img)
-                sub_rotations[i] += 1
+            # 隨機決定旋轉方向和角度
+            rotation = random.randint(-4, 4)
+            rotation_direction = "clockwise" if rotation >= 0 else "counterclockwise"
+            if rotation != 0:
+                sub_img = cp.rot90(sub_img, k=abs(rotation), axes=(1, 0) if rotation < 0 else (0, 1))
+                sub_rotations[i] = (sub_rotations[i] + rotation) % 4 if rotation > 0 else (sub_rotations[i] - rotation) % 4
             
             sub_data = generate_random_binary_array(sub_img.size, ratio_of_ones)
             sub_data = cp.asarray(sub_data, dtype=cp.uint8)
             
-            original_sub = original_img[i//2::2, i%2::2]
+            original_sub = original_img[i//2*height//2:(i//2+1)*height//2, (i%2)*width//2:(i%2+1)*width//2]
             current_psnr = calculate_psnr(cp.asnumpy(original_sub), cp.asnumpy(sub_img))
             
             EL = min(max_el, max(1, int(current_psnr / 5)))
             
-            if use_different_weights or (embedding == 0 and i == 0):
-                weights, fitness = find_best_weights_ga_cuda(sub_img, sub_data, EL)
+            # 對每個子圖像使用不同的權重
+            weights, fitness = find_best_weights_ga_cuda(sub_img, sub_data, EL)
             
             pred_sub_img = improved_predict_image_cuda(sub_img, weights)
             embedded_sub, payload, _ = pee_embedding_adaptive_cuda(sub_img, sub_data, pred_sub_img, EL)
@@ -259,11 +262,14 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
                 'psnr': float(sub_psnr),
                 'ssim': float(sub_ssim),
                 'hist_corr': float(sub_hist_corr),
-                'rotation': sub_rotations[i] * 90  # 记录旋转角度
+                'rotation': sub_rotations[i] * 90,  # 記錄旋轉角度
+                'rotation_direction': rotation_direction,  # 記錄旋轉方向
+                'embedded_img': embedded_sub  # 保存嵌入後的子圖像
             }
             stage_info['sub_images'].append(block_info)
             stage_info['block_params'].append(block_info)
 
+        # 使用旋轉後的子圖像合併
         embedded_img = merge_image(embedded_sub_images)
     
         stage_info['psnr'] = float(calculate_psnr(cp.asnumpy(original_img), cp.asnumpy(embedded_img)))
@@ -283,7 +289,7 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         print(f"  SSIM: {stage_info['ssim']:.4f}")
         print(f"  Hist Corr: {stage_info['hist_corr']:.4f}")
 
-        sub_images = embedded_sub_images
+        sub_images = [block_info['embedded_img'] for block_info in stage_info['sub_images']]
 
     final_img = cp.asnumpy(merge_image(sub_images))
     

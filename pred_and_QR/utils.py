@@ -197,7 +197,7 @@ def decode_pee_info(encoded_data):
 # 更新打印函数以包含新的信息
 def create_pee_info_table(pee_stages, use_different_weights, total_pixels):
     table = PrettyTable()
-    table.field_names = ["Embedding", "Sub-image", "Payload", "BPP", "PSNR", "SSIM", "Hist Corr", "Weights", "EL", "Rotation", "Note"]
+    table.field_names = ["Embedding", "Sub-image", "Payload", "BPP", "PSNR", "SSIM", "Hist Corr", "Weights", "EL", "Rotation", "Direction", "Note"]
     
     for stage in pee_stages:
         for i, block in enumerate(stage['block_params']):
@@ -213,9 +213,10 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels):
                 ", ".join([f"{w:.2f}" for w in block['weights']]),
                 block['EL'],
                 f"{block['rotation']}°",
-                "Same weights" if not use_different_weights and i == 0 else ""
+                block['rotation_direction'],
+                "Different weights" if use_different_weights else ""
             ])
-        table.add_row(["-" * 5] * 11)
+        table.add_row(["-" * 5] * 12)
     
     return table
 
