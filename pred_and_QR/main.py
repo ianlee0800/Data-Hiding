@@ -71,7 +71,7 @@ def main():
         # X1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding
         print("\nX1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding")
         try:
-            final_img, total_payload, pee_stages, sub_images, sub_rotations = pee_process_with_split_cuda(
+            final_pee_img, total_payload, pee_stages, cumulative_rotations = pee_process_with_split_cuda(
                 origImg, total_embeddings, ratio_of_ones, use_different_weights, max_el
             )
 
@@ -82,25 +82,28 @@ def main():
 
             # 保存每個階段的圖像和直方圖
             for i, stage in enumerate(pee_stages):
-                # 保存整個階段的組合圖像
-                stage_img = merge_image([sub_img_info['embedded_img'] for sub_img_info in stage['sub_images']])
-                save_image(cp.asnumpy(stage_img), f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined.png")
+                print(f"\nStage {i} rotations:")
+                for j, block in enumerate(stage['block_params']):
+                    print(f"  Sub-image {j}: {block['rotation']}°")
+
+                # 保存"展示用的大圖"（旋轉後的版本）
+                save_image(cp.asnumpy(stage['stage_img_rotated']), f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined_rotated.png")
                 
-                # 保存每個子圖像
-                for j, sub_img_info in enumerate(stage['sub_images']):
-                    sub_img = sub_img_info['embedded_img']
-                    if isinstance(sub_img, cp.ndarray):
-                        sub_img = cp.asnumpy(sub_img)
-                    save_image(sub_img, f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_subimg_{j}.png")
-                    
-                    histogram_filename = f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X1_stage_{i}_subimg_{j}_histogram.png"
-                    plt.figure(figsize=(10, 6))
-                    plt.bar(range(256), generate_histogram(sub_img), alpha=0.7)
-                    plt.title(f"Histogram after PEE Stage {i}, Sub-image {j}")
-                    plt.xlabel("Pixel Value")
-                    plt.ylabel("Frequency")
-                    plt.savefig(histogram_filename)
-                    plt.close()
+                # 保存"計算用的大圖"（應該是所有子圖像都旋轉回0度的版本）
+                save_image(cp.asnumpy(stage['stage_img_0deg']), f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined_0deg.png")
+                
+                # 保存直方圖
+                histogram_filename = f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X1_stage_{i}_histogram.png"
+                plt.figure(figsize=(10, 6))
+                plt.bar(range(256), generate_histogram(cp.asnumpy(stage['stage_img_0deg'])), alpha=0.7)
+                plt.title(f"Histogram after PEE Stage {i}")
+                plt.xlabel("Pixel Value")
+                plt.ylabel("Frequency")
+                plt.savefig(histogram_filename)
+                plt.close()
+
+            # 保存X1階段最後的圖像（所有子圖像都旋轉回0度）
+            save_image(final_pee_img, f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_final.png")
 
             # 準備PEE信息用於histogram shifting
             pee_info = {
@@ -108,15 +111,7 @@ def main():
                 'stages': [
                     {
                         'embedding': stage['embedding'],
-                        'block_params': [
-                            {
-                                'weights': block['weights'],
-                                'EL': block['EL'],
-                                'payload': block['payload'],
-                                'rotation': block['rotation'],
-                                'rotation_direction': block['rotation_direction']
-                            } for block in stage['block_params']
-                        ]
+                        'block_params': stage['block_params']
                     } for stage in pee_stages
                 ]
             }
@@ -148,19 +143,13 @@ def main():
         # X2: Histogram Shifting Embedding
         print("\nX2: Histogram Shifting Embedding")
         try:
-            # 將圖像旋轉回原始方向
-            final_img_np = np.rot90(to_numpy(final_img), k=-total_embeddings)
-            
-            print(f"Before HS - Max pixel value: {np.max(final_img_np)}")
-            print(f"Before HS - Min pixel value: {np.min(final_img_np)}")
-            
-            img_hs, payload_hs, hs_payloads, hs_rounds = histogram_data_hiding(final_img_np, pee_info_bits, ratio_of_ones)
+            # 使用X1階段最後的圖像進行histogram shifting
+            img_hs, payload_hs, hs_payloads, hs_rounds = histogram_data_hiding(final_pee_img, pee_info_bits, ratio_of_ones)
             
             if payload_hs == 0:
                 print("Warning: No data embedded during Histogram Shifting.")
             
             # 計算 bpp
-            total_pixels = origImg.size
             bpp_hs = payload_hs / total_pixels
             
             # 保存直方圖移位後的圖像
@@ -175,9 +164,9 @@ def main():
             save_difference_histogram(diff, f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_difference_histogram.png", "Difference Histogram (Original - Final)")
             
             # 計算和保存結果
-            psnr_hs = calculate_psnr(to_numpy(origImg), img_hs)
-            ssim_hs = calculate_ssim(to_numpy(origImg), img_hs)
-            hist_orig = generate_histogram(to_numpy(origImg))
+            psnr_hs = calculate_psnr(origImg, img_hs)
+            ssim_hs = calculate_ssim(origImg, img_hs)
+            hist_orig = generate_histogram(origImg)
             corr_hs = histogram_correlation(hist_orig, hist_hs)
             
             final_bpp = (total_payload + payload_hs) / total_pixels

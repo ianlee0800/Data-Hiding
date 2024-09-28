@@ -203,8 +203,9 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
     pee_stages = []
     total_payload = 0
 
-    sub_images = split_image(original_img)
-    sub_rotations = [0, 0, 0, 0]  # 初始化每個子圖像的旋轉次數
+    original_sub_images = split_image(original_img)
+    sub_images = [img.copy() for img in original_sub_images]
+    cumulative_rotations = [0, 0, 0, 0]  # 追踪每個子圖像的累積旋轉
     
     for embedding in range(total_embeddings):
         print(f"\nStarting embedding {embedding}")
@@ -221,21 +222,22 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         }
         
         embedded_sub_images = []
+        stage_rotations = [0, 0, 0, 0]  # 這個 stage 的旋轉角度
         for i, sub_img in enumerate(sub_images):
-            # 隨機決定旋轉方向和角度
-            rotation = random.randint(-4, 4)
-            rotation_direction = "clockwise" if rotation >= 0 else "counterclockwise"
+            # 隨機決定旋轉方向和角度 (-4 到 4，對應 -360 到 360 度)
+            rotation = random.randint(-4, 4) * 90
+            stage_rotations[i] = rotation
+            cumulative_rotations[i] = (cumulative_rotations[i] + rotation) % 360
+            if cumulative_rotations[i] > 180:
+                cumulative_rotations[i] -= 360  # 確保角度在 -180 到 180 度之間
+            
             if rotation != 0:
-                sub_img = cp.rot90(sub_img, k=abs(rotation), axes=(1, 0) if rotation < 0 else (0, 1))
-                sub_rotations[i] = (sub_rotations[i] + rotation) % 4 if rotation > 0 else (sub_rotations[i] - rotation) % 4
+                sub_img = cp.rot90(sub_img, k=rotation // 90)
             
             sub_data = generate_random_binary_array(sub_img.size, ratio_of_ones)
             sub_data = cp.asarray(sub_data, dtype=cp.uint8)
             
-            original_sub = original_img[i//2*height//2:(i//2+1)*height//2, (i%2)*width//2:(i%2+1)*width//2]
-            current_psnr = calculate_psnr(cp.asnumpy(original_sub), cp.asnumpy(sub_img))
-            
-            EL = min(max_el, max(1, int(current_psnr / 5)))
+            EL = min(max_el, max(1, int(calculate_psnr(cp.asnumpy(original_sub_images[i]), cp.asnumpy(sub_img)) / 5)))
             
             # 對每個子圖像使用不同的權重
             weights, fitness = find_best_weights_ga_cuda(sub_img, sub_data, EL)
@@ -246,14 +248,16 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
             embedded_sub_images.append(embedded_sub)
             stage_info['payload'] += payload
             
-            sub_psnr = calculate_psnr(cp.asnumpy(original_sub), cp.asnumpy(embedded_sub))
-            sub_ssim = calculate_ssim(cp.asnumpy(original_sub), cp.asnumpy(embedded_sub))
+            # 計算直方圖相關性
             sub_hist_corr = histogram_correlation(
-                cp.asnumpy(cp.histogram(original_sub, bins=256, range=(0, 255))[0]),
+                cp.asnumpy(cp.histogram(original_sub_images[i], bins=256, range=(0, 255))[0]),
                 cp.asnumpy(cp.histogram(embedded_sub, bins=256, range=(0, 255))[0])
             )
             
-            print(f"  Sub-image {i} - PSNR: {sub_psnr:.2f}, SSIM: {sub_ssim:.4f}, Hist Corr: {sub_hist_corr:.4f}")
+            # 將嵌入後的子圖像旋轉回原始方向以計算PSNR和SSIM
+            rotated_back_sub = cp.rot90(embedded_sub, k=-cumulative_rotations[i] // 90)
+            sub_psnr = calculate_psnr(cp.asnumpy(original_sub_images[i]), cp.asnumpy(rotated_back_sub))
+            sub_ssim = calculate_ssim(cp.asnumpy(original_sub_images[i]), cp.asnumpy(rotated_back_sub))
             
             block_info = {
                 'weights': cp.asnumpy(weights).tolist(),
@@ -261,22 +265,34 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
                 'payload': int(payload),
                 'psnr': float(sub_psnr),
                 'ssim': float(sub_ssim),
-                'hist_corr': float(sub_hist_corr),
-                'rotation': sub_rotations[i] * 90,  # 記錄旋轉角度
-                'rotation_direction': rotation_direction,  # 記錄旋轉方向
-                'embedded_img': embedded_sub  # 保存嵌入後的子圖像
+                'rotation': cumulative_rotations[i],  # 記錄累積的旋轉角度
+                'stage_rotation': stage_rotations[i],  # 記錄這個 stage 的旋轉角度
+                'hist_corr': float(sub_hist_corr)
             }
             stage_info['sub_images'].append(block_info)
             stage_info['block_params'].append(block_info)
 
-        # 使用旋轉後的子圖像合併
-        embedded_img = merge_image(embedded_sub_images)
-    
-        stage_info['psnr'] = float(calculate_psnr(cp.asnumpy(original_img), cp.asnumpy(embedded_img)))
-        stage_info['ssim'] = float(calculate_ssim(cp.asnumpy(original_img), cp.asnumpy(embedded_img)))
+        # 步驟 2: 合成"展示用的大圖"
+        stage_img_rotated = merge_image(embedded_sub_images)
+        stage_info['stage_img_rotated'] = stage_img_rotated
+
+        # 步驟 3: 計算 PSNR 和 SSIM
+        rotated_back_sub_images = []
+        for i, embedded_sub in enumerate(embedded_sub_images):
+            # 將嵌入後的子圖像旋轉回原始方向
+            rotated_back_sub = cp.rot90(embedded_sub, k=-cumulative_rotations[i] // 90)
+            rotated_back_sub_images.append(rotated_back_sub)
+
+        # 合成"計算用的大圖"
+        stage_img_0deg = merge_image(rotated_back_sub_images)
+        stage_info['stage_img_0deg'] = stage_img_0deg
+
+        # 計算整體 PSNR 和 SSIM
+        stage_info['psnr'] = float(calculate_psnr(cp.asnumpy(original_img), cp.asnumpy(stage_img_0deg)))
+        stage_info['ssim'] = float(calculate_ssim(cp.asnumpy(original_img), cp.asnumpy(stage_img_0deg)))
         stage_info['hist_corr'] = float(histogram_correlation(
             cp.asnumpy(cp.histogram(original_img, bins=256, range=(0, 255))[0]),
-            cp.asnumpy(cp.histogram(embedded_img, bins=256, range=(0, 255))[0])
+            cp.asnumpy(cp.histogram(stage_img_0deg, bins=256, range=(0, 255))[0])
         ))
         stage_info['bpp'] = float(stage_info['payload'] / total_pixels)
         
@@ -289,11 +305,14 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         print(f"  SSIM: {stage_info['ssim']:.4f}")
         print(f"  Hist Corr: {stage_info['hist_corr']:.4f}")
 
-        sub_images = [block_info['embedded_img'] for block_info in stage_info['sub_images']]
+        # 步驟 4: 將"計算用的大圖"傳入下一個 stage
+        sub_images = split_image(stage_img_0deg)
+        cumulative_rotations = [0, 0, 0, 0]  # 重置累積旋轉
 
-    final_img = cp.asnumpy(merge_image(sub_images))
+    # X1階段最後的圖像（所有子圖像都旋轉回0度）
+    final_pee_img = cp.asnumpy(pee_stages[-1]['stage_img_0deg'])
     
-    return final_img, int(total_payload), pee_stages, sub_images, sub_rotations
+    return final_pee_img, int(total_payload), pee_stages, cumulative_rotations
 
 def histogram_data_hiding(img, pee_info_bits, ratio_of_ones=1):
     print(f"HS Input - Max pixel value: {np.max(img)}")
