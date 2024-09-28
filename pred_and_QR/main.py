@@ -12,8 +12,7 @@ from image_processing import (
     save_image,
     save_histogram,
     generate_histogram,
-    save_difference_histogram,
-    merge_image
+    save_difference_histogram
 )
 from embedding import (
     histogram_data_hiding,
@@ -21,7 +20,6 @@ from embedding import (
     pee_process_with_split_cuda  # 新增這行
 )
 from utils import (
-    encode_pee_info,
     create_pee_info_table
 )
 from common import *
@@ -45,9 +43,9 @@ def main():
     filetype = "png"
     total_embeddings = 5
     ratio_of_ones = 0.5
-    use_different_weights = False
+    use_different_weights = True
     max_el = 7
-    split_first = True
+    split_first = False  # 使用 split_first 来选择 PEE 方法
 
     # Create necessary directories
     os.makedirs(f"./pred_and_QR/outcome/histogram/{imgName}", exist_ok=True)
@@ -57,11 +55,14 @@ def main():
     ensure_dir(f"./pred_and_QR/outcome/{imgName}/pee_info.json")
     
     try:
-        # 清理 GPU 內存
+        # 清理 GPU 内存
         cp.get_default_memory_pool().free_all_blocks()
 
         # Read original image
-        origImg = np.array(read_image(f"./pred_and_QR/image/{imgName}.{filetype}")).astype(np.uint8)
+        origImg = cv2.imread(f"./pred_and_QR/image/{imgName}.{filetype}", cv2.IMREAD_GRAYSCALE)
+        if origImg is None:
+            raise ValueError(f"Failed to read image: ./pred_and_QR/image/{imgName}.{filetype}")
+        origImg = np.array(origImg).astype(np.uint8)
 
         # Save original image histogram
         save_histogram(origImg, f"./pred_and_QR/outcome/histogram/{imgName}/original_histogram.png", "Original Image Histogram")
@@ -71,28 +72,29 @@ def main():
         # X1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding
         print("\nX1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding")
         try:
-            final_pee_img, total_payload, pee_stages, cumulative_rotations = pee_process_with_split_cuda(
-                origImg, total_embeddings, ratio_of_ones, use_different_weights, max_el
-            )
+            if split_first:
+                final_pee_img, total_payload, pee_stages, cumulative_rotations = pee_process_with_split_cuda(
+                    origImg, total_embeddings, ratio_of_ones, use_different_weights, max_el
+                )
+            else:
+                final_pee_img, total_payload, pee_stages, rotation_images, rotation_histograms, actual_embeddings = pee_process_with_rotation_cuda(
+                    origImg, total_embeddings, ratio_of_ones, use_different_weights, max_el
+                )
 
-            # 創建並打印PEE信息表
+            # 创建并打印PEE信息表
             total_pixels = origImg.size
             pee_table = create_pee_info_table(pee_stages, use_different_weights, total_pixels)
             print(pee_table)
 
-            # 保存每個階段的圖像和直方圖
+            # 保存每个阶段的图像和直方图
             for i, stage in enumerate(pee_stages):
-                print(f"\nStage {i} rotations:")
-                for j, block in enumerate(stage['block_params']):
-                    print(f"  Sub-image {j}: {block['rotation']}°")
-
-                # 保存"展示用的大圖"（旋轉後的版本）
+                # 保存"展示用的大图"（旋转后的版本）
                 save_image(cp.asnumpy(stage['stage_img_rotated']), f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined_rotated.png")
                 
-                # 保存"計算用的大圖"（應該是所有子圖像都旋轉回0度的版本）
+                # 保存"计算用的大图"（旋转回0度的版本）
                 save_image(cp.asnumpy(stage['stage_img_0deg']), f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined_0deg.png")
                 
-                # 保存直方圖
+                # 保存直方图
                 histogram_filename = f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X1_stage_{i}_histogram.png"
                 plt.figure(figsize=(10, 6))
                 plt.bar(range(256), generate_histogram(cp.asnumpy(stage['stage_img_0deg'])), alpha=0.7)
@@ -102,10 +104,10 @@ def main():
                 plt.savefig(histogram_filename)
                 plt.close()
 
-            # 保存X1階段最後的圖像（所有子圖像都旋轉回0度）
+            # 保存X1阶段最后的图像（所有子图像都旋转回0度）
             save_image(final_pee_img, f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_final.png")
 
-            # 準備PEE信息用於histogram shifting
+            # 准备PEE信息用于histogram shifting
             pee_info = {
                 'total_embeddings': total_embeddings,
                 'stages': [
@@ -234,7 +236,7 @@ def main():
             
             print(summary_table)
 
-            # 保存最終結果
+            # 更新最终结果记录
             final_results = {
                 'method': 'Split' if split_first else 'Rotation',
                 'pee_total_payload': sum(stage['payload'] for stage in pee_stages),
@@ -261,7 +263,7 @@ def main():
         traceback.print_exc()
     
     finally:
-        # 清理 GPU 內存
+        # 清理 GPU 内存
         cp.get_default_memory_pool().free_all_blocks()
 
 if __name__ == "__main__":
