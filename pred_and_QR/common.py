@@ -125,43 +125,32 @@ def improved_predict_image_cpu(img, weight):
     
     return pred_img
 
-def choose_el_for_rotation(psnr, current_payload, total_pixels, rotation, total_embeddings, max_el=7):
-    """
-    基於當前的 PSNR、已嵌入載荷和旋轉次數動態選擇 EL 值，目標是最大化 payload
-    
-    :param psnr: 當前的 PSNR 值
-    :param current_payload: 當前已嵌入的比特數
-    :param total_pixels: 圖像總像素數
-    :param rotation: 當前旋轉次數
-    :param total_embeddings: 總嵌入次數
-    :param max_el: 最大允許的 EL 值
-    :return: 選擇的 EL 值 (1, 3, 5, 或 7)
-    """
+def choose_el_for_rotation(psnr, current_payload, total_pixels, rotation, total_embeddings, max_el=11):
     progress_factor = (total_embeddings - rotation) / total_embeddings
     current_bpp = current_payload / total_pixels
 
-    # 根據進度因子和當前 bpp 調整基礎 EL 值
-    if progress_factor > 0.75 and current_bpp < 0.5:
+    # Start with a higher base EL, especially for the first embedding
+    if rotation == 0:
         base_el = max_el
-    elif progress_factor > 0.5 and current_bpp < 0.75:
-        base_el = max(5, max_el - 2)
-    elif progress_factor > 0.25 and current_bpp < 1.0:
-        base_el = max(3, max_el - 4)
     else:
-        base_el = max(1, max_el - 6)
+        base_el = max(7, max_el - 2 * rotation)
 
-    # 根據 PSNR 微調 EL 值
-    if psnr > 40:
+    # Adjust based on current BPP
+    if current_bpp < 0.5:
         el_adjustment = 2
-    elif psnr > 35:
+    elif current_bpp < 0.6:
         el_adjustment = 1
-    elif psnr < 30:
-        el_adjustment = -1
     else:
         el_adjustment = 0
 
+    # Adjust based on PSNR
+    if psnr > 35:
+        el_adjustment += 2
+    elif psnr > 30:
+        el_adjustment += 1
+
     adjusted_el = min(max_el, base_el + el_adjustment)
 
-    # 確保 EL 值在有效範圍內 (1, 3, 5, 7)
-    valid_els = [el for el in [1, 3, 5, 7] if el <= max_el]
+    # Ensure EL is odd and within valid range
+    valid_els = [el for el in range(1, max_el + 1, 2)]
     return min(valid_els, key=lambda x: abs(x - adjusted_el))

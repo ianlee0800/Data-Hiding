@@ -124,15 +124,37 @@ def find_best_weights_ga(img, data, EL, toolbox, population_size=50, generations
     best_ind = tools.selBest(pop, 1)[0]
     return np.array(best_ind), best_ind.fitness.values
 
-def find_best_weights_ga_cuda(img, data, EL, population_size=50, generations=20):
+def find_best_weights_ga_cuda(img, data, EL, population_size=50, generations=50, target_bpp=0.7, target_psnr=30.0, stage=0, timeout=120):
+    start_time = time.time()
+    last_improvement = 0
+    best_fitness = float('-inf')
+
     def evaluate(individual):
+        if time.time() - start_time > timeout:
+            raise TimeoutError("GA optimization timed out")
+
         weights = cp.array([int(w) for w in individual], dtype=cp.int32)
         pred_img = improved_predict_image_cuda(img, weights)
-        embedded, payload, _ = pee_embedding_adaptive_cuda(img, data, pred_img, EL)
+        embedded, payload, _ = pee_embedding_adaptive_cuda(img, data, pred_img, EL, stage=stage, target_psnr=target_psnr)
         psnr = calculate_psnr(cp.asnumpy(img), cp.asnumpy(embedded))
-        return int(payload), float(psnr)
+        ssim = calculate_ssim(cp.asnumpy(img), cp.asnumpy(embedded))
+        bpp = payload / img.size
 
-    creator.create("FitnessMax", base.Fitness, weights=(1.0, 1.0))
+        # Heavily emphasize BPP
+        bpp_fitness = min(3.0, (bpp / target_bpp) ** 3)  # Allow BPP fitness to go up to 3.0
+        psnr_fitness = max(0, 1.0 - min(1.0, abs(psnr - target_psnr) / target_psnr))
+        ssim_fitness = ssim
+        
+        # Adjust weights to strongly prioritize BPP, especially in early stages
+        stage_factor = max(0, 1 - stage * 0.2)  # Decreases with each stage
+        bpp_weight = 0.8 + 0.1 * stage_factor
+        psnr_weight = 0.15 - 0.05 * stage_factor
+        ssim_weight = 0.05 - 0.05 * stage_factor
+        
+        fitness = bpp_weight * bpp_fitness + psnr_weight * psnr_fitness + ssim_weight * ssim_fitness
+        return (fitness,)
+
+    creator.create("FitnessMax", base.Fitness, weights=(1.0,))
     creator.create("Individual", list, fitness=creator.FitnessMax)
 
     toolbox = base.Toolbox()
@@ -147,16 +169,38 @@ def find_best_weights_ga_cuda(img, data, EL, population_size=50, generations=20)
     pop = toolbox.population(n=population_size)
     hof = tools.HallOfFame(1)
     stats = tools.Statistics(lambda ind: ind.fitness.values)
-    stats.register("avg", np.mean, axis=0)
-    stats.register("min", np.min, axis=0)
-    stats.register("max", np.max, axis=0)
+    stats.register("avg", np.mean)
+    stats.register("min", np.min)
+    stats.register("max", np.max)
 
-    pop, logbook = algorithms.eaSimple(pop, toolbox, cxpb=0.7, mutpb=0.2, 
-                                       ngen=generations, stats=stats, 
-                                       halloffame=hof, verbose=True)
+    try:
+        for gen in range(generations):
+            pop, logbook = algorithms.eaSimple(pop, toolbox, cxpb=0.7, mutpb=0.2, 
+                                               ngen=1, stats=stats, 
+                                               halloffame=hof, verbose=False)
+            
+            current_best = hof[0].fitness.values[0]
+            
+            if current_best > best_fitness:
+                best_fitness = current_best
+                last_improvement = gen
+            elif gen - last_improvement > 10:  # Early stopping if no improvement for 10 generations
+                break
+            
+            if time.time() - start_time > timeout:
+                break
+
+    except TimeoutError:
+        print("GA optimization timed out")
+    except Exception as e:
+        print(f"An error occurred during GA optimization: {e}")
 
     best_ind = tools.selBest(pop, 1)[0]
     return cp.array([int(w) for w in best_ind], dtype=cp.int32), best_ind.fitness.values
+
+# Clean up DEAP globals
+del creator.FitnessMax
+del creator.Individual
 
 def encode_pee_info(pee_info):
     encoded = struct.pack('B', pee_info['total_rotations'])

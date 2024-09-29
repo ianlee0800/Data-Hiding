@@ -29,41 +29,28 @@ def pee_embedding_adaptive(img, data, pred_img, EL):
     return embedded, payload, embedded_data
 
 @cuda.jit
-def pee_embedding_kernel(img, pred_img, data, embedded, payload, EL, height, width):
+def pee_embedding_kernel(img, pred_img, data, embedded, payload, EL, height, width, stage, target_psnr):
     x, y = cuda.grid(2)
     if x < width and y < height:
-        local_sum = 0.0
-        count = 0
-        for dy in range(-1, 2):
-            for dx in range(-1, 2):
-                nx, ny = x + dx, y + dy
-                if 0 <= nx < width and 0 <= ny < height:
-                    diff = float(img[ny, nx]) - float(pred_img[ny, nx])
-                    local_sum += diff * diff
-                    count += 1
-        
-        local_std = math.sqrt(local_sum / count) if count > 0 else 0
-
-        adaptive_EL = min(EL, max(3, int(EL * (1 - local_std / 255))))
-
         diff = int(img[y, x]) - int(pred_img[y, x])
-
-        if abs(diff) < adaptive_EL and payload[0] < len(data):
+        
+        if abs(diff) < EL and payload[0] < len(data):
             bit = data[payload[0]]
             cuda.atomic.add(payload, 0, 1)
+            embedding_strength = max(2, min(4, int(35 - target_psnr)))  # Increased embedding strength
             if diff >= 0:
-                embedded[y, x] = min(255, int(img[y, x]) + bit)  # 確保不超過 255
+                embedded[y, x] = min(255, int(img[y, x]) + bit * embedding_strength)
             else:
-                embedded[y, x] = max(0, int(img[y, x]) - (1 - bit))  # 確保不小於 0
+                embedded[y, x] = max(0, int(img[y, x]) - (1 - bit) * embedding_strength)
         else:
-            if diff >= adaptive_EL:
-                embedded[y, x] = min(255, int(img[y, x]) + adaptive_EL)  # 確保不超過 255
-            elif diff <= -adaptive_EL:
-                embedded[y, x] = max(0, int(img[y, x]) - adaptive_EL)  # 確保不小於 0
+            if diff >= EL:
+                embedded[y, x] = min(255, int(img[y, x]) + max(2, EL - stage))  # Increased shifting
+            elif diff <= -EL:
+                embedded[y, x] = max(0, int(img[y, x]) - max(2, EL - stage))  # Increased shifting
             else:
                 embedded[y, x] = img[y, x]
 
-def pee_embedding_adaptive_cuda(img, data, pred_img, EL):
+def pee_embedding_adaptive_cuda(img, data, pred_img, EL, stage=0, target_psnr=30.0):
     height, width = img.shape
     d_img = cuda.to_device(img)
     d_pred_img = cuda.to_device(pred_img)
@@ -77,7 +64,7 @@ def pee_embedding_adaptive_cuda(img, data, pred_img, EL):
     blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
 
     pee_embedding_kernel[blocks_per_grid, threads_per_block](
-        d_img, d_pred_img, d_data, d_embedded, d_payload, EL, height, width
+        d_img, d_pred_img, d_data, d_embedded, d_payload, EL, height, width, stage, target_psnr
     )
 
     embedded = d_embedded.copy_to_host()
