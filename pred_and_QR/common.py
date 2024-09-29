@@ -125,7 +125,7 @@ def improved_predict_image_cpu(img, weight):
     
     return pred_img
 
-def choose_el_for_rotation(psnr, current_payload, total_pixels, rotation, total_embeddings, max_el=11):
+def choose_el_for_rotation(psnr, current_payload, total_pixels, rotation, total_embeddings, max_el=7):
     progress_factor = (total_embeddings - rotation) / total_embeddings
     current_bpp = current_payload / total_pixels
 

@@ -90,8 +90,9 @@ def main():
                 # Save the 0-degree oriented stage image
                 save_image(cp.asnumpy(stage['stage_img']), f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined_0deg.png")
                 
-                # Save the rotated stage image (non-rotated sub-images combined)
-                save_image(cp.asnumpy(stage['stage_img_rotated']), f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined_rotated.png")
+                # Save the rotated stage image (if available)
+                if 'stage_img_rotated' in stage:
+                    save_image(cp.asnumpy(stage['stage_img_rotated']), f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined_rotated.png")
                 
                 # Save histogram (use 0-degree version for consistency)
                 histogram_filename = f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X1_stage_{i}_histogram.png"

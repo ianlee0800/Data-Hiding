@@ -8,16 +8,16 @@
           "weights": [
             11,
             2,
-            2,
-            15
+            5,
+            14
           ],
           "EL": 11,
-          "payload": 33292,
-          "psnr": 29.98330475350562,
-          "ssim": 0.8878,
+          "payload": 33296,
+          "psnr": 30.358007471512426,
+          "ssim": 0.8337,
           "rotation": 0,
-          "stage_rotation": -360,
-          "hist_corr": 0.889131842759513
+          "stage_rotation": 0,
+          "hist_corr": 0.9469837248423009
         },
         {
           "weights": [
@@ -28,41 +28,41 @@
           ],
           "EL": 11,
           "payload": 32699,
-          "psnr": 29.96205272284226,
-          "ssim": 0.8805,
-          "rotation": -90,
-          "stage_rotation": 270,
-          "hist_corr": 0.9011706358565376
-        },
-        {
-          "weights": [
-            13,
-            2,
-            10,
-            12
-          ],
-          "EL": 11,
-          "payload": 32389,
-          "psnr": 29.849654432122406,
-          "ssim": 0.8939,
+          "psnr": 30.25701166943199,
+          "ssim": 0.8386,
           "rotation": -90,
           "stage_rotation": -90,
-          "hist_corr": 0.8801607115308857
+          "hist_corr": 0.9380379291791976
         },
         {
           "weights": [
-            12,
+            8,
             1,
-            2,
-            15
+            5,
+            13
           ],
           "EL": 11,
-          "payload": 33037,
-          "psnr": 30.221418363394772,
-          "ssim": 0.8435,
-          "rotation": 90,
-          "stage_rotation": -270,
-          "hist_corr": 0.9302652950276054
+          "payload": 33099,
+          "psnr": 30.23292352250598,
+          "ssim": 0.8693,
+          "rotation": 0,
+          "stage_rotation": 360,
+          "hist_corr": 0.9180232719828441
+        },
+        {
+          "weights": [
+            7,
+            1,
+            2,
+            10
+          ],
+          "EL": 11,
+          "payload": 33411,
+          "psnr": 30.376603045071448,
+          "ssim": 0.8314,
+          "rotation": 0,
+          "stage_rotation": -360,
+          "hist_corr": 0.9466988662869681
         }
       ]
     },
@@ -71,18 +71,18 @@
       "block_params": [
         {
           "weights": [
-            12,
+            1,
             1,
             2,
-            14
+            15
           ],
           "EL": 9,
-          "payload": 26602,
-          "psnr": 27.047789617716347,
-          "ssim": 0.9215,
-          "rotation": 180,
-          "stage_rotation": 180,
-          "hist_corr": 0.6477956006305323
+          "payload": 26026,
+          "psnr": 28.975350340236126,
+          "ssim": 0.8148,
+          "rotation": 0,
+          "stage_rotation": 360,
+          "hist_corr": 0.7925717639582069
         },
         {
           "weights": [
@@ -92,42 +92,42 @@
             15
           ],
           "EL": 9,
-          "payload": 28263,
-          "psnr": 27.397345577233697,
-          "ssim": 0.884,
+          "payload": 26612,
+          "psnr": 28.67215715350286,
+          "ssim": 0.8354,
           "rotation": -90,
-          "stage_rotation": 360,
-          "hist_corr": 0.6651611073369319
+          "stage_rotation": -360,
+          "hist_corr": 0.7714705866135245
         },
         {
           "weights": [
-            3,
             1,
             1,
-            11
-          ],
-          "EL": 7,
-          "payload": 26771,
-          "psnr": 30.008641939741835,
-          "ssim": 0.8866,
-          "rotation": -90,
-          "stage_rotation": 360,
-          "hist_corr": 0.7543625527356578
-        },
-        {
-          "weights": [
-            15,
             1,
-            1,
-            4
+            15
           ],
           "EL": 9,
-          "payload": 26109,
-          "psnr": 27.888975649539738,
-          "ssim": 0.8505,
-          "rotation": 90,
-          "stage_rotation": 0,
-          "hist_corr": 0.6919971867291019
+          "payload": 28454,
+          "psnr": 28.477554603332585,
+          "ssim": 0.8534,
+          "rotation": 0,
+          "stage_rotation": -360,
+          "hist_corr": 0.7520428598364646
+        },
+        {
+          "weights": [
+            14,
+            1,
+            2,
+            1
+          ],
+          "EL": 9,
+          "payload": 25444,
+          "psnr": 28.397531143294643,
+          "ssim": 0.8304,
+          "rotation": -90,
+          "stage_rotation": 270,
+          "hist_corr": 0.7482630302086581
         }
       ]
     },
@@ -136,63 +136,63 @@
       "block_params": [
         {
           "weights": [
-            7,
-            1,
+            15,
             2,
-            15
+            8,
+            11
           ],
           "EL": 7,
-          "payload": 29330,
-          "psnr": 27.696167434915893,
-          "ssim": 0.9073,
-          "rotation": 180,
-          "stage_rotation": 0,
-          "hist_corr": 0.527842966287334
-        },
-        {
-          "weights": [
-            4,
-            1,
-            14,
-            14
-          ],
-          "EL": 7,
-          "payload": 26207,
-          "psnr": 28.332250942002915,
-          "ssim": 0.883,
-          "rotation": 180,
-          "stage_rotation": -90,
-          "hist_corr": 0.45308675291519634
-        },
-        {
-          "weights": [
-            15,
-            1,
-            1,
-            1
-          ],
-          "EL": 7,
-          "payload": 28670,
-          "psnr": 27.53419787614028,
-          "ssim": 0.892,
+          "payload": 21935,
+          "psnr": 28.766922237642977,
+          "ssim": 0.81,
           "rotation": 0,
-          "stage_rotation": -270,
-          "hist_corr": 0.635830254355129
+          "stage_rotation": -360,
+          "hist_corr": 0.6542537763854904
+        },
+        {
+          "weights": [
+            15,
+            1,
+            4,
+            10
+          ],
+          "EL": 7,
+          "payload": 23887,
+          "psnr": 28.2326483767347,
+          "ssim": 0.8349,
+          "rotation": -90,
+          "stage_rotation": 360,
+          "hist_corr": 0.6169609646153307
+        },
+        {
+          "weights": [
+            14,
+            1,
+            8,
+            11
+          ],
+          "EL": 7,
+          "payload": 25214,
+          "psnr": 27.776719389295565,
+          "ssim": 0.8551,
+          "rotation": 0,
+          "stage_rotation": 360,
+          "hist_corr": 0.532562089896656
         },
         {
           "weights": [
             15,
             1,
             1,
-            1
+            6
           ],
           "EL": 7,
-          "payload": 24729,
-          "psnr": 27.802866088627308,
-          "ssim": 0.8373,
-          "rotation": 180,
-          "stage_rotation": 90,
-          "hist_corr": 0.5565467293634201
+          "payload": 22964,
+          "psnr": 28.018415907663254,
+          "ssim": 0.8226,
+          "rotation": -90,
+          "stage_rotation": 0,
+          "hist_corr": 0.6045456484057271
         }
       ]
     },
@@ -201,63 +201,63 @@
       "block_params": [
         {
           "weights": [
-            2,
+            1,
             1,
             1,
             15
           ],
           "EL": 7,
-          "payload": 28140,
-          "psnr": 29.88677441918865,
-          "ssim": 0.9049,
-          "rotation": 0,
-          "stage_rotation": -180,
-          "hist_corr": 0.33293644282922047
+          "payload": 24368,
+          "psnr": 29.050251517434546,
+          "ssim": 0.8073,
+          "rotation": -90,
+          "stage_rotation": 270,
+          "hist_corr": 0.481817828262317
         },
         {
           "weights": [
             1,
             1,
-            11,
-            7
+            1,
+            15
           ],
           "EL": 7,
-          "payload": 25973,
-          "psnr": 29.578762268149074,
-          "ssim": 0.8757,
-          "rotation": 90,
+          "payload": 24649,
+          "psnr": 28.812240092487205,
+          "ssim": 0.8291,
+          "rotation": 180,
           "stage_rotation": -90,
-          "hist_corr": 0.3560314603424122
+          "hist_corr": 0.4487574988660769
         },
         {
           "weights": [
             2,
             1,
-            1,
-            15
+            15,
+            8
           ],
           "EL": 7,
-          "payload": 26156,
-          "psnr": 26.717101164434446,
-          "ssim": 0.8845,
-          "rotation": 180,
-          "stage_rotation": -180,
-          "hist_corr": 0.5174587298565071
+          "payload": 22753,
+          "psnr": 28.02045114832994,
+          "ssim": 0.8534,
+          "rotation": 0,
+          "stage_rotation": 0,
+          "hist_corr": 0.42126805371099135
         },
         {
           "weights": [
             1,
             1,
-            1,
-            15
+            15,
+            2
           ],
           "EL": 7,
-          "payload": 27104,
-          "psnr": 28.712106218821788,
-          "ssim": 0.8363,
-          "rotation": 180,
-          "stage_rotation": 360,
-          "hist_corr": 0.4541563041435001
+          "payload": 22924,
+          "psnr": 29.19224987253527,
+          "ssim": 0.8198,
+          "rotation": -90,
+          "stage_rotation": -360,
+          "hist_corr": 0.41586947019320725
         }
       ]
     },
@@ -266,48 +266,18 @@
       "block_params": [
         {
           "weights": [
-            1,
+            14,
             1,
             2,
-            15
+            1
           ],
           "EL": 7,
-          "payload": 28194,
-          "psnr": 26.968813508514202,
-          "ssim": 0.8976,
-          "rotation": 0,
-          "stage_rotation": 360,
-          "hist_corr": 0.1822387303943164
-        },
-        {
-          "weights": [
-            1,
-            1,
-            1,
-            15
-          ],
-          "EL": 7,
-          "payload": 28270,
-          "psnr": 27.346877579007188,
-          "ssim": 0.8775,
+          "payload": 21648,
+          "psnr": 27.004209881419705,
+          "ssim": 0.802,
           "rotation": -90,
-          "stage_rotation": 180,
-          "hist_corr": 0.28063028824210007
-        },
-        {
-          "weights": [
-            1,
-            1,
-            2,
-            15
-          ],
-          "EL": 7,
-          "payload": 28453,
-          "psnr": 27.943484050460313,
-          "ssim": 0.8766,
-          "rotation": 180,
-          "stage_rotation": 0,
-          "hist_corr": 0.3572279049240259
+          "stage_rotation": -360,
+          "hist_corr": 0.3332146722459201
         },
         {
           "weights": [
@@ -317,12 +287,42 @@
             15
           ],
           "EL": 7,
-          "payload": 25455,
-          "psnr": 27.397165915896878,
-          "ssim": 0.8282,
+          "payload": 21111,
+          "psnr": 26.9301814989702,
+          "ssim": 0.8231,
           "rotation": 90,
           "stage_rotation": -90,
-          "hist_corr": 0.2973792073349139
+          "hist_corr": 0.3308394569533537
+        },
+        {
+          "weights": [
+            15,
+            1,
+            1,
+            2
+          ],
+          "EL": 7,
+          "payload": 24504,
+          "psnr": 27.03539980287055,
+          "ssim": 0.8469,
+          "rotation": 90,
+          "stage_rotation": -270,
+          "hist_corr": 0.29358768840442634
+        },
+        {
+          "weights": [
+            1,
+            1,
+            1,
+            15
+          ],
+          "EL": 7,
+          "payload": 22551,
+          "psnr": 26.842829956204163,
+          "ssim": 0.8151,
+          "rotation": 180,
+          "stage_rotation": 270,
+          "hist_corr": 0.28999347415513244
         }
       ]
     }

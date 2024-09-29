@@ -124,7 +124,7 @@ def find_best_weights_ga(img, data, EL, toolbox, population_size=50, generations
     best_ind = tools.selBest(pop, 1)[0]
     return np.array(best_ind), best_ind.fitness.values
 
-def find_best_weights_ga_cuda(img, data, EL, population_size=50, generations=50, target_bpp=0.7, target_psnr=30.0, stage=0, timeout=120):
+def find_best_weights_ga_cuda(img, data, EL, population_size=100, generations=100, target_bpp=0.7, target_psnr=30.0, stage=0, timeout=120, original_img=None):
     start_time = time.time()
     last_improvement = 0
     best_fitness = float('-inf')
@@ -136,8 +136,14 @@ def find_best_weights_ga_cuda(img, data, EL, population_size=50, generations=50,
         weights = cp.array([int(w) for w in individual], dtype=cp.int32)
         pred_img = improved_predict_image_cuda(img, weights)
         embedded, payload, _ = pee_embedding_adaptive_cuda(img, data, pred_img, EL, stage=stage, target_psnr=target_psnr)
-        psnr = calculate_psnr(cp.asnumpy(img), cp.asnumpy(embedded))
-        ssim = calculate_ssim(cp.asnumpy(img), cp.asnumpy(embedded))
+        
+        if original_img is not None:
+            psnr = calculate_psnr(cp.asnumpy(original_img), cp.asnumpy(embedded))
+            ssim = calculate_ssim(cp.asnumpy(original_img), cp.asnumpy(embedded))
+        else:
+            psnr = calculate_psnr(cp.asnumpy(img), cp.asnumpy(embedded))
+            ssim = calculate_ssim(cp.asnumpy(img), cp.asnumpy(embedded))
+        
         bpp = payload / img.size
 
         # Heavily emphasize BPP
