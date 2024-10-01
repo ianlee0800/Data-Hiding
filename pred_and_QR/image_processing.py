@@ -143,6 +143,16 @@ def split_image(img):
     ]
     return sub_images
 
+def split_image_into_quarters(img):
+    h, w = img.shape
+    mid_h, mid_w = h // 2, w // 2
+    return [
+        img[:mid_h, :mid_w],
+        img[:mid_h, mid_w:],
+        img[mid_h:, :mid_w],
+        img[mid_h:, mid_w:]
+    ]
+
 def merge_image(sub_images):
     if not sub_images:
         raise ValueError("No sub-images to merge")
@@ -212,3 +222,25 @@ def improved_predict_image_cuda(img, weights):
     pred_img = d_pred_img.copy_to_host()
     
     return cp.asarray(pred_img)  # 确保返回 CuPy 数组
+
+def create_collage(images):
+    """Create a 2x2 collage from four images."""
+    assert len(images) == 4, "Must provide exactly 4 images for the collage"
+    
+    # Ensure all images are numpy arrays
+    images = [np.array(img) if not isinstance(img, np.ndarray) else img for img in images]
+    
+    # Find the maximum dimensions
+    max_height = max(img.shape[0] for img in images)
+    max_width = max(img.shape[1] for img in images)
+    
+    # Create the collage
+    collage = np.zeros((max_height * 2, max_width * 2), dtype=np.uint8)
+    
+    positions = [(0, 0), (0, max_width), (max_height, 0), (max_height, max_width)]
+    
+    for img, (y, x) in zip(images, positions):
+        h, w = img.shape
+        collage[y:y+h, x:x+w] = img
+    
+    return collage

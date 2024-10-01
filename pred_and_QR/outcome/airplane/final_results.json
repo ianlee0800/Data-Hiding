@@ -1,8 +1,9 @@
 {
   "method": "Split",
-  "total_payload": 499332,
-  "final_bpp": 1.9048004150390625,
-  "final_psnr": 26.952518603986103,
-  "final_ssim": 0.7786,
-  "final_hist_corr": 0.3122980116418748
+  "split_method": "Block-based",
+  "total_payload": 529918,
+  "final_bpp": 2.0214767456054688,
+  "final_psnr": 26.967494452475684,
+  "final_ssim": 0.7839,
+  "final_hist_corr": 0.29791669443890517
 }

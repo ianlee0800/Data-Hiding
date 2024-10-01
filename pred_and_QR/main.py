@@ -12,7 +12,7 @@ from image_processing import (
     save_image,
     save_histogram,
     generate_histogram,
-    save_difference_histogram
+    create_collage
 )
 from embedding import (
     histogram_data_hiding,
@@ -45,6 +45,7 @@ def main():
     ratio_of_ones = 0.5
     use_different_weights = True
     split_first = True  # Use split_first to choose PEE method
+    block_base = True  # New parameter to choose between block-based and quarter-based splitting
 
     # Create necessary directories
     os.makedirs(f"./pred_and_QR/outcome/histogram/{imgName}", exist_ok=True)
@@ -72,8 +73,8 @@ def main():
         print("\nX1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding")
         try:
             if split_first:
-                final_pee_img, total_payload, pee_stages, cumulative_rotations = pee_process_with_split_cuda(
-                    origImg, total_embeddings, ratio_of_ones, use_different_weights
+                final_pee_img, total_payload, pee_stages, stage_rotations = pee_process_with_split_cuda(
+                    origImg, total_embeddings, ratio_of_ones, use_different_weights, block_base
                 )
             else:
                 final_pee_img, total_payload, pee_stages, rotation_images, rotation_histograms, actual_embeddings = pee_process_with_rotation_cuda(
@@ -90,9 +91,10 @@ def main():
                 # Save the 0-degree oriented stage image
                 save_image(cp.asnumpy(stage['stage_img']), f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined_0deg.png")
                 
-                # Save the rotated stage image (if available)
-                if 'stage_img_rotated' in stage:
-                    save_image(cp.asnumpy(stage['stage_img_rotated']), f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined_rotated.png")
+                # Create and save the collage-style rotated image
+                if 'rotated_sub_images' in stage:
+                    collage = create_collage(stage['rotated_sub_images'])
+                    save_image(collage, f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined_rotated_collage.png")
                 
                 # Save histogram (use 0-degree version for consistency)
                 histogram_filename = f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X1_stage_{i}_histogram.png"
@@ -142,6 +144,7 @@ def main():
             # Save final results
             final_results = {
                 'method': 'Split' if split_first else 'Rotation',
+                'split_method': 'Block-based' if block_base else 'Quarter-based',
                 'total_payload': total_payload,
                 'final_bpp': final_bpp,
                 'final_psnr': final_psnr,
