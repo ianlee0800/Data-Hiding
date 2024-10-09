@@ -1,9 +1,0 @@
-{
-  "method": "Rotation",
-  "split_method": "Quarter-based",
-  "total_payload": 611203,
-  "final_bpp": 2.331554412841797,
-  "final_psnr": 39.339947849945375,
-  "final_ssim": 0.9671,
-  "final_hist_corr": 0.965180980778289
-}

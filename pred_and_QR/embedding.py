@@ -252,7 +252,8 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
             'hist_corr': 0,
             'bpp': 0,
             'block_params': [],
-            'rotated_sub_images': []
+            'rotated_sub_images': [],
+            'non_rotated_sub_images': []
         }
         
         stage_payload = 0
@@ -316,7 +317,8 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
             }
             stage_info['sub_images'].append(block_info)
             stage_info['block_params'].append(block_info)
-            stage_info['rotated_sub_images'].append(rotated_back_sub_np)
+            stage_info['rotated_sub_images'].append(cp.asnumpy(embedded_sub))  # Store rotated sub-image
+            stage_info['non_rotated_sub_images'].append(cp.asnumpy(rotated_back_sub))  # Store non-rotated sub-image
 
         if block_base:
             stage_img = merge_image(embedded_sub_images)
