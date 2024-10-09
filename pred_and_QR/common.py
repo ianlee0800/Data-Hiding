@@ -1,6 +1,7 @@
 import numpy as np
 import cupy as cp
 import cv2
+from numba import cuda
 
 class DataType:
     INT8 = np.int8
@@ -48,28 +49,21 @@ def find_max(hist):
     return peak
 
 def histogram_correlation(hist1, hist2):
-    """
-    計算兩個直方圖之間的相關性
-    """
-    hist1 = hist1.astype(float)
-    hist2 = hist2.astype(float)
+    hist1 = hist1.astype(np.float64)
+    hist2 = hist2.astype(np.float64)
     
-    # 正規化直方圖
     hist1 = hist1 / np.sum(hist1)
     hist2 = hist2 / np.sum(hist2)
     
-    mean1 = np.mean(hist1)
-    mean2 = np.mean(hist2)
+    mean1, mean2 = np.mean(hist1), np.mean(hist2)
     
     numerator = np.sum((hist1 - mean1) * (hist2 - mean2))
     denominator = np.sqrt(np.sum((hist1 - mean1)**2) * np.sum((hist2 - mean2)**2))
     
     if denominator == 0:
-        return 1  # 如果兩個直方圖完全相同，返回 1
-    
-    correlation = numerator / denominator
-    
-    return correlation
+        return 1.0
+    else:
+        return numerator / denominator
 
 def calculate_psnr(img1, img2):
     mse = np.mean((img1 - img2) ** 2)
@@ -125,32 +119,31 @@ def improved_predict_image_cpu(img, weight):
     
     return pred_img
 
-def choose_el_for_rotation(psnr, current_payload, total_pixels, rotation, total_embeddings, max_el=7):
-    progress_factor = (total_embeddings - rotation) / total_embeddings
-    current_bpp = current_payload / total_pixels
+@cuda.jit
+def compute_adaptive_el_kernel(img, local_el, window_size, max_el):
+    x, y = cuda.grid(2)
+    if x < img.shape[1] and y < img.shape[0]:
+        local_sum = 0
+        count = 0
+        for i in range(max(0, y - window_size // 2), min(img.shape[0], y + window_size // 2 + 1)):
+            for j in range(max(0, x - window_size // 2), min(img.shape[1], x + window_size // 2 + 1)):
+                local_sum += img[i, j]
+                count += 1
+        local_mean = local_sum / count
+        local_var = 0
+        for i in range(max(0, y - window_size // 2), min(img.shape[0], y + window_size // 2 + 1)):
+            for j in range(max(0, x - window_size // 2), min(img.shape[1], x + window_size // 2 + 1)):
+                local_var += (img[i, j] - local_mean) ** 2
+        local_var /= count
+        local_el[y, x] = min(max(2, int(max_el * (1 - local_var / 6400))), max_el)
 
-    # Start with a higher base EL, especially for the first embedding
-    if rotation == 0:
-        base_el = max_el
-    else:
-        base_el = max(7, max_el - 2 * rotation)
-
-    # Adjust based on current BPP
-    if current_bpp < 0.5:
-        el_adjustment = 2
-    elif current_bpp < 0.6:
-        el_adjustment = 1
-    else:
-        el_adjustment = 0
-
-    # Adjust based on PSNR
-    if psnr > 35:
-        el_adjustment += 2
-    elif psnr > 30:
-        el_adjustment += 1
-
-    adjusted_el = min(max_el, base_el + el_adjustment)
-
-    # Ensure EL is odd and within valid range
-    valid_els = [el for el in range(1, max_el + 1, 2)]
-    return min(valid_els, key=lambda x: abs(x - adjusted_el))
+def compute_adaptive_el(img, window_size=5, max_el=7):
+    local_el = cuda.device_array(img.shape, dtype=np.int32)
+    threads_per_block = (16, 16)
+    blocks_per_grid_x = (img.shape[1] + threads_per_block[0] - 1) // threads_per_block[0]
+    blocks_per_grid_y = (img.shape[0] + threads_per_block[1] - 1) // threads_per_block[1]
+    blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
+    
+    compute_adaptive_el_kernel[blocks_per_grid, threads_per_block](img, local_el, window_size, max_el)
+    
+    return local_el

@@ -10,7 +10,7 @@ def generate_random_binary_array(size, ratio_of_ones=0.5):
     return np.random.choice([0, 1], size=size, p=[1-ratio_of_ones, ratio_of_ones])
 
 @cuda.jit
-def evaluate_weights_kernel(img, data, EL, weight_combinations, results, target_bpp, target_psnr):
+def evaluate_weights_kernel(img, data, EL, weight_combinations, results, target_bpp, target_psnr, stage):
     idx = cuda.grid(1)
     if idx < weight_combinations.shape[0]:
         w1, w2, w3, w4 = weight_combinations[idx]
@@ -31,47 +31,57 @@ def evaluate_weights_kernel(img, data, EL, weight_combinations, results, target_
                 
                 # Embedding
                 diff = int(img[y, x]) - int(pred_val)
-                if abs(diff) < EL and payload < data.shape[0]:
+                if abs(diff) < EL[y, x] and payload < data.shape[0]:  # Use EL[y, x] instead of just EL
                     bit = data[payload]
                     payload += 1
-                    if diff >= 0:
-                        embedded_val = min(255, int(img[y, x]) + bit)
+                    if stage == 0:
+                        # More aggressive embedding for stage 0
+                        embedding_strength = min(3, EL[y, x] - abs(diff))
                     else:
-                        embedded_val = max(0, int(img[y, x]) - (1 - bit))
+                        embedding_strength = 1
+                    
+                    if diff >= 0:
+                        embedded_val = min(255, int(img[y, x]) + bit * embedding_strength)
+                    else:
+                        embedded_val = max(0, int(img[y, x]) - (1 - bit) * embedding_strength)
                     mse += (embedded_val - img[y, x]) ** 2
                 else:
-                    mse += 0  # No change to the pixel
+                    mse += 0  # No change to pixel
         
         if mse > 0:
             psnr = 10 * math.log10((255 * 255) / (mse / (height * width)))
         else:
-            psnr = 100.0  # A high value for perfect embedding
+            psnr = 100.0  # High value for perfect embedding
         
         bpp = payload / (height * width)
         
-        # Fitness calculation
+        # Adaptive fitness criteria
         bpp_fitness = min(1.0, bpp / target_bpp)
         psnr_fitness = max(0, 1 - abs(psnr - target_psnr) / target_psnr)
-        fitness = bpp_fitness * 0.7 + psnr_fitness * 0.3  # Prioritize BPP
+        
+        if stage == 0:
+            fitness = bpp_fitness * 0.7 + psnr_fitness * 0.3
+        else:
+            fitness = bpp_fitness * 0.5 + psnr_fitness * 0.5
         
         results[idx, 0] = payload
         results[idx, 1] = psnr
         results[idx, 2] = fitness
 
-def brute_force_weight_search_cuda(img, data, EL, target_bpp, target_psnr, weight_range=range(1, 16)):
+def brute_force_weight_search_cuda(img, data, local_el, target_bpp, target_psnr, stage):
     img = cp.asarray(img)
     data = cp.asarray(data)
     
-    weight_combinations = cp.array(list(itertools.product(weight_range, repeat=4)), dtype=cp.int32)
+    weight_combinations = cp.array(list(itertools.product(range(1, 16), repeat=4)), dtype=cp.int32)
     
     results = cp.zeros((len(weight_combinations), 3), dtype=cp.float32)
 
     threads_per_block = 256
     blocks_per_grid = (len(weight_combinations) + threads_per_block - 1) // threads_per_block
 
-    evaluate_weights_kernel[blocks_per_grid, threads_per_block](img, data, EL, weight_combinations, results, target_bpp, target_psnr)
+    evaluate_weights_kernel[blocks_per_grid, threads_per_block](img, data, local_el, weight_combinations, results, target_bpp, target_psnr, stage)
 
-    best_idx = cp.argmax(results[:, 2])  # Use fitness for selection
+    best_idx = cp.argmax(results[:, 2])  # 使用 fitness 進行選擇
     best_weights = weight_combinations[best_idx]
     best_payload, best_psnr, best_fitness = results[best_idx]
 
@@ -154,4 +164,3 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels):
         table.add_row(["-" * 5] * 11)  # 添加分隔行
     
     return table
-

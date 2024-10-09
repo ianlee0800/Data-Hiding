@@ -141,7 +141,7 @@ def split_image(img):
         img[1::2, 0::2],  # 左下
         img[1::2, 1::2]   # 右下
     ]
-    return sub_images
+    return [xp.asarray(sub_img) for sub_img in sub_images]
 
 def split_image_into_quarters(img):
     h, w = img.shape
@@ -160,15 +160,13 @@ def merge_image(sub_images):
     print(f"Number of sub-images to merge: {len(sub_images)}")
     print(f"Sub-image shapes: {[img.shape for img in sub_images]}")
     
-    if isinstance(sub_images[0], cp.ndarray):
-        xp = cp
-    else:
-        xp = np
+    # 確保所有子圖像都是 CuPy 數組
+    sub_images = [cp.asarray(img) for img in sub_images]
     
     sub_height, sub_width = sub_images[0].shape
     height, width = sub_height * 2, sub_width * 2
     
-    merged = xp.zeros((height, width), dtype=sub_images[0].dtype)
+    merged = cp.zeros((height, width), dtype=sub_images[0].dtype)
     merged[0::2, 0::2] = sub_images[0]
     merged[0::2, 1::2] = sub_images[1]
     merged[1::2, 0::2] = sub_images[2]
@@ -179,49 +177,45 @@ def merge_image(sub_images):
     return merged
 
 @cuda.jit
-def improved_predict_kernel(img, weight, pred_img, height, width):
+def improved_predict_kernel(img, weights, pred_img, height, width):
     x, y = cuda.grid(2)
-    if x < width and y < height:
-        if 0 < x < width-1 and 0 < y < height-1:
-            ul = img[y-1, x-1]
-            up = img[y-1, x]
-            ur = img[y-1, x+1]
-            left = img[y, x-1]
-            p = (weight[0]*up + weight[1]*ul + weight[2]*ur + weight[3]*left) / \
-                (weight[0] + weight[1] + weight[2] + weight[3])
-            pred_img[y, x] = round(p)
+    if 1 < x < width - 1 and 1 < y < height - 1:
+        up = int(img[y-1, x])
+        left = int(img[y, x-1])
+        ul = int(img[y-1, x-1])
+        ur = int(img[y-1, x+1])
+        
+        # Context-based prediction
+        if abs(up - ul) < abs(left - ul):
+            base_pred = left
         else:
-            pred_img[y, x] = img[y, x]
+            base_pred = up
+        
+        # Weighted prediction
+        weighted_pred = (weights[0]*up + weights[1]*left + weights[2]*ul + weights[3]*ur)
+        total_weight = weights[0] + weights[1] + weights[2] + weights[3]
+        
+        # Combine predictions
+        final_pred = (base_pred + int(weighted_pred / total_weight)) // 2
+        
+        pred_img[y, x] = min(255, max(0, final_pred))
+    else:
+        pred_img[y, x] = img[y, x]
 
 def improved_predict_image_cuda(img, weights):
-    # 确保输入是 CuPy 数组
-    img = cp.asarray(img)
-    weights = cp.asarray(weights)
-    """
-    CUDA 版本的改進預測圖像函數
-    
-    :param img: numpy array，輸入圖像
-    :param weights: numpy array，預測權重
-    :return: numpy array，預測圖像
-    """
     height, width = img.shape
     d_img = cuda.to_device(img)
     d_weights = cuda.to_device(weights)
     d_pred_img = cuda.device_array_like(img)
 
-    # 設置網格和塊大小
     threads_per_block = (16, 16)
     blocks_per_grid_x = (width + threads_per_block[0] - 1) // threads_per_block[0]
     blocks_per_grid_y = (height + threads_per_block[1] - 1) // threads_per_block[1]
     blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
 
-    # 執行 kernel
     improved_predict_kernel[blocks_per_grid, threads_per_block](d_img, d_weights, d_pred_img, height, width)
 
-    # 將結果複製回主機
-    pred_img = d_pred_img.copy_to_host()
-    
-    return cp.asarray(pred_img)  # 确保返回 CuPy 数组
+    return d_pred_img
 
 def create_collage(images):
     """Create a 2x2 collage from four images."""

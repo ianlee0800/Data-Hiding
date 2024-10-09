@@ -29,33 +29,30 @@ def pee_embedding_adaptive(img, data, pred_img, EL):
     return embedded, payload, embedded_data
 
 @cuda.jit
-def pee_embedding_kernel(img, pred_img, data, embedded, payload, EL, height, width, stage, target_psnr):
+def pee_embedding_kernel(img, pred_img, data, embedded, payload, local_el, height, width, stage):
     x, y = cuda.grid(2)
     if x < width and y < height:
         diff = int(img[y, x]) - int(pred_img[y, x])
         
-        if abs(diff) < EL and payload[0] < len(data):
+        if abs(diff) < local_el[y, x] and payload[0] < data.size:
             bit = data[payload[0]]
             cuda.atomic.add(payload, 0, 1)
-            embedding_strength = max(2, min(4, int(35 - target_psnr)))  # Increased embedding strength
+            
+            if stage == 0:
+                embedding_strength = min(3, local_el[y, x] - abs(diff))
+            else:
+                embedding_strength = 1
+            
             if diff >= 0:
                 embedded[y, x] = min(255, int(img[y, x]) + bit * embedding_strength)
             else:
                 embedded[y, x] = max(0, int(img[y, x]) - (1 - bit) * embedding_strength)
         else:
-            if diff >= EL:
-                embedded[y, x] = min(255, int(img[y, x]) + max(2, EL - stage))  # Increased shifting
-            elif diff <= -EL:
-                embedded[y, x] = max(0, int(img[y, x]) - max(2, EL - stage))  # Increased shifting
-            else:
-                embedded[y, x] = img[y, x]
+            embedded[y, x] = img[y, x]
 
-def pee_embedding_adaptive_cuda(img, data, pred_img, EL, stage=0, target_psnr=30.0):
+def pee_embedding_adaptive_cuda(img, data, pred_img, local_el, stage=0):
     height, width = img.shape
-    d_img = cuda.to_device(img)
-    d_pred_img = cuda.to_device(pred_img)
-    d_data = cuda.to_device(data)
-    d_embedded = cuda.device_array_like(d_img)
+    d_embedded = cuda.device_array_like(img)
     d_payload = cuda.to_device(np.array([0], dtype=np.int32))
 
     threads_per_block = (16, 16)
@@ -64,46 +61,49 @@ def pee_embedding_adaptive_cuda(img, data, pred_img, EL, stage=0, target_psnr=30
     blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
 
     pee_embedding_kernel[blocks_per_grid, threads_per_block](
-        d_img, d_pred_img, d_data, d_embedded, d_payload, EL, height, width, stage, target_psnr
+        img, pred_img, data, d_embedded, d_payload, local_el, height, width, stage
     )
 
     embedded = d_embedded.copy_to_host()
-    payload = int(d_payload.copy_to_host()[0])
-    embedded_data = d_data.copy_to_host()[:payload].tolist()
+    payload = d_payload.copy_to_host()[0]
+    embedded_data = data.copy_to_host()[:payload].tolist()
 
-    return cp.asarray(embedded), payload, cp.asarray(embedded_data)
+    return embedded, payload, embedded_data
 
-def choose_pee_implementation(use_cuda=True):
-    if use_cuda and cuda.is_available():
-        return improved_predict_image_cuda, pee_embedding_adaptive_cuda
+def multi_pass_embedding(img, data, local_el, weights, stage):
+    
+    # Convert CuPy arrays to NumPy if necessary
+    if isinstance(img, cp.ndarray):
+        img = cp.asnumpy(img)
+    if isinstance(data, cp.ndarray):
+        data = cp.asnumpy(data)
+    
+    # Handle local_el specifically since it's a DeviceNDArray
+    if isinstance(local_el, cuda.cudadrv.devicearray.DeviceNDArray):
+        local_el_np = local_el.copy_to_host()
+    elif isinstance(local_el, cp.ndarray):
+        local_el_np = cp.asnumpy(local_el)
     else:
-        return improved_predict_image_cpu, pee_embedding_adaptive
-
-# 測試函數
-def test_pee_functions():
-    # 創建測試數據
-    img = np.random.randint(0, 256, (512, 512), dtype=np.uint8)
-    weights = np.array([0.25, 0.25, 0.25, 0.25], dtype=np.float32)
-    data = np.random.randint(0, 2, 10000, dtype=np.uint8)
-    EL = 5
-
-    # 選擇實現（GPU 如果可用，否則 CPU）
-    predict_func, embed_func = choose_pee_implementation()
-
-    # 運行預測
-    pred_img = predict_func(img, weights)
-
-    # 運行嵌入
-    embedded, payload, embedded_data = embed_func(img, data, pred_img, EL)
-
-    # 使用 common.py 中的 calculate_psnr
-    psnr = calculate_psnr(img, embedded)
-
-    print(f"使用的實現: {'CUDA' if predict_func.__name__.endswith('cuda') else 'CPU'}")
-    print(f"嵌入的數據量: {payload}")
-    print(f"嵌入後圖像的形狀: {embedded.shape}")
-    print(f"PSNR: {psnr}")
-    print(f"原始圖像和嵌入後圖像的差異: {np.sum(img != embedded)}")
-
-if __name__ == "__main__":
-    test_pee_functions()
+        local_el_np = local_el
+    
+    if isinstance(weights, cp.ndarray):
+        weights = cp.asnumpy(weights)
+    
+    # Convert NumPy arrays to Numba device arrays
+    d_img = cuda.to_device(img)
+    d_data = cuda.to_device(data)
+    d_local_el = cuda.to_device(local_el_np)
+    d_weights = cuda.to_device(weights)
+    
+    pred_img = improved_predict_image_cuda(d_img, d_weights)
+    embedded, payload, _ = pee_embedding_adaptive_cuda(d_img, d_data, pred_img, d_local_el, stage)
+    
+    if stage == 0 and payload < data.size:
+        # Second pass with reduced EL
+        second_el_np = np.minimum(np.maximum(local_el_np - 1, 1), 3)
+        d_second_el = cuda.to_device(second_el_np)
+        second_pred_img = improved_predict_image_cuda(embedded, d_weights)
+        embedded, additional_payload, _ = pee_embedding_adaptive_cuda(embedded, d_data[payload:], second_pred_img, d_second_el, stage)
+        payload += additional_payload
+    
+    return embedded, payload
