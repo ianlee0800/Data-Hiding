@@ -144,9 +144,13 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
                 np.histogram(rotated_back_sub_np, bins=256, range=(0, 255))[0]
             )
             
+            # Convert local_el to host memory and find max
+            local_el_np = local_el.copy_to_host() if isinstance(local_el, cuda.cudadrv.devicearray.DeviceNDArray) else local_el
+            max_el = int(np.max(local_el_np))
+
             block_info = {
-                'weights': cp.asnumpy(weights).tolist(),
-                'EL': int(cp.max(local_el)),
+                'weights': weights.tolist() if isinstance(weights, np.ndarray) else weights,
+                'EL': max_el,
                 'payload': int(payload),
                 'psnr': float(sub_psnr),
                 'ssim': float(sub_ssim),

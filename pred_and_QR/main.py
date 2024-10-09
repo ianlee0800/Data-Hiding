@@ -36,8 +36,8 @@ def main():
     total_embeddings = 5
     ratio_of_ones = 0.5
     use_different_weights = True
-    split_first = True  # Use split_first to choose PEE method
-    block_base = True  # New parameter to choose between block-based and quarter-based splitting
+    split_first = False  # Use split_first to choose PEE method
+    block_base = False  # New parameter to choose between block-based and quarter-based splitting
 
     # Create necessary directories
     os.makedirs(f"./pred_and_QR/outcome/histogram/{imgName}", exist_ok=True)
