@@ -6,14 +6,12 @@ import cupy as cp
 import numpy as np
 import json
 from image_processing import (
-    read_image, 
     save_image,
     save_histogram,
     generate_histogram,
     create_collage
 )
 from embedding import (
-    histogram_data_hiding,
     pee_process_with_rotation_cuda,
     pee_process_with_split_cuda  # 新增這行
 )
@@ -36,7 +34,7 @@ def main():
     total_embeddings = 5
     ratio_of_ones = 0.5
     use_different_weights = True
-    split_first = False  # Use split_first to choose PEE method
+    split_first = True  # Use split_first to choose PEE method
     block_base = False  # New parameter to choose between block-based and quarter-based splitting
 
     # Create necessary directories
@@ -44,7 +42,7 @@ def main():
     os.makedirs(f"./pred_and_QR/outcome/histogram/{imgName}/difference", exist_ok=True)
     os.makedirs(f"./pred_and_QR/outcome/image/{imgName}", exist_ok=True)
     
-    ensure_dir(f"./pred_and_QR/outcome/{imgName}/pee_info.json")
+    ensure_dir(f"./pred_and_QR/outcome/{imgName}/pee_info.npy")
     
     try:
         # Clean GPU memory
@@ -112,11 +110,11 @@ def main():
                 ]
             }
 
-            # Save PEE information
-            pee_info_path = f"./pred_and_QR/outcome/{imgName}/pee_info.json"
+            # Save PEE information as a NumPy file
+            pee_info_path = f"./pred_and_QR/outcome/{imgName}/pee_info.npy"
             ensure_dir(pee_info_path)
-            with open(pee_info_path, 'w') as f:
-                json.dump(pee_info, f, indent=2)
+            np.save(pee_info_path, pee_info)
+            print(f"PEE information saved to {pee_info_path}")
 
             # Calculate and print final results
             final_bpp = total_payload / total_pixels
@@ -143,8 +141,8 @@ def main():
                 'final_ssim': final_ssim,
                 'final_hist_corr': final_hist_corr
             }
-            with open(f"./pred_and_QR/outcome/{imgName}/final_results.json", 'w') as f:
-                json.dump(final_results, f, indent=2)
+            np.save(f"./pred_and_QR/outcome/{imgName}/final_results.npy", final_results)
+            print(f"Final results saved to ./pred_and_QR/outcome/{imgName}/final_results.npy")
 
         except Exception as e:
             print(f"Error occurred in PEE process: {e}")

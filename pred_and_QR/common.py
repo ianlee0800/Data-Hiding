@@ -135,9 +135,12 @@ def compute_adaptive_el_kernel(img, local_el, window_size, max_el):
             for j in range(max(0, x - window_size // 2), min(img.shape[1], x + window_size // 2 + 1)):
                 local_var += (img[i, j] - local_mean) ** 2
         local_var /= count
-        local_el[y, x] = min(max(2, int(max_el * (1 - local_var / 6400))), max_el)
+        el_value = min(max(1, int(max_el * (1 - local_var / 6400))), max_el)
+        local_el[y, x] = el_value if el_value % 2 == 1 else el_value - 1
 
 def compute_adaptive_el(img, window_size=5, max_el=7):
+    if max_el % 2 == 0:
+        max_el -= 1  # Ensure max_el is odd
     local_el = cuda.device_array(img.shape, dtype=np.int32)
     threads_per_block = (16, 16)
     blocks_per_grid_x = (img.shape[1] + threads_per_block[0] - 1) // threads_per_block[0]
