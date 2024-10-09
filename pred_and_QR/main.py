@@ -5,8 +5,6 @@ import matplotlib.pyplot as plt
 import cupy as cp
 import numpy as np
 import json
-from prettytable import PrettyTable
-from deap import base, creator, tools
 from image_processing import (
     read_image, 
     save_image,
@@ -24,13 +22,7 @@ from utils import (
 )
 from common import *
 
-warnings.filterwarnings("ignore", category=RuntimeWarning, module="deap.creator")
 warnings.simplefilter('ignore', category=NumbaPerformanceWarning)
-
-if 'FitnessMax' not in creator.__dict__:
-    creator.create("FitnessMax", base.Fitness, weights=(1.0, 1.0))
-if 'Individual' not in creator.__dict__:
-    creator.create("Individual", list, fitness=creator.FitnessMax)
 
 def ensure_dir(file_path):
     directory = os.path.dirname(file_path)

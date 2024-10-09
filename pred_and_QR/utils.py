@@ -1,212 +1,81 @@
 import numpy as np
 import struct
-import cupy as cp
 import itertools
-import time
 from common import *
-from deap import base, creator, tools, algorithms
 from pee import *
-import random
 from prettytable import PrettyTable
 
 def generate_random_binary_array(size, ratio_of_ones=0.5):
     """生成指定大小的随机二进制数组，可调整1的比例"""
     return np.random.choice([0, 1], size=size, p=[1-ratio_of_ones, ratio_of_ones])
 
-def custom_selNSGA2(individuals, k):
-    try:
-        return tools.selNSGA2(individuals, k)
-    except IndexError:
-        # 如果出現索引錯誤，使用一個更簡單的選擇方法
-        return sorted(individuals, key=lambda ind: ind.fitness.values[0], reverse=True)[:k]
-
-# 確保這些只被創建一次
-if 'FitnessMax' not in creator.__dict__:
-    creator.create("FitnessMax", base.Fitness, weights=(1.0, 1.0))
-if 'Individual' not in creator.__dict__:
-    creator.create("Individual", list, fitness=creator.FitnessMax)
-
-def brute_force_weight_search(img, data, EL, weight_range=range(1, 16)):
-    best_weights = None
-    best_fitness = float('-inf')
-    start_time = time.time()
-    total_combinations = 0
-
-    for weights in itertools.product(weight_range, repeat=4):
-        total_combinations += 1
-        pred_img = improved_predict_image_cuda(img, weights)
-        embedded, payload, _ = pee_embedding_adaptive_cuda(img, data, pred_img, EL)
-        psnr = calculate_psnr(to_numpy(img), to_numpy(embedded))
-        fitness = (payload, psnr)
-        
-        if fitness > best_fitness:
-            best_fitness = fitness
-            best_weights = weights
-
-        if total_combinations % 1000 == 0:  # 每1000次組合輸出一次進度
-            elapsed_time = time.time() - start_time
-            print(f"Processed {total_combinations} combinations. Elapsed time: {elapsed_time:.2f} seconds")
-
-    total_time = time.time() - start_time
-    print(f"Total combinations: {total_combinations}")
-    print(f"Total search time: {total_time:.2f} seconds")
-    return best_weights, best_fitness
-
-# CUDA kernel for weight evaluation
 @cuda.jit
-def evaluate_weights_kernel(img, data, EL, weight_combinations, results):
+def evaluate_weights_kernel(img, data, EL, weight_combinations, results, target_bpp, target_psnr):
     idx = cuda.grid(1)
     if idx < weight_combinations.shape[0]:
         w1, w2, w3, w4 = weight_combinations[idx]
-        weights = cuda.local.array(4, dtype=np.int32)
-        weights[0], weights[1], weights[2], weights[3] = w1, w2, w3, w4
-
-        # Simplified prediction and embedding (you'll need to implement these)
-        pred_img = improved_predict_image_cuda(img, weights)
-        embedded, payload = pee_embedding_adaptive_cuda(img, data, pred_img, EL)
         
-        psnr = calculate_psnr(img, embedded)
+        height, width = img.shape
+        payload = 0
+        mse = 0.0
+        
+        for y in range(1, height - 1):
+            for x in range(1, width - 1):
+                # Prediction
+                ul = img[y-1, x-1]
+                up = img[y-1, x]
+                ur = img[y-1, x+1]
+                left = img[y, x-1]
+                p = (w1*up + w2*ul + w3*ur + w4*left) / (w1 + w2 + w3 + w4)
+                pred_val = round(p)
+                
+                # Embedding
+                diff = int(img[y, x]) - int(pred_val)
+                if abs(diff) < EL and payload < data.shape[0]:
+                    bit = data[payload]
+                    payload += 1
+                    if diff >= 0:
+                        embedded_val = min(255, int(img[y, x]) + bit)
+                    else:
+                        embedded_val = max(0, int(img[y, x]) - (1 - bit))
+                    mse += (embedded_val - img[y, x]) ** 2
+                else:
+                    mse += 0  # No change to the pixel
+        
+        if mse > 0:
+            psnr = 10 * math.log10((255 * 255) / (mse / (height * width)))
+        else:
+            psnr = 100.0  # A high value for perfect embedding
+        
+        bpp = payload / (height * width)
+        
+        # Fitness calculation
+        bpp_fitness = min(1.0, bpp / target_bpp)
+        psnr_fitness = max(0, 1 - abs(psnr - target_psnr) / target_psnr)
+        fitness = bpp_fitness * 0.7 + psnr_fitness * 0.3  # Prioritize BPP
+        
         results[idx, 0] = payload
         results[idx, 1] = psnr
+        results[idx, 2] = fitness
 
-def brute_force_weight_search_cuda(img, data, EL, weight_range=range(1, 16)):
-    # Generate all weight combinations
-    weight_combinations = np.array(list(itertools.product(weight_range, repeat=4)), dtype=np.int32)
+def brute_force_weight_search_cuda(img, data, EL, target_bpp, target_psnr, weight_range=range(1, 16)):
+    img = cp.asarray(img)
+    data = cp.asarray(data)
     
-    # Move data to GPU
-    d_img = cuda.to_device(img)
-    d_data = cuda.to_device(data)
-    d_weight_combinations = cuda.to_device(weight_combinations)
-    d_results = cuda.device_array((len(weight_combinations), 2), dtype=np.float32)
+    weight_combinations = cp.array(list(itertools.product(weight_range, repeat=4)), dtype=cp.int32)
+    
+    results = cp.zeros((len(weight_combinations), 3), dtype=cp.float32)
 
-    # Set up grid and block dimensions
     threads_per_block = 256
     blocks_per_grid = (len(weight_combinations) + threads_per_block - 1) // threads_per_block
 
-    # Launch kernel
-    evaluate_weights_kernel[blocks_per_grid, threads_per_block](d_img, d_data, EL, d_weight_combinations, d_results)
+    evaluate_weights_kernel[blocks_per_grid, threads_per_block](img, data, EL, weight_combinations, results, target_bpp, target_psnr)
 
-    # Retrieve results
-    results = d_results.copy_to_host()
-
-    # Find best result
-    best_idx = np.argmax(results[:, 0])  # Assuming we want to maximize payload
+    best_idx = cp.argmax(results[:, 2])  # Use fitness for selection
     best_weights = weight_combinations[best_idx]
-    best_payload, best_psnr = results[best_idx]
+    best_payload, best_psnr, best_fitness = results[best_idx]
 
-    return best_weights, (best_payload, best_psnr)
-
-def find_best_weights_ga(img, data, EL, toolbox, population_size=50, generations=20):
-    
-    def evaluate(individual, img=img, data=data, EL=EL):
-        weights = np.array(individual)
-        pred_img = improved_predict_image_cpu(img, weights)
-        embedded, payload, _ = pee_embedding_adaptive(img, data, pred_img, EL)
-        psnr = calculate_psnr(img, embedded)
-        return payload, psnr
-
-    toolbox.register("evaluate", evaluate)
-    toolbox.register("mate", tools.cxTwoPoint)
-    toolbox.register("mutate", tools.mutGaussian, mu=0, sigma=1, indpb=0.2)
-    toolbox.register("select", tools.selTournament, tournsize=3)
-
-    pop = toolbox.population(n=population_size)
-    hof = tools.HallOfFame(1)
-    stats = tools.Statistics(lambda ind: ind.fitness.values)
-    stats.register("avg", np.mean, axis=0)
-    stats.register("min", np.min, axis=0)
-    stats.register("max", np.max, axis=0)
-
-    pop, logbook = algorithms.eaSimple(pop, toolbox, cxpb=0.7, mutpb=0.2, 
-                                       ngen=generations, stats=stats, 
-                                       halloffame=hof, verbose=True)
-
-    best_ind = tools.selBest(pop, 1)[0]
-    return np.array(best_ind), best_ind.fitness.values
-
-def find_best_weights_ga_cuda(img, data, EL, population_size=100, generations=100, target_bpp=0.7, target_psnr=30.0, stage=0, timeout=120, original_img=None):
-    start_time = time.time()
-    last_improvement = 0
-    best_fitness = float('-inf')
-
-    def evaluate(individual):
-        if time.time() - start_time > timeout:
-            raise TimeoutError("GA optimization timed out")
-
-        weights = cp.array([int(w) for w in individual], dtype=cp.int32)
-        pred_img = improved_predict_image_cuda(img, weights)
-        embedded, payload, _ = pee_embedding_adaptive_cuda(img, data, pred_img, EL, stage=stage, target_psnr=target_psnr)
-        
-        if original_img is not None:
-            psnr = calculate_psnr(cp.asnumpy(original_img), cp.asnumpy(embedded))
-            ssim = calculate_ssim(cp.asnumpy(original_img), cp.asnumpy(embedded))
-        else:
-            psnr = calculate_psnr(cp.asnumpy(img), cp.asnumpy(embedded))
-            ssim = calculate_ssim(cp.asnumpy(img), cp.asnumpy(embedded))
-        
-        bpp = payload / img.size
-
-        # Heavily emphasize BPP
-        bpp_fitness = min(3.0, (bpp / target_bpp) ** 3)  # Allow BPP fitness to go up to 3.0
-        psnr_fitness = max(0, 1.0 - min(1.0, abs(psnr - target_psnr) / target_psnr))
-        ssim_fitness = ssim
-        
-        # Adjust weights to strongly prioritize BPP, especially in early stages
-        stage_factor = max(0, 1 - stage * 0.2)  # Decreases with each stage
-        bpp_weight = 0.8 + 0.1 * stage_factor
-        psnr_weight = 0.15 - 0.05 * stage_factor
-        ssim_weight = 0.05 - 0.05 * stage_factor
-        
-        fitness = bpp_weight * bpp_fitness + psnr_weight * psnr_fitness + ssim_weight * ssim_fitness
-        return (fitness,)
-
-    creator.create("FitnessMax", base.Fitness, weights=(1.0,))
-    creator.create("Individual", list, fitness=creator.FitnessMax)
-
-    toolbox = base.Toolbox()
-    toolbox.register("attr_int", random.randint, 1, 15)
-    toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_int, n=4)
-    toolbox.register("population", tools.initRepeat, list, toolbox.individual)
-    toolbox.register("evaluate", evaluate)
-    toolbox.register("mate", tools.cxTwoPoint)
-    toolbox.register("mutate", tools.mutUniformInt, low=1, up=15, indpb=0.2)
-    toolbox.register("select", tools.selTournament, tournsize=3)
-
-    pop = toolbox.population(n=population_size)
-    hof = tools.HallOfFame(1)
-    stats = tools.Statistics(lambda ind: ind.fitness.values)
-    stats.register("avg", np.mean)
-    stats.register("min", np.min)
-    stats.register("max", np.max)
-
-    try:
-        for gen in range(generations):
-            pop, logbook = algorithms.eaSimple(pop, toolbox, cxpb=0.7, mutpb=0.2, 
-                                               ngen=1, stats=stats, 
-                                               halloffame=hof, verbose=False)
-            
-            current_best = hof[0].fitness.values[0]
-            
-            if current_best > best_fitness:
-                best_fitness = current_best
-                last_improvement = gen
-            elif gen - last_improvement > 10:  # Early stopping if no improvement for 10 generations
-                break
-            
-            if time.time() - start_time > timeout:
-                break
-
-    except TimeoutError:
-        print("GA optimization timed out")
-    except Exception as e:
-        print(f"An error occurred during GA optimization: {e}")
-
-    best_ind = tools.selBest(pop, 1)[0]
-    return cp.array([int(w) for w in best_ind], dtype=cp.int32), best_ind.fitness.values
-
-# Clean up DEAP globals
-del creator.FitnessMax
-del creator.Individual
+    return cp.asnumpy(best_weights), (float(best_payload), float(best_psnr))
 
 def encode_pee_info(pee_info):
     encoded = struct.pack('B', pee_info['total_rotations'])

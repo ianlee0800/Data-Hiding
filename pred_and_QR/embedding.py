@@ -3,14 +3,12 @@ import warnings
 import numpy as np
 import cupy as cp
 from image_processing import (
-    generate_histogram,
     merge_image,
     split_image,
-    save_histogram
+    split_image_into_quarters
 )
 from utils import (
-    find_best_weights_ga,
-    find_best_weights_ga_cuda,
+    brute_force_weight_search_cuda,
     generate_random_binary_array
 )
 from common import *
@@ -18,33 +16,18 @@ from pee import *
 import random
 from deap import base, creator, tools
 
-warnings.filterwarnings("ignore", category=RuntimeWarning, module="deap.creator")
 warnings.simplefilter('ignore', category=NumbaPerformanceWarning)
-
-if 'FitnessMax' not in creator.__dict__:
-    creator.create("FitnessMax", base.Fitness, weights=(1.0, 1.0))
-if 'Individual' not in creator.__dict__:
-    creator.create("Individual", list, fitness=creator.FitnessMax)
 
 def pee_process_with_rotation(img, total_rotations, ratio_of_ones):
     height, width = img.shape
     pee_stages = []
     total_payload = 0
-    current_img = img.copy()
+    current_img = cp.asarray(img)  # Convert to CuPy array
     
-    # 选择实现（CPU 版本）
-    _, embed_func, predict_func = choose_pee_implementation(use_cuda=False)
-
-    # 创建 toolbox
-    toolbox = base.Toolbox()
-    toolbox.register("attr_int", random.randint, 1, 15)
-    toolbox.register("individual", tools.initRepeat, creator.Individual, toolbox.attr_int, n=4)
-    toolbox.register("population", tools.initRepeat, list, toolbox.individual)
-
     for rotation in range(total_rotations):
         print(f"Starting rotation {rotation}")
         
-        # 将图像分割成四个子图像
+        # Split the image into four sub-images
         sub_images = split_image(current_img)
         embedded_sub_images = []
         sub_payloads = []
@@ -52,37 +35,37 @@ def pee_process_with_rotation(img, total_rotations, ratio_of_ones):
         sub_ssims = []
         
         for i, sub_img in enumerate(sub_images):
-            # 生成随机数据
-            sub_data = np.random.binomial(1, ratio_of_ones, sub_img.size).astype(np.uint8)
+            # Generate random data
+            sub_data = generate_random_binary_array(sub_img.size, ratio_of_ones)
+            sub_data = cp.asarray(sub_data, dtype=cp.uint8)
             
-            # 随机选择 EL
+            # Randomly choose EL
             EL = np.random.choice([1, 3, 5, 7])
             
-            # 找到最佳权重
-            weights, fitness = find_best_weights_ga(sub_img, sub_data, EL, toolbox)
+            # Find best weights using CUDA brute force search
+            weights, (payload, _) = brute_force_weight_search_cuda(sub_img, sub_data, EL)
             
-            # 生成预测图像
-            pred_sub_img = predict_func(sub_img, weights)
+            # Generate predicted image
+            pred_sub_img = improved_predict_image_cuda(sub_img, weights)
             
-            # 执行 PEE 嵌入
-            embedded_sub, payload, _ = embed_func(sub_img, sub_data, pred_sub_img, EL)
+            # Perform PEE embedding
+            embedded_sub, payload, _ = pee_embedding_adaptive_cuda(sub_img, sub_data, pred_sub_img, EL)
             
             embedded_sub_images.append(embedded_sub)
             sub_payloads.append(payload)
             
-            # 计算 PSNR 和 SSIM
-            sub_psnr = calculate_psnr(sub_img, embedded_sub)
-            sub_ssim = calculate_ssim(sub_img, embedded_sub)
+            # Calculate PSNR and SSIM
+            sub_psnr = calculate_psnr(cp.asnumpy(sub_img), cp.asnumpy(embedded_sub))
+            sub_ssim = calculate_ssim(cp.asnumpy(sub_img), cp.asnumpy(embedded_sub))
             sub_psnrs.append(sub_psnr)
             sub_ssims.append(sub_ssim)
         
-        # 合并子图像
+        # Merge sub-images
         embedded_img = merge_image(embedded_sub_images)
-    
         
-        # 计算整体 PSNR 和 SSIM
-        psnr = calculate_psnr(current_img, embedded_img)
-        ssim = calculate_ssim(current_img, embedded_img)
+        # Calculate overall PSNR and SSIM
+        psnr = calculate_psnr(cp.asnumpy(current_img), cp.asnumpy(embedded_img))
+        ssim = calculate_ssim(cp.asnumpy(current_img), cp.asnumpy(embedded_img))
         
         pee_stages.append({
             'rotation': rotation,
@@ -95,9 +78,9 @@ def pee_process_with_rotation(img, total_rotations, ratio_of_ones):
         })
         
         total_payload += sum(sub_payloads)
-        current_img = np.rot90(embedded_img)
+        current_img = cp.rot90(embedded_img)
 
-    return current_img, total_payload, pee_stages
+    return cp.asnumpy(current_img), total_payload, pee_stages
 
 def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_different_weights):
     original_img = cp.asarray(img)
@@ -108,7 +91,7 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
     current_img = original_img.copy()
     previous_psnr = float('inf')
     previous_ssim = 1.0
-    previous_stage_payload = float('inf')  # Initialize with a high value
+    previous_stage_payload = float('inf')
 
     original_sub_images = split_image(original_img)
     sub_images = [img.copy() for img in original_sub_images]
@@ -117,15 +100,13 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
         print(f"\nStarting embedding {embedding}")
         
         target_psnr = max(20.0, min(50.0, previous_psnr - 0.5))
-        target_bpp = max(0.7, 0.8 - embedding * 0.05)  # Start higher and decrease gradually
+        target_bpp = max(0.7, 0.8 - embedding * 0.05)
         print(f"Target PSNR for embedding {embedding}: {target_psnr}")
         print(f"Target BPP for embedding {embedding}: {target_bpp}")
         
-        # Calculate target payload for this stage
         if embedding == 0:
-            target_payload = float('inf')  # No limit for first stage
+            target_payload = float('inf')
         else:
-            # Decrease target payload by 5-10% each stage starting from stage 1
             decrease_factor = 1 - (0.05 + 0.05 * (embedding - 1) / (total_embeddings - 1))
             target_payload = int(previous_stage_payload * decrease_factor)
         
@@ -145,62 +126,28 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
         stage_payload = 0
         embedded_sub_images = []
         rotated_embedded_sub_images = []
-        rotated_sub_images = []
-        stage_rotation = embedding * 90  # Determine rotation angle based on stage
+        stage_rotation = embedding * 90
         
-        # First, create all rotated sub-images
         for i, sub_img in enumerate(sub_images):
             rotated_sub_img = cp.rot90(sub_img, k=embedding)
-            rotated_sub_images.append(rotated_sub_img)
-
-        # Generate weights once for all sub-images if use_different_weights is False
-        if not use_different_weights:
-            sub_data = generate_random_binary_array(rotated_sub_images[0].size, ratio_of_ones)
-            sub_data = cp.asarray(sub_data, dtype=cp.uint8)
-            max_el = 11 if embedding == 0 else max(7, 11 - embedding * 2)
-            EL = choose_el_for_rotation(previous_psnr, total_payload, total_pixels, embedding, total_embeddings, max_el)
-            common_weights, _ = find_best_weights_ga_cuda(rotated_sub_images[0], sub_data, EL, 
-                                                          population_size=50, generations=50, 
-                                                          target_bpp=target_bpp, target_psnr=target_psnr, 
-                                                          stage=embedding, timeout=120, 
-                                                          original_img=original_sub_images[0])
-
-        # Calculate per-subimage target payload
-        if embedding == 0:
-            sub_target_payload = float('inf')
-        else:
-            sub_target_payload = target_payload // 4  # Divide evenly among 4 sub-images
-
-        for i, rotated_sub_img in enumerate(rotated_sub_images):
             sub_data = generate_random_binary_array(rotated_sub_img.size, ratio_of_ones)
             sub_data = cp.asarray(sub_data, dtype=cp.uint8)
             
-            # Use a higher max_el, especially for the first embedding
             max_el = 11 if embedding == 0 else max(7, 11 - embedding * 2)
             EL = choose_el_for_rotation(previous_psnr, total_payload, total_pixels, embedding, total_embeddings, max_el)
             
-            if use_different_weights:
-                weights, _ = find_best_weights_ga_cuda(rotated_sub_img, sub_data, EL, 
-                                                       population_size=50, generations=50, 
-                                                       target_bpp=target_bpp, target_psnr=target_psnr, 
-                                                       stage=embedding, timeout=120, 
-                                                       original_img=original_sub_images[i])
-            else:
-                weights = common_weights
+            if use_different_weights or i == 0:
+                weights, (payload, sub_psnr) = brute_force_weight_search_cuda(rotated_sub_img, sub_data, EL, target_bpp, target_psnr)
             
             pred_sub_img = improved_predict_image_cuda(rotated_sub_img, weights)
             
             if embedding == 0:
-                # For stage 0, embed as much as possible
                 embedded_sub, payload, _ = pee_embedding_adaptive_cuda(rotated_sub_img, sub_data, pred_sub_img, EL, stage=embedding, target_psnr=target_psnr)
             else:
-                # Limit the sub_data to the sub_target_payload
-                limited_sub_data = sub_data[:sub_target_payload]
+                limited_sub_data = sub_data[:min(len(sub_data), target_payload // 4)]
                 embedded_sub, payload, _ = pee_embedding_adaptive_cuda(rotated_sub_img, limited_sub_data, pred_sub_img, EL, stage=embedding, target_psnr=target_psnr)
             
-            # Rotate embedded sub-image back to original orientation
             rotated_back_sub = cp.rot90(embedded_sub, k=-embedding)
-            
             embedded_sub_images.append(rotated_back_sub)
             rotated_embedded_sub_images.append(embedded_sub)
             stage_payload += payload
@@ -224,13 +171,9 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
             stage_info['sub_images'].append(block_info)
             stage_info['block_params'].append(block_info)
 
-        # Merge rotated sub-images (for display)
-        stage_img_rotated = merge_image(rotated_embedded_sub_images)
-        stage_img = merge_image(embedded_sub_images)  # This is now correctly oriented
-        stage_info['stage_img_rotated'] = stage_img_rotated
+        stage_img = merge_image(embedded_sub_images)
         stage_info['stage_img'] = stage_img
 
-        # Calculate overall stage metrics using the correctly oriented image
         stage_info['psnr'] = float(calculate_psnr(cp.asnumpy(original_img), cp.asnumpy(stage_img)))
         stage_info['ssim'] = float(calculate_ssim(cp.asnumpy(original_img), cp.asnumpy(stage_img)))
         stage_info['hist_corr'] = float(histogram_correlation(
@@ -240,15 +183,11 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
         stage_info['payload'] = stage_payload
         stage_info['bpp'] = float(stage_info['payload'] / total_pixels)
         
-        # Ensure quality metrics are decreasing
         if stage_info['psnr'] > previous_psnr or stage_info['ssim'] > previous_ssim:
             print(f"Warning: Image quality increased in stage {embedding}. Adjusting embedding...")
-            # Here you could implement a strategy to reduce the embedding capacity or adjust weights
-            # For now, we'll just update the metrics to ensure they're decreasing
             stage_info['psnr'] = min(stage_info['psnr'], previous_psnr - 0.1)
             stage_info['ssim'] = min(stage_info['ssim'], previous_ssim - 0.005)
         
-        # Ensure payload is decreasing (except for stage 0)
         if embedding != 0 and stage_info['payload'] > previous_stage_payload:
             print(f"Warning: Stage {embedding} payload ({stage_info['payload']}) exceeds previous stage ({previous_stage_payload})")
             print("Adjusting payload to match target")
@@ -259,7 +198,7 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
         total_payload += stage_info['payload']
         previous_psnr = stage_info['psnr']
         previous_ssim = stage_info['ssim']
-        previous_stage_payload = stage_info['payload']  # Update for next iteration
+        previous_stage_payload = stage_info['payload']
 
         print(f"Embedding {embedding} summary:")
         print(f"  Payload: {stage_info['payload']}")
@@ -269,23 +208,14 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
         print(f"  Hist Corr: {stage_info['hist_corr']:.4f}")
         print(f"  Rotation: {stage_rotation}")
 
-        # Pass rotated back sub-images to next stage
         sub_images = split_image(stage_img)
 
-    # Final PEE image (all sub-images rotated back to 0 degrees)
     final_pee_img = cp.asnumpy(pee_stages[-1]['stage_img'])
     
-    rotation_images = [stage['stage_img_rotated'] for stage in pee_stages]
-    rotation_histograms = [cp.histogram(stage['stage_img_rotated'], bins=256, range=(0, 255))[0] for stage in pee_stages]
+    rotation_images = [stage['stage_img'] for stage in pee_stages]
+    rotation_histograms = [cp.histogram(stage['stage_img'], bins=256, range=(0, 255))[0] for stage in pee_stages]
     
     return final_pee_img, int(total_payload), pee_stages, rotation_images, rotation_histograms, total_embeddings
-
-import cupy as cp
-import numpy as np
-from common import *
-from pee import *
-from utils import *
-from image_processing import split_image, split_image_into_quarters, merge_image
 
 def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, block_base=True):
     original_img = cp.asarray(img)
@@ -302,15 +232,13 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         print(f"\nStarting embedding {embedding}")
         
         target_psnr = max(20.0, min(50.0, previous_psnr - 0.5))
-        target_bpp = max(0.7, 0.8 - embedding * 0.05)  # Start higher and decrease gradually
+        target_bpp = max(0.7, 0.8 - embedding * 0.05)
         print(f"Target PSNR for embedding {embedding}: {target_psnr}")
         print(f"Target BPP for embedding {embedding}: {target_bpp}")
         
-        # Calculate target payload for this stage
         if embedding == 0:
-            target_payload = float('inf')  # No limit for first stage
+            target_payload = float('inf')
         else:
-            # Decrease target payload by 5-10% each stage starting from stage 1
             decrease_factor = 1 - (0.05 + 0.05 * (embedding - 1) / (total_embeddings - 1))
             target_payload = int(previous_stage_payload * decrease_factor)
         
@@ -325,10 +253,9 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
             'hist_corr': 0,
             'bpp': 0,
             'block_params': [],
-            'rotated_sub_images': []  # New list to store rotated sub-images
+            'rotated_sub_images': []
         }
         
-        # Split the image using the selected method
         if block_base:
             sub_images = split_image(current_img)
         else:
@@ -338,28 +265,8 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         embedded_sub_images = []
         rotated_embedded_sub_images = []
         stage_rotations = [0, 0, 0, 0]
-        rotated_sub_images = []
-
-        # Generate weights once for all sub-images if use_different_weights is False
-        if not use_different_weights:
-            sub_data = generate_random_binary_array(sub_images[0].size, ratio_of_ones)
-            sub_data = cp.asarray(sub_data, dtype=cp.uint8)
-            max_el = 11 if embedding == 0 else max(7, 11 - embedding * 2)
-            EL = choose_el_for_rotation(previous_psnr, total_payload, total_pixels, embedding, total_embeddings, max_el)
-            common_weights, _ = find_best_weights_ga_cuda(sub_images[0], sub_data, EL, 
-                                                          population_size=50, generations=50, 
-                                                          target_bpp=target_bpp, target_psnr=target_psnr, 
-                                                          stage=embedding, timeout=120, 
-                                                          original_img=sub_images[0])
-
-        # Calculate per-subimage target payload
-        if embedding == 0:
-            sub_target_payload = float('inf')
-        else:
-            sub_target_payload = target_payload // 4  # Divide evenly among 4 sub-images
 
         for i, sub_img in enumerate(sub_images):
-            # Apply random rotation
             rotation = random.randint(-4, 4) * 90
             stage_rotations[i] = rotation
             rotated_sub_img = cp.rot90(sub_img, k=rotation // 90)
@@ -367,27 +274,18 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
             sub_data = generate_random_binary_array(rotated_sub_img.size, ratio_of_ones)
             sub_data = cp.asarray(sub_data, dtype=cp.uint8)
             
-            # Use a higher max_el, especially for the first embedding
             max_el = 11 if embedding == 0 else max(7, 11 - embedding * 2)
             EL = choose_el_for_rotation(previous_psnr, total_payload, total_pixels, embedding, total_embeddings, max_el)
             
-            if use_different_weights:
-                weights, _ = find_best_weights_ga_cuda(rotated_sub_img, sub_data, EL, 
-                                                       population_size=50, generations=50, 
-                                                       target_bpp=target_bpp, target_psnr=target_psnr, 
-                                                       stage=embedding, timeout=120, 
-                                                       original_img=sub_img)
-            else:
-                weights = common_weights
+            if use_different_weights or i == 0:
+                weights, (sub_payload, sub_psnr) = brute_force_weight_search_cuda(rotated_sub_img, sub_data, EL, target_bpp, target_psnr)
             
             pred_sub_img = improved_predict_image_cuda(rotated_sub_img, weights)
             
             if embedding == 0:
-                # For stage 0, embed as much as possible
                 embedded_sub, payload, _ = pee_embedding_adaptive_cuda(rotated_sub_img, sub_data, pred_sub_img, EL, stage=embedding, target_psnr=target_psnr)
             else:
-                # Limit the sub_data to the sub_target_payload
-                limited_sub_data = sub_data[:sub_target_payload]
+                limited_sub_data = sub_data[:min(len(sub_data), target_payload // 4)]
                 embedded_sub, payload, _ = pee_embedding_adaptive_cuda(rotated_sub_img, limited_sub_data, pred_sub_img, EL, stage=embedding, target_psnr=target_psnr)
             
             rotated_back_sub = cp.rot90(embedded_sub, k=-rotation // 90)
@@ -415,7 +313,6 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
             stage_info['block_params'].append(block_info)
             stage_info['rotated_sub_images'].append(cp.asnumpy(embedded_sub))
 
-        # Merge the sub-images for the regular stage image
         if block_base:
             stage_img = merge_image(embedded_sub_images)
         else:
@@ -433,13 +330,11 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         stage_info['payload'] = stage_payload
         stage_info['bpp'] = float(stage_info['payload'] / total_pixels)
         
-        # Ensure quality metrics are decreasing
         if stage_info['psnr'] > previous_psnr or stage_info['ssim'] > previous_ssim:
             print(f"Warning: Image quality increased in stage {embedding}. Adjusting embedding...")
             stage_info['psnr'] = min(stage_info['psnr'], previous_psnr - 0.1)
             stage_info['ssim'] = min(stage_info['ssim'], previous_ssim - 0.005)
         
-        # Ensure payload is decreasing (except for stage 0)
         if embedding != 0 and stage_info['payload'] > previous_stage_payload:
             print(f"Warning: Stage {embedding} payload ({stage_info['payload']}) exceeds previous stage ({previous_stage_payload})")
             print("Adjusting payload to match target")
