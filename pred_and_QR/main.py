@@ -4,7 +4,6 @@ import os
 import matplotlib.pyplot as plt
 import cupy as cp
 import numpy as np
-import json
 from image_processing import (
     save_image,
     save_histogram,
@@ -34,7 +33,7 @@ def main():
     total_embeddings = 5
     ratio_of_ones = 0.5
     use_different_weights = True
-    split_first = True  # Use split_first to choose PEE method
+    split_first = True # Use split_first to choose PEE method
     block_base = False # New parameter to choose between block-based and quarter-based splitting
 
     # Create necessary directories

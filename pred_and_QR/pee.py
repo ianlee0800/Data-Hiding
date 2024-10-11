@@ -1,6 +1,5 @@
 import numpy as np
 from numba import cuda
-import math
 from image_processing import improved_predict_image_cuda
 from common import *
 
