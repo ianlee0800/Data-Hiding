@@ -120,33 +120,40 @@ def improved_predict_image_cpu(img, weight):
     return pred_img
 
 @cuda.jit
-def compute_adaptive_el_kernel(img, local_el, window_size, max_el):
+def compute_improved_adaptive_el_kernel(img, local_el, window_size, max_el):
     x, y = cuda.grid(2)
     if x < img.shape[1] and y < img.shape[0]:
         local_sum = 0
+        local_sum_sq = 0
         count = 0
         for i in range(max(0, y - window_size // 2), min(img.shape[0], y + window_size // 2 + 1)):
             for j in range(max(0, x - window_size // 2), min(img.shape[1], x + window_size // 2 + 1)):
-                local_sum += img[i, j]
+                pixel_value = img[i, j]
+                local_sum += pixel_value
+                local_sum_sq += pixel_value * pixel_value
                 count += 1
+        
         local_mean = local_sum / count
-        local_var = 0
-        for i in range(max(0, y - window_size // 2), min(img.shape[0], y + window_size // 2 + 1)):
-            for j in range(max(0, x - window_size // 2), min(img.shape[1], x + window_size // 2 + 1)):
-                local_var += (img[i, j] - local_mean) ** 2
-        local_var /= count
-        el_value = min(max(1, int(max_el * (1 - local_var / 6400))), max_el)
-        local_el[y, x] = el_value if el_value % 2 == 1 else el_value - 1
+        local_variance = (local_sum_sq / count) - (local_mean * local_mean)
+        
+        # 使用方差來調整EL值
+        normalized_variance = min(local_variance / 6400, 1)  # 假設最大方差為6400 (80^2)
+        el_value = int(max_el * (1 - normalized_variance))
+        
+        # 確保EL值為奇數
+        el_value = max(1, min(el_value, max_el))
+        if el_value % 2 == 0:
+            el_value -= 1
+        
+        local_el[y, x] = el_value
 
-def compute_adaptive_el(img, window_size=5, max_el=7):
-    if max_el % 2 == 0:
-        max_el -= 1  # Ensure max_el is odd
-    local_el = cuda.device_array(img.shape, dtype=np.int32)
+def compute_improved_adaptive_el(img, window_size=5, max_el=7):
+    local_el = cp.empty(img.shape, dtype=cp.int32)
     threads_per_block = (16, 16)
     blocks_per_grid_x = (img.shape[1] + threads_per_block[0] - 1) // threads_per_block[0]
     blocks_per_grid_y = (img.shape[0] + threads_per_block[1] - 1) // threads_per_block[1]
     blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
     
-    compute_adaptive_el_kernel[blocks_per_grid, threads_per_block](img, local_el, window_size, max_el)
+    compute_improved_adaptive_el_kernel[blocks_per_grid, threads_per_block](img, local_el, window_size, max_el)
     
     return local_el

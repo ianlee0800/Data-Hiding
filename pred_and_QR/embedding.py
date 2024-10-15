@@ -81,7 +81,7 @@ def pee_process_with_rotation(img, total_rotations, ratio_of_ones):
 
     return cp.asnumpy(current_img), total_payload, pee_stages
 
-def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_different_weights):
+def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, el_mode):
     original_img = cp.asarray(img)
     height, width = img.shape
     total_pixels = height * width
@@ -134,7 +134,16 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
             sub_data = generate_random_binary_array(rotated_sub_img.size, ratio_of_ones)
             sub_data = cp.asarray(sub_data, dtype=cp.uint8)
             
-            local_el = compute_adaptive_el(rotated_sub_img)
+            # Determine max_el based on el_mode
+            if el_mode == 1:  # Increasing
+                max_el = 3 + embedding * 2
+            elif el_mode == 2:  # Decreasing
+                max_el = 11 - embedding * 2
+            else:  # No restriction
+                max_el = 7
+            
+            # Use improved adaptive EL calculation
+            local_el = compute_improved_adaptive_el(rotated_sub_img, window_size=5, max_el=max_el)
             
             if use_different_weights or i == 0:
                 weights, (sub_payload, sub_psnr) = brute_force_weight_search_cuda(rotated_sub_img, sub_data, local_el, target_bpp, target_psnr, embedding)
@@ -156,12 +165,12 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
                 np.histogram(rotated_back_sub_np, bins=256, range=(0, 255))[0]
             )
             
-            local_el_np = local_el.copy_to_host() if isinstance(local_el, cuda.cudadrv.devicearray.DeviceNDArray) else local_el
-            max_el = int(np.max(local_el_np))
+            local_el_np = local_el.get()
+            max_el_used = int(np.max(local_el_np))
 
             block_info = {
                 'weights': weights.tolist() if isinstance(weights, np.ndarray) else weights,
-                'EL': max_el,
+                'EL': max_el_used,
                 'payload': int(payload),
                 'psnr': float(sub_psnr),
                 'ssim': float(sub_ssim),
@@ -219,7 +228,7 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
     
     return final_pee_img, int(total_payload), pee_stages, rotation_images, rotation_histograms, total_embeddings
 
-def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, block_base=True):
+def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, block_base, el_mode):
     original_img = cp.asarray(img)
     height, width = original_img.shape
     total_pixels = height * width
@@ -271,17 +280,27 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
             first_sub_img = sub_images[0]
             max_sub_payload = first_sub_img.size
         
-        stage_rotations = [random.choice([-270, -180, -90, 0, 90, 180, 270]) for _ in range(len(sub_images))]
+        # Fix: Specify size in cp.random.choice
+        stage_rotations = cp.random.choice([-270, -180, -90, 0, 90, 180, 270], size=len(sub_images))
 
         for i, sub_img in enumerate(sub_images):
             sub_img = cp.asarray(sub_img)
-            rotation = stage_rotations[i]
+            rotation = int(stage_rotations[i])  # Convert to int to ensure compatibility
             rotated_sub_img = cp.rot90(sub_img, k=rotation // 90)
 
             sub_data = generate_random_binary_array(rotated_sub_img.size, ratio_of_ones)
             sub_data = cp.asarray(sub_data, dtype=cp.uint8)
             
-            local_el = compute_adaptive_el(rotated_sub_img)
+            # Determine max_el based on el_mode
+            if el_mode == 1:  # Increasing
+                max_el = 3 + embedding * 2
+            elif el_mode == 2:  # Decreasing
+                max_el = 11 - embedding * 2
+            else:  # No restriction
+                max_el = 7
+            
+            # Use improved adaptive EL calculation
+            local_el = compute_improved_adaptive_el(rotated_sub_img, window_size=5, max_el=max_el)
             
             if use_different_weights or i == 0:
                 weights, (sub_payload, sub_psnr) = brute_force_weight_search_cuda(rotated_sub_img, sub_data, local_el, target_bpp, target_psnr, embedding)
@@ -303,12 +322,12 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
                 np.histogram(rotated_back_sub_np, bins=256, range=(0, 255))[0]
             )
             
-            local_el_np = local_el.copy_to_host() if isinstance(local_el, cuda.cudadrv.devicearray.DeviceNDArray) else local_el
-            max_el = int(np.max(local_el_np))
+            local_el_np = local_el.get()
+            max_el_used = int(np.max(local_el_np))
 
             block_info = {
                 'weights': weights.tolist() if isinstance(weights, np.ndarray) else weights,
-                'EL': max_el,
+                'EL': max_el_used,
                 'payload': int(payload),
                 'psnr': float(sub_psnr),
                 'ssim': float(sub_ssim),
@@ -317,8 +336,8 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
             }
             stage_info['sub_images'].append(block_info)
             stage_info['block_params'].append(block_info)
-            stage_info['rotated_sub_images'].append(cp.asnumpy(embedded_sub))  # Store rotated sub-image
-            stage_info['non_rotated_sub_images'].append(cp.asnumpy(rotated_back_sub))  # Store non-rotated sub-image
+            stage_info['rotated_sub_images'].append(cp.asnumpy(embedded_sub))
+            stage_info['non_rotated_sub_images'].append(cp.asnumpy(rotated_back_sub))
 
         if block_base:
             stage_img = merge_image(embedded_sub_images)
@@ -362,13 +381,13 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         print(f"  PSNR: {stage_info['psnr']:.2f}")
         print(f"  SSIM: {stage_info['ssim']:.4f}")
         print(f"  Hist Corr: {stage_info['hist_corr']:.4f}")
-        print(f"  Rotations: {stage_rotations}")
+        print(f"  Rotations: {stage_rotations.tolist()}")
 
         current_img = stage_img
 
     final_pee_img = cp.asnumpy(current_img)
     
-    return final_pee_img, int(total_payload), pee_stages, stage_rotations
+    return final_pee_img, int(total_payload), pee_stages, stage_rotations.tolist()
 
 def histogram_data_hiding(img, pee_info_bits, ratio_of_ones=1):
     print(f"HS Input - Max pixel value: {np.max(img)}")

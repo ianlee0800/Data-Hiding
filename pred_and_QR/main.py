@@ -12,7 +12,7 @@ from image_processing import (
 )
 from embedding import (
     pee_process_with_rotation_cuda,
-    pee_process_with_split_cuda  # 新增這行
+    pee_process_with_split_cuda
 )
 from utils import (
     create_pee_info_table
@@ -32,6 +32,7 @@ def main():
     filetype = "png"
     total_embeddings = 5
     ratio_of_ones = 0.5
+    el_mode = 0  # 0: 無限制, 1: 漸增, 2: 漸減
     use_different_weights = True
     split_first = True # Use split_first to choose PEE method
     block_base = False # New parameter to choose between block-based and quarter-based splitting
@@ -63,11 +64,11 @@ def main():
         try:
             if split_first:
                 final_pee_img, total_payload, pee_stages, stage_rotations = pee_process_with_split_cuda(
-                    origImg, total_embeddings, ratio_of_ones, use_different_weights, block_base
+                    origImg, total_embeddings, ratio_of_ones, use_different_weights, block_base, el_mode
                 )
             else:
                 final_pee_img, total_payload, pee_stages, rotation_images, rotation_histograms, actual_embeddings = pee_process_with_rotation_cuda(
-                    origImg, total_embeddings, ratio_of_ones, use_different_weights
+                    origImg, total_embeddings, ratio_of_ones, use_different_weights, el_mode
                 )
 
             # Create and print PEE information table

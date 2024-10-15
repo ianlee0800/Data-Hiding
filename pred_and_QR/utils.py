@@ -1,6 +1,7 @@
 import numpy as np
 import struct
 import itertools
+import math
 from common import *
 from pee import *
 from prettytable import PrettyTable
