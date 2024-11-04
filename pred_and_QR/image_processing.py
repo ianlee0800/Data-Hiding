@@ -21,12 +21,6 @@ def save_image(image, filepath):
     
     cv2.imwrite(filepath, image)
 
-def image_rerotation(image, times):
-    """將影像旋轉回原方向"""
-    if isinstance(image, np.ndarray):
-        image = cp.asarray(image)
-    return cp.rot90(image, -times % 4)
-
 def save_histogram(img, filename, title):
     if isinstance(img, cp.ndarray):
         img = cp.asnumpy(img)
@@ -87,94 +81,149 @@ def array1D_transfer_to_array2D(array1D):
             i += 1
     return array2D
 
-def two_array2D_add_or_subtract(array2D_1, array2D_2, sign):
-    """兩個二維陣列的數值相加或相減"""
-    return array2D_1 + sign * array2D_2
-
-def find_w(image):
-    """找出模塊的大小"""
-    height, width = image.shape
-    RLArray = [0] * height
-    for y in range(height):
-        RunLength = 0
-        for x in range(width - 1):
-            if image[y, x] == image[y, x + 1]:
-                RunLength += 1
-            else:
-                RLArray[RunLength + 1] += 1
-                RunLength = 0
-    return find_max(RLArray)
-
-def image_difference_shift(array2D, a):
-    """影像差值偏移"""
-    row, column = array2D.shape
-    array2D_s = array2D.copy()
-    func = a % 2
-    r = np.floor(a/2)
-    for j in range(1, row-1):
-        for i in range(1, column-1):
-            value = array2D[j,i]
-            shift = value
-            if func == 1 or a == 1:
-                if value > r:
-                    shift = value+r
-                elif value < -r:
-                    shift = value-r-1
-            elif func == 0:
-                if value > r:
-                    shift = value+r
-                elif value < (-r+1):
-                    shift = value-r
-            array2D_s[j,i] = shift
-    return array2D_s
-
-def split_image(img):
+def split_image_flexible(img, split_size, block_base=False):
+    """
+    將圖像切割成 split_size x split_size 個區塊
+    
+    Parameters:
+    -----------
+    img : numpy.ndarray or cupy.ndarray
+        輸入圖像 (512x512)
+    split_size : int
+        每個維度要切割的數量（例如：4 表示切成 4x4=16 塊）
+    block_base : bool
+        True: 使用 block-based 分割
+        False: 使用 quarter-based 分割
+    
+    Returns:
+    --------
+    list
+        包含所有切割後區塊的列表
+    """
     if isinstance(img, cp.ndarray):
         xp = cp
     else:
         xp = np
+
     height, width = img.shape
-    sub_height, sub_width = height // 2, width // 2
-    sub_images = [
-        img[0::2, 0::2],  # 左上
-        img[0::2, 1::2],  # 右上
-        img[1::2, 0::2],  # 左下
-        img[1::2, 1::2]   # 右下
-    ]
-    return [xp.asarray(sub_img) for sub_img in sub_images]
+    sub_height = height // split_size
+    sub_width = width // split_size
+    
+    sub_images = []
+    if block_base:
+        # Block-based splitting
+        for i in range(split_size):
+            for j in range(split_size):
+                sub_img = img[i*sub_height:(i+1)*sub_height, 
+                             j*sub_width:(j+1)*sub_width]
+                sub_images.append(xp.asarray(sub_img))
+    else:
+        # Quarter-based splitting (交錯式分割)
+        for i in range(split_size):
+            for j in range(split_size):
+                sub_img = img[i::split_size, j::split_size]
+                sub_images.append(xp.asarray(sub_img))
+    
+    return sub_images
 
-def split_image_into_quarters(img):
-    h, w = img.shape
-    mid_h, mid_w = h // 2, w // 2
-    return [
-        img[:mid_h, :mid_w],
-        img[:mid_h, mid_w:],
-        img[mid_h:, :mid_w],
-        img[mid_h:, mid_w:]
-    ]
-
-def merge_image(sub_images):
+def merge_image_flexible(sub_images, split_size, block_base=False):
+    """
+    將切割後的區塊合併回完整圖像
+    
+    Parameters:
+    -----------
+    sub_images : list
+        包含所有切割後區塊的列表
+    split_size : int
+        原始切割時的尺寸
+    block_base : bool
+        True: 使用 block-based 合併
+        False: 使用 quarter-based 合併
+    
+    Returns:
+    --------
+    numpy.ndarray or cupy.ndarray
+        合併後的完整圖像
+    """
     if not sub_images:
         raise ValueError("No sub-images to merge")
-    
-    print(f"Number of sub-images to merge: {len(sub_images)}")
-    print(f"Sub-image shapes: {[img.shape for img in sub_images]}")
     
     # 確保所有子圖像都是 CuPy 數組
     sub_images = [cp.asarray(img) for img in sub_images]
     
-    sub_height, sub_width = sub_images[0].shape
-    height, width = sub_height * 2, sub_width * 2
+    sub_height = 512 // split_size
+    sub_width = 512 // split_size
     
-    merged = cp.zeros((height, width), dtype=sub_images[0].dtype)
-    merged[0::2, 0::2] = sub_images[0]
-    merged[0::2, 1::2] = sub_images[1]
-    merged[1::2, 0::2] = sub_images[2]
-    merged[1::2, 1::2] = sub_images[3]
+    merged = cp.zeros((512, 512), dtype=sub_images[0].dtype)
     
-    print(f"Merged image shape: {merged.shape}")
+    if block_base:
+        # Block-based merging
+        for idx, sub_img in enumerate(sub_images):
+            i = idx // split_size
+            j = idx % split_size
+            merged[i*sub_height:(i+1)*sub_height, 
+                   j*sub_width:(j+1)*sub_width] = sub_img
+    else:
+        # Quarter-based merging (交錯式合併)
+        for idx, sub_img in enumerate(sub_images):
+            i = idx // split_size
+            j = idx % split_size
+            merged[i::split_size, j::split_size] = sub_img
     
     return merged
+
+def verify_image_dimensions(img, split_size):
+    """
+    檢查圖像尺寸是否適合進行切割，並返回建議的新尺寸
+    
+    Parameters:
+    -----------
+    img : numpy.ndarray or cupy.ndarray
+        輸入圖像
+    split_size : int
+        每個維度要切割的數量
+    
+    Returns:
+    --------
+    tuple
+        建議的新圖像尺寸 (height, width)
+    """
+    height, width = img.shape
+    
+    # 檢查是否需要調整尺寸
+    new_height = ((height + split_size - 1) // split_size) * split_size
+    new_width = ((width + split_size - 1) // split_size) * split_size
+    
+    if new_height != height or new_width != width:
+        return (new_height, new_width)
+    return (height, width)
+
+def create_collage(images):
+    """Create a collage from multiple images."""
+    # 確保輸入的圖像數量是完全平方數
+    n = len(images)
+    grid_size = int(np.ceil(np.sqrt(n)))
+    
+    # 確保所有圖像都是numpy數組
+    images = [np.array(img) if not isinstance(img, np.ndarray) else img for img in images]
+    
+    # 找出最大維度
+    max_height = max(img.shape[0] for img in images)
+    max_width = max(img.shape[1] for img in images)
+    
+    # 創建拼貼圖
+    collage = np.zeros((max_height * grid_size, max_width * grid_size), dtype=np.uint8)
+    
+    # 填充圖像
+    for idx, img in enumerate(images):
+        i = idx // grid_size
+        j = idx % grid_size
+        y = i * max_height
+        x = j * max_width
+        h, w = img.shape
+        collage[y:y+h, x:x+w] = img
+    
+    return collage
 
 @cuda.jit
 def improved_predict_kernel(img, weights, pred_img, height, width):
@@ -216,25 +265,3 @@ def improved_predict_image_cuda(img, weights):
     improved_predict_kernel[blocks_per_grid, threads_per_block](d_img, d_weights, d_pred_img, height, width)
 
     return d_pred_img
-
-def create_collage(images):
-    """Create a 2x2 collage from four images."""
-    assert len(images) == 4, "Must provide exactly 4 images for the collage"
-    
-    # Ensure all images are numpy arrays
-    images = [np.array(img) if not isinstance(img, np.ndarray) else img for img in images]
-    
-    # Find the maximum dimensions
-    max_height = max(img.shape[0] for img in images)
-    max_width = max(img.shape[1] for img in images)
-    
-    # Create the collage
-    collage = np.zeros((max_height * 2, max_width * 2), dtype=np.uint8)
-    
-    positions = [(0, 0), (0, max_width), (max_height, 0), (max_height, max_width)]
-    
-    for img, (y, x) in zip(images, positions):
-        h, w = img.shape
-        collage[y:y+h, x:x+w] = img
-    
-    return collage

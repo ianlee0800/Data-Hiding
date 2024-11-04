@@ -32,15 +32,17 @@ def main():
     filetype = "png"
     total_embeddings = 5
     ratio_of_ones = 0.5
-    el_mode = 0  # 0: 無限制, 1: 漸增, 2: 漸減
+    el_mode = 2  # 0: 無限制, 1: 漸增, 2: 漸減
     use_different_weights = True
-    split_first = True # Use split_first to choose PEE method
-    block_base = False # New parameter to choose between block-based and quarter-based splitting
+    split_first = True  # Use split_first to choose PEE method
+    split_size = 2  # 新增參數：切割尺寸 (4 表示 4x4=16 塊)
+    block_base = False  # 選擇 block-based 或 quarter-based 分割
 
     # Create necessary directories
     os.makedirs(f"./pred_and_QR/outcome/histogram/{imgName}", exist_ok=True)
     os.makedirs(f"./pred_and_QR/outcome/histogram/{imgName}/difference", exist_ok=True)
     os.makedirs(f"./pred_and_QR/outcome/image/{imgName}", exist_ok=True)
+    os.makedirs(f"./pred_and_QR/outcome/plots/{imgName}", exist_ok=True)  # 新增資料夾用於存放曲線圖
     
     ensure_dir(f"./pred_and_QR/outcome/{imgName}/pee_info.npy")
     
@@ -64,29 +66,30 @@ def main():
         try:
             if split_first:
                 final_pee_img, total_payload, pee_stages, stage_rotations = pee_process_with_split_cuda(
-                    origImg, total_embeddings, ratio_of_ones, use_different_weights, block_base, el_mode
+                    origImg, total_embeddings, ratio_of_ones, use_different_weights, split_size, el_mode, block_base
                 )
             else:
-                final_pee_img, total_payload, pee_stages, rotation_images, rotation_histograms, actual_embeddings = pee_process_with_rotation_cuda(
-                    origImg, total_embeddings, ratio_of_ones, use_different_weights, el_mode
+                final_pee_img, total_payload, pee_stages = pee_process_with_rotation_cuda(
+                    origImg, total_embeddings, ratio_of_ones, use_different_weights, split_size, el_mode
                 )
 
             # Create and print PEE information table
             total_pixels = origImg.size
-            pee_table = create_pee_info_table(pee_stages, use_different_weights, total_pixels)
+            pee_table = create_pee_info_table(pee_stages, use_different_weights, total_pixels, split_size)
             print(pee_table)
 
             # Save each stage's image and histogram
             for i, stage in enumerate(pee_stages):
-                # Save the 0-degree oriented stage image
-                save_image(cp.asnumpy(stage['stage_img']), f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined_0deg.png")
+                # Save the stage image
+                save_image(cp.asnumpy(stage['stage_img']), 
+                         f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined.png")
                 
-                # Create and save the collage-style rotated image
-                if 'rotated_sub_images' in stage:
+                # Create and save the collage-style image if available
+                if 'rotated_sub_images' in stage and len(stage['rotated_sub_images']) > 0:
                     collage = create_collage(stage['rotated_sub_images'])
-                    save_image(collage, f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined_rotated_collage.png")
+                    save_image(collage, f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_rotated_collage.png")
                 
-                # Save histogram (use 0-degree version for consistency)
+                # Save histogram
                 histogram_filename = f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X1_stage_{i}_histogram.png"
                 plt.figure(figsize=(10, 6))
                 plt.bar(range(256), generate_histogram(cp.asnumpy(stage['stage_img'])), alpha=0.7)
@@ -102,6 +105,8 @@ def main():
             # Prepare PEE information
             pee_info = {
                 'total_embeddings': total_embeddings,
+                'split_size': split_size,
+                'block_base': block_base,
                 'stages': [
                     {
                         'embedding': stage['embedding'],
@@ -110,11 +115,72 @@ def main():
                 ]
             }
 
-            # Save PEE information as a NumPy file
+            # Save PEE information
             pee_info_path = f"./pred_and_QR/outcome/{imgName}/pee_info.npy"
             ensure_dir(pee_info_path)
             np.save(pee_info_path, pee_info)
             print(f"PEE information saved to {pee_info_path}")
+
+            # Calculate and save BPP-PSNR data with accumulated payload
+            bpp_psnr_data = []
+            accumulated_payload = 0
+            for stage in pee_stages:
+                accumulated_payload += stage['payload']  # 累計 payload
+                bpp_psnr_data.append({
+                    'stage': stage['embedding'],
+                    'bpp': accumulated_payload / total_pixels,  # 使用累計的 payload 計算 BPP
+                    'psnr': stage['psnr']
+                })
+
+            # Plot and save BPP-PSNR curve with improved visualization
+            plt.figure(figsize=(12, 8))
+            bpps = [data['bpp'] for data in bpp_psnr_data]
+            psnrs = [data['psnr'] for data in bpp_psnr_data]
+            
+            # 繪製折線圖
+            plt.plot(bpps, psnrs, 'b.-', linewidth=2, markersize=8, 
+                    label=f'Split Size: {split_size}x{split_size}')
+            
+            # 為每個點添加標籤
+            for i, (bpp, psnr) in enumerate(zip(bpps, psnrs)):
+                plt.annotate(f'Stage {i}\n({bpp:.3f}, {psnr:.2f})',
+                            (bpp, psnr), 
+                            textcoords="offset points",
+                            xytext=(0,10), 
+                            ha='center',
+                            bbox=dict(boxstyle='round,pad=0.5', 
+                                     fc='yellow', 
+                                     alpha=0.3),
+                            fontsize=8)
+            
+            plt.xlabel('Accumulated Bits Per Pixel (BPP)', fontsize=12)
+            plt.ylabel('PSNR (dB)', fontsize=12)
+            title = f'BPP-PSNR Curve for {imgName}\n'
+            title += f'Split Size: {split_size}x{split_size}, {"Block-based" if block_base else "Quarter-based"}'
+            plt.title(title, fontsize=14)
+            plt.grid(True, linestyle='--', alpha=0.7)
+            plt.legend(fontsize=10)
+            
+            # 調整坐標軸範圍，確保有足夠空間顯示標籤
+            plt.margins(0.1)
+            
+            # 添加網格
+            plt.grid(True, linestyle='--', alpha=0.7)
+            
+            # 保存圖片，使用高DPI以確保品質
+            plt.savefig(f"./pred_and_QR/outcome/plots/{imgName}/bpp_psnr_curve.png", 
+                       dpi=300, bbox_inches='tight')
+            plt.close()
+
+            # Save BPP-PSNR data with more information
+            np.save(f"./pred_and_QR/outcome/plots/{imgName}/bpp_psnr_data.npy",
+                   {
+                       'bpp': bpps,
+                       'psnr': psnrs,
+                       'split_size': split_size,
+                       'block_base': block_base,
+                       'stages': bpp_psnr_data  # 包含完整的階段資訊
+                   })
 
             # Calculate and print final results
             final_bpp = total_payload / total_pixels
@@ -124,7 +190,7 @@ def main():
             hist_final = generate_histogram(final_pee_img)
             final_hist_corr = histogram_correlation(hist_orig, hist_final)
 
-            print("\nFinal PEE Results:")
+            print("\nFinal Results:")
             print(f"Total Payload: {total_payload}")
             print(f"Final BPP: {final_bpp:.4f}")
             print(f"Final PSNR: {final_psnr:.2f}")
@@ -135,6 +201,7 @@ def main():
             final_results = {
                 'method': 'Split' if split_first else 'Rotation',
                 'split_method': 'Block-based' if block_base else 'Quarter-based',
+                'split_size': split_size,
                 'total_payload': total_payload,
                 'final_bpp': final_bpp,
                 'final_psnr': final_psnr,

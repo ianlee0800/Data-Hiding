@@ -2,6 +2,8 @@ import numpy as np
 import struct
 import itertools
 import math
+import cupy as cp
+import matplotlib.pyplot as plt
 from common import *
 from pee import *
 from prettytable import PrettyTable
@@ -124,13 +126,13 @@ def decode_pee_info(encoded_data):
         'stages': stages
     }
 
-# 更新打印函数以包含新的信息
-def create_pee_info_table(pee_stages, use_different_weights, total_pixels):
+def create_pee_info_table(pee_stages, use_different_weights, total_pixels, split_size):
     table = PrettyTable()
-    table.field_names = ["Embedding", "Sub-image", "Payload", "BPP", "PSNR", "SSIM", "Hist Corr", "Weights", "EL", "Rotation", "Note"]
+    table.field_names = ["Embedding", "Sub-image", "Payload", "BPP", "PSNR", "SSIM", 
+                        "Hist Corr", "Weights", "EL", "Rotation", "Note"]
     
     for stage in pee_stages:
-        # 添加整體 stage 信息
+        # 添加整體 stage 資訊
         table.add_row([
             f"{stage['embedding']} (Overall)",
             "-",
@@ -146,9 +148,11 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels):
         ])
         table.add_row(["-" * 5] * 11)  # 添加分隔行
         
-        # 添加每個子圖像的信息
+        # 添加每個子圖像的資訊
+        total_blocks = split_size * split_size
+        sub_image_pixels = total_pixels // total_blocks
+        
         for i, block in enumerate(stage['block_params']):
-            sub_image_pixels = total_pixels // 4
             table.add_row([
                 stage['embedding'] if i == 0 else "",
                 i,
@@ -165,3 +169,31 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels):
         table.add_row(["-" * 5] * 11)  # 添加分隔行
     
     return table
+
+def analyze_and_plot_results(bpp_psnr_data, imgName, split_size):
+    """
+    分析結果並繪製圖表
+    """
+    plt.figure(figsize=(12, 8))
+    
+    # 繪製 BPP-PSNR 曲線
+    bpps = [data['bpp'] for data in bpp_psnr_data]
+    psnrs = [data['psnr'] for data in bpp_psnr_data]
+    
+    plt.plot(bpps, psnrs, 'b.-', linewidth=2, markersize=8, 
+             label=f'Split Size: {split_size}x{split_size}')
+    
+    plt.xlabel('Bits Per Pixel (BPP)', fontsize=12)
+    plt.ylabel('PSNR (dB)', fontsize=12)
+    plt.title(f'BPP-PSNR Curve for {imgName}', fontsize=14)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=10)
+    
+    # 添加數據標籤
+    for i, (bpp, psnr) in enumerate(zip(bpps, psnrs)):
+        plt.annotate(f'Stage {i}\n({bpp:.3f}, {psnr:.2f})',
+                    (bpp, psnr), textcoords="offset points",
+                    xytext=(0,10), ha='center')
+    
+    plt.tight_layout()
+    return plt.gcf()
