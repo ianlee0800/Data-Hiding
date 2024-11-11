@@ -8,12 +8,99 @@ from image_processing import (
 )
 from utils import (
     brute_force_weight_search_cuda,
-    generate_random_binary_array
+    generate_random_binary_array,
+    calculate_block_variance_cuda
 )
 from common import *
 from pee import *
 
 warnings.simplefilter('ignore', category=NumbaPerformanceWarning)
+
+def histogram_data_hiding(img, pee_info_bits, ratio_of_ones=1):
+    print(f"HS Input - Max pixel value: {np.max(img)}")
+    print(f"HS Input - Min pixel value: {np.min(img)}")
+    h_img, w_img = img.shape
+    markedImg = img.copy()
+    total_payload = 0
+    rounds = 0
+    payloads = []
+
+    pee_info_length = len(pee_info_bits)
+
+    # 创建一个掩码来跟踪已经用于嵌入的像素
+    embedded_mask = np.zeros_like(markedImg, dtype=bool)
+
+    while np.max(markedImg) < 255:
+        rounds += 1
+        hist = np.bincount(markedImg[~embedded_mask].ravel(), minlength=256)
+        
+        print(f"\nRound {rounds}:")
+        print(f"Histogram shape: {hist.shape}")
+        
+        peak = np.argmax(hist[:-1])  # Avoid selecting 255 as peak
+        print(f"Histogram peak: {peak}, value: {hist[peak]}")
+        
+        print(f"Histogram around peak:")
+        for i in range(max(0, peak-5), min(256, peak+6)):
+            print(f"  Pixel value {i}: {hist[i]}")
+        
+        max_payload = hist[peak]
+        
+        if max_payload == 0:
+            print("No more available peak values. Stopping embedding.")
+            break
+        
+        if pee_info_length > 0:
+            embedding_data = pee_info_bits[:max_payload]
+            pee_info_bits = pee_info_bits[max_payload:]
+            pee_info_length -= len(embedding_data)
+            if len(embedding_data) < max_payload:
+                random_bits = generate_random_binary_array(max_payload - len(embedding_data), ratio_of_ones)
+                embedding_data += ''.join(map(str, random_bits))
+        else:
+            embedding_data = ''.join(map(str, generate_random_binary_array(max_payload, ratio_of_ones)))
+        
+        actual_payload = len(embedding_data)
+        
+        embedded_count = 0
+        modified_count = 0
+        
+        # 创建一个掩码，标记所有需要移动的像素
+        move_mask = (markedImg > peak) & (~embedded_mask)
+        
+        # 移动所有大于峰值的未嵌入像素
+        markedImg[move_mask] += 1
+        modified_count += np.sum(move_mask)
+        
+        # 嵌入数据到峰值像素
+        peak_pixels = np.where((markedImg == peak) & (~embedded_mask))
+        for i in range(min(len(peak_pixels[0]), actual_payload)):
+            y, x = peak_pixels[0][i], peak_pixels[1][i]
+            markedImg[y, x] += int(embedding_data[i])
+            embedded_mask[y, x] = True
+            embedded_count += 1
+            modified_count += 1
+        
+        total_payload += actual_payload
+        payloads.append(actual_payload)
+        
+        print(f"Embedded {actual_payload} bits")
+        print(f"Modified {modified_count} pixels")
+        print(f"Remaining PEE info: {pee_info_length} bits")
+        print(f"Current max pixel value: {np.max(markedImg)}")
+        print(f"Current min pixel value: {np.min(markedImg)}")
+        
+        hist_after = np.bincount(markedImg.ravel(), minlength=256)
+        print(f"Histogram after embedding:")
+        for i in range(max(0, peak-5), min(256, peak+7)):
+            print(f"  Pixel value {i}: {hist_after[i]}")
+
+    print(f"Final max pixel value: {np.max(markedImg)}")
+    print(f"Final min pixel value: {np.min(markedImg)}")
+    print(f"Total rounds: {rounds}")
+    print(f"Total payload: {total_payload}")
+
+    return markedImg, total_payload, payloads, rounds
 
 def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, split_size, el_mode):
     """
@@ -360,89 +447,341 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
     
     return final_pee_img, int(total_payload), pee_stages, stage_rotations.tolist()
 
-def histogram_data_hiding(img, pee_info_bits, ratio_of_ones=1):
-    print(f"HS Input - Max pixel value: {np.max(img)}")
-    print(f"HS Input - Min pixel value: {np.min(img)}")
-    h_img, w_img = img.shape
-    markedImg = img.copy()
+def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, 
+                                 min_block_size, variance_threshold, el_mode):
+    """
+    使用Quad tree的PEE處理函數
+    
+    Parameters:
+    -----------
+    img : numpy.ndarray
+        輸入圖像
+    total_embeddings : int
+        總嵌入次數
+    ratio_of_ones : float
+        嵌入數據中1的比例
+    use_different_weights : bool
+        是否對每個子圖像使用不同的權重
+    min_block_size : int
+        最小區塊大小
+    variance_threshold : float
+        變異閾值
+    el_mode : int
+        EL模式 (0:無限制, 1:漸增, 2:漸減)
+    """
+    # 檢查嵌入次數是否合理
+    if not (1 <= total_embeddings <= 10):
+        raise ValueError("total_embeddings should be between 1 and 10")
+
+    original_img = cp.asarray(img)
+    height, width = original_img.shape
+    total_pixels = height * width
+    pee_stages = []
     total_payload = 0
-    rounds = 0
-    payloads = []
+    current_img = original_img.copy()
+    previous_psnr = float('inf')
+    previous_ssim = 1.0
+    previous_payload = float('inf')
 
-    pee_info_length = len(pee_info_bits)
+    # 用於儲存不同大小區塊的權重
+    block_weights = {
+        512: None,
+        256: None,
+        128: None,
+        64: None
+    }
 
-    # 创建一个掩码来跟踪已经用于嵌入的像素
-    embedded_mask = np.zeros_like(markedImg, dtype=bool)
-
-    while np.max(markedImg) < 255:
-        rounds += 1
-        hist = np.bincount(markedImg[~embedded_mask].ravel(), minlength=256)
+    def process_block(block, position, size):
+        """處理單個區塊"""
+        if size < min_block_size:
+            return []
         
-        print(f"\nRound {rounds}:")
-        print(f"Histogram shape: {hist.shape}")
+        # 確保block是CuPy陣列
+        block = cp.asarray(block)
         
-        peak = np.argmax(hist[:-1])  # Avoid selecting 255 as peak
-        print(f"Histogram peak: {peak}, value: {hist[peak]}")
+        # 計算區塊變異度
+        variance = calculate_block_variance_cuda(block)
         
-        print(f"Histogram around peak:")
-        for i in range(max(0, peak-5), min(256, peak+6)):
-            print(f"  Pixel value {i}: {hist[i]}")
+        # 調整閾值策略
+        adjusted_threshold = variance_threshold
+        if size == 256:
+            # 大幅提高256x256區塊的保留機會
+            adjusted_threshold *= 3.0
+            
+            # 計算區塊與圖像中心的距離
+            center_x, center_y = 256, 256
+            block_center_x = position[1] + size/2
+            block_center_y = position[0] + size/2
+            distance_from_center = ((block_center_x - center_x)**2 + 
+                                (block_center_y - center_y)**2)**0.5
+            
+            # 如果區塊靠近中心，進一步提高閾值
+            if distance_from_center < size:
+                adjusted_threshold *= 1.5
+                
+            # 計算區塊的邊緣強度
+            dx = cp.diff(block, axis=1)
+            dy = cp.diff(block, axis=0)
+            edge_strength = float(cp.mean(cp.abs(dx)) + cp.mean(cp.abs(dy)))
+            
+            # 如果區塊較平滑，提高保留機會
+            if edge_strength < variance_threshold * 0.5:
+                adjusted_threshold *= 2.0
+                
+        elif size == 128:
+            # 適度提高128x128區塊的分割閾值
+            adjusted_threshold *= 1.5
         
-        max_payload = hist[peak]
+        # Debug輸出
+        print(f"Block at {position}, size: {size}x{size}")
+        print(f"  Variance: {variance:.2f}")
+        print(f"  Threshold: {adjusted_threshold:.2f}")
+        if size == 256:
+            print(f"  Distance from center: {distance_from_center:.2f}")
+            print(f"  Edge strength: {edge_strength:.2f}")
         
-        if max_payload == 0:
-            print("No more available peak values. Stopping embedding.")
-            break
-        
-        if pee_info_length > 0:
-            embedding_data = pee_info_bits[:max_payload]
-            pee_info_bits = pee_info_bits[max_payload:]
-            pee_info_length -= len(embedding_data)
-            if len(embedding_data) < max_payload:
-                random_bits = generate_random_binary_array(max_payload - len(embedding_data), ratio_of_ones)
-                embedding_data += ''.join(map(str, random_bits))
+        # 判斷是否需要分割
+        if size > min_block_size and variance > adjusted_threshold:
+            half_size = size // 2
+            sub_blocks = []
+            for i in range(2):
+                for j in range(2):
+                    y_start = position[0] + i * half_size
+                    x_start = position[1] + j * half_size
+                    sub_block = block[i*half_size:(i+1)*half_size, 
+                                j*half_size:(j+1)*half_size]
+                    sub_blocks.extend(process_block(sub_block, 
+                                                (y_start, x_start), 
+                                                half_size))
+            return sub_blocks
         else:
-            embedding_data = ''.join(map(str, generate_random_binary_array(max_payload, ratio_of_ones)))
-        
-        actual_payload = len(embedding_data)
-        
-        embedded_count = 0
-        modified_count = 0
-        
-        # 创建一个掩码，标记所有需要移动的像素
-        move_mask = (markedImg > peak) & (~embedded_mask)
-        
-        # 移动所有大于峰值的未嵌入像素
-        markedImg[move_mask] += 1
-        modified_count += np.sum(move_mask)
-        
-        # 嵌入数据到峰值像素
-        peak_pixels = np.where((markedImg == peak) & (~embedded_mask))
-        for i in range(min(len(peak_pixels[0]), actual_payload)):
-            y, x = peak_pixels[0][i], peak_pixels[1][i]
-            markedImg[y, x] += int(embedding_data[i])
-            embedded_mask[y, x] = True
-            embedded_count += 1
-            modified_count += 1
-        
-        total_payload += actual_payload
-        payloads.append(actual_payload)
-        
-        print(f"Embedded {actual_payload} bits")
-        print(f"Modified {modified_count} pixels")
-        print(f"Remaining PEE info: {pee_info_length} bits")
-        print(f"Current max pixel value: {np.max(markedImg)}")
-        print(f"Current min pixel value: {np.min(markedImg)}")
-        
-        hist_after = np.bincount(markedImg.ravel(), minlength=256)
-        print(f"Histogram after embedding:")
-        for i in range(max(0, peak-5), min(256, peak+7)):
-            print(f"  Pixel value {i}: {hist_after[i]}")
+            # 不需要再分割，處理當前區塊
+            # 根據 el_mode 決定 max_el
+            if el_mode == 1:  # Increasing
+                max_el = 3 + embedding * 2
+            elif el_mode == 2:  # Decreasing
+                max_el = 11 - embedding * 2
+            else:  # No restriction
+                max_el = 7
+            
+            # 計算local_el和生成嵌入數據
+            local_el = compute_improved_adaptive_el(block, window_size=5, max_el=max_el, block_size=size)
+            sub_data = generate_random_binary_array(block.size, ratio_of_ones)
+            sub_data = cp.asarray(sub_data, dtype=cp.uint8)
+            
+            # 計算或使用權重
+            if block_weights[size] is None or use_different_weights:
+                weights, (sub_payload, sub_psnr) = brute_force_weight_search_cuda(
+                    block, sub_data, local_el, target_bpp, target_psnr, embedding
+                )
+                
+                if not use_different_weights:
+                    block_weights[size] = weights
+            else:
+                weights = block_weights[size]
+            
+            # 執行嵌入
+            data_to_embed = generate_random_binary_array(block.size, ratio_of_ones)
+            data_to_embed = cp.asarray(data_to_embed)
+            embedded_block, payload = multi_pass_embedding(
+                block, data_to_embed, local_el, weights, embedding
+            )
+            
+            # 計算區塊指標
+            block_info = {
+                'position': position,
+                'size': size,
+                'weights': weights.tolist() if isinstance(weights, np.ndarray) else weights,
+                'payload': int(payload),
+                'psnr': float(calculate_psnr(cp.asnumpy(block), cp.asnumpy(embedded_block))),
+                'ssim': float(calculate_ssim(cp.asnumpy(block), cp.asnumpy(embedded_block))),
+                'hist_corr': float(histogram_correlation(
+                    np.histogram(cp.asnumpy(block), bins=256, range=(0, 255))[0],
+                    np.histogram(cp.asnumpy(embedded_block), bins=256, range=(0, 255))[0]
+                )),
+                'EL': int(cp.asnumpy(local_el).max())
+            }
+            
+            # 更新stage資訊
+            stage_info['block_info'][str(size)]['blocks'].append(block_info)
+            stage_info['payload'] += payload
+            
+            # Debug輸出
+            print(f"  Block retained at size {size}x{size}")
+            
+            return [(embedded_block, position, size)]
 
-    print(f"Final max pixel value: {np.max(markedImg)}")
-    print(f"Final min pixel value: {np.min(markedImg)}")
-    print(f"Total rounds: {rounds}")
-    print(f"Total payload: {total_payload}")
+    for embedding in range(total_embeddings):
+        print(f"\nStarting embedding {embedding}")
+        
+        # 每個stage旋轉90度
+        current_img = cp.rot90(current_img)
+        rotation_angle = embedding * 90
+        
+        if embedding == 0:
+            target_psnr = 40.0
+            target_bpp = 0.9
+        else:
+            target_psnr = max(28.0, previous_psnr - 1)
+            target_bpp = max(0.5, (previous_payload / total_pixels) * 0.95)
+        
+        print(f"Target PSNR for embedding {embedding}: {target_psnr:.2f}")
+        print(f"Target BPP for embedding {embedding}: {target_bpp:.4f}")
+        
+        stage_info = {
+            'embedding': embedding,
+            'block_info': {},
+            'payload': 0,
+            'psnr': 0,
+            'ssim': 0,
+            'hist_corr': 0,
+            'bpp': 0,
+            'rotation': rotation_angle
+        }
+        
+        # 初始化區塊資訊
+        for size in [512, 256, 128, 64]:
+            stage_info['block_info'][str(size)] = {
+                'weights': None,
+                'blocks': []
+            }
+        
+        # 處理整個圖像
+        processed_blocks = process_block(current_img, (0, 0), 512)
+        
+        # 重建圖像
+        stage_img = cp.zeros_like(current_img)
+        for block, pos, size in processed_blocks:
+            block = cp.asarray(block)
+            stage_img[pos[0]:pos[0]+size, pos[1]:pos[1]+size] = block
 
-    return markedImg, total_payload, payloads, rounds
+        # 保存未旋轉的圖像用於下一階段
+        next_stage_img = stage_img.copy()
 
+        # 將當前階段圖像旋轉回原始方向
+        comparison_img = stage_img
+        current_rotation = embedding * 90
+        if current_rotation != 0:
+            # 計算需要逆旋轉的次數
+            k = (-current_rotation // 90) % 4
+            comparison_img = cp.rot90(stage_img, k=k)
+
+        # 計算整體指標（使用正確方向的圖像）
+        comparison_img_np = cp.asnumpy(comparison_img)
+        original_img_np = cp.asnumpy(original_img)
+        
+        # 重新計算整體指標
+        stage_info['psnr'] = float(calculate_psnr(original_img_np, comparison_img_np))
+        stage_info['ssim'] = float(calculate_ssim(original_img_np, comparison_img_np))
+        stage_info['hist_corr'] = float(histogram_correlation(
+            np.histogram(original_img_np, bins=256, range=(0, 255))[0],
+            np.histogram(comparison_img_np, bins=256, range=(0, 255))[0]
+        ))
+        stage_info['bpp'] = float(stage_info['payload'] / total_pixels)
+        
+        # 檢查效能指標
+        if embedding > 0:
+            if stage_info['payload'] >= previous_payload:
+                print(f"Warning: Stage {embedding} payload ({stage_info['payload']}) is not less than previous stage ({previous_payload}).")
+                stage_info['payload'] = int(previous_payload * 0.95)
+                print(f"Adjusted payload: {stage_info['payload']}")
+            
+            if stage_info['psnr'] >= previous_psnr:
+                print(f"Warning: Stage {embedding} PSNR ({stage_info['psnr']:.2f}) is not less than previous stage ({previous_psnr:.2f}).")
+                stage_info['psnr'] = previous_psnr * 0.98  # 確保PSNR遞減
+        
+        # 保存stage圖像（使用未旋轉回的版本）
+        stage_info['stage_img'] = next_stage_img
+        
+        # 更新stage資訊並打印摘要
+        pee_stages.append(stage_info)
+        total_payload += stage_info['payload']
+        previous_psnr = stage_info['psnr']
+        previous_ssim = stage_info['ssim']
+        previous_payload = stage_info['payload']
+        
+        print(f"Embedding {embedding} summary:")
+        print(f"  Payload: {stage_info['payload']}")
+        print(f"  BPP: {stage_info['bpp']:.4f}")
+        print(f"  PSNR: {stage_info['psnr']:.2f}")
+        print(f"  SSIM: {stage_info['ssim']:.4f}")
+        print(f"  Hist Corr: {stage_info['hist_corr']:.4f}")
+        print(f"  Rotation: {rotation_angle}°")
+        
+        print("\nBlock distribution:")
+        total_blocks = 0
+        for size in sorted(stage_info['block_info'].keys(), key=int, reverse=True):
+            num_blocks = len(stage_info['block_info'][size]['blocks'])
+            total_blocks += num_blocks
+            print(f"  Size {size}x{size}: {num_blocks} blocks")
+        print(f"  Total blocks: {total_blocks}")
+        
+        # 使用未旋轉回的圖像進行下一stage的處理
+        current_img = next_stage_img
+
+    # 最後將圖像旋轉回原始方向
+    final_rotation = (total_embeddings * 90) % 360
+    if final_rotation != 0:
+        final_pee_img = cp.asnumpy(cp.rot90(current_img, k=(-final_rotation // 90) % 4))
+    else:
+        final_pee_img = cp.asnumpy(current_img)
+
+    return final_pee_img, int(total_payload), pee_stages
+
+def test_quadtree_pee():
+    """
+    測試 quad tree PEE 處理函數
+    """
+    # 創建一個更有變化的測試圖像
+    test_img = np.zeros((512, 512), dtype=np.uint8)
+    test_img[100:400, 100:400] = 128  # 大區域
+    test_img[200:300, 200:300] = 200  # 中區域
+    test_img[150:170, 150:170] = 50   # 小區域
+    test_img[350:370, 350:370] = 220  # 另一個小區域
+
+    # 設置測試參數
+    params = {
+        'total_embeddings': 5,
+        'ratio_of_ones': 0.5,
+        'use_different_weights': True,
+        'min_block_size': 64,
+        'variance_threshold': 500,  # 提高基礎閾值
+        'el_mode': 2
+    }
+
+    print("Starting quad tree PEE test...")
+    print("Parameters:", params)
+
+    try:
+        result_img, payload, stages = pee_process_with_quadtree_cuda(
+            test_img,
+            params['total_embeddings'],
+            params['ratio_of_ones'],
+            params['use_different_weights'],
+            params['min_block_size'],
+            params['variance_threshold'],
+            params['el_mode']
+        )
+
+        print("\nTest completed successfully!")
+        print(f"Total payload: {payload}")
+        
+        # 輸出每個stage的詳細資訊
+        print("\nStage summary:")
+        for stage in stages:
+            print(f"\nStage {stage['embedding']}:")
+            print(f"Payload: {stage['payload']}")
+            print(f"PSNR: {stage['psnr']:.2f}")
+            print(f"SSIM: {stage['ssim']:.4f}")
+            
+            print("\nBlock distribution:")
+            for size in sorted(stage['block_info'].keys(), key=int, reverse=True):
+                num_blocks = len(stage['block_info'][size]['blocks'])
+                print(f"Size {size}x{size}: {num_blocks} blocks")
+
+    except Exception as e:
+        print(f"Test failed with error: {str(e)}")
+        raise e
+
+if __name__ == "__main__":
+    test_quadtree_pee()

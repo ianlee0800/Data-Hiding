@@ -120,14 +120,29 @@ def improved_predict_image_cpu(img, weight):
     return pred_img
 
 @cuda.jit
-def compute_improved_adaptive_el_kernel(img, local_el, window_size, max_el):
+def compute_improved_adaptive_el_kernel(img, local_el, window_size, max_el, block_size):
+    """
+    計算改進的自適應EL值的CUDA kernel
+    """
     x, y = cuda.grid(2)
     if x < img.shape[1] and y < img.shape[0]:
+        # 根據區塊大小調整window_size
+        actual_window_size = window_size
+        if block_size > 0:  # 使用正數來判斷是否有指定block_size
+            if block_size >= 256:
+                actual_window_size = min(window_size + 2, 7)
+            elif block_size <= 64:
+                actual_window_size = max(window_size - 1, 3)
+        
+        half_window = actual_window_size // 2
+        
+        # 計算局部統計量
         local_sum = 0
         local_sum_sq = 0
         count = 0
-        for i in range(max(0, y - window_size // 2), min(img.shape[0], y + window_size // 2 + 1)):
-            for j in range(max(0, x - window_size // 2), min(img.shape[1], x + window_size // 2 + 1)):
+        
+        for i in range(max(0, y - half_window), min(img.shape[0], y + half_window + 1)):
+            for j in range(max(0, x - half_window), min(img.shape[1], x + half_window + 1)):
                 pixel_value = img[i, j]
                 local_sum += pixel_value
                 local_sum_sq += pixel_value * pixel_value
@@ -136,24 +151,43 @@ def compute_improved_adaptive_el_kernel(img, local_el, window_size, max_el):
         local_mean = local_sum / count
         local_variance = (local_sum_sq / count) - (local_mean * local_mean)
         
-        # 使用方差來調整EL值
-        normalized_variance = min(local_variance / 6400, 1)  # 假設最大方差為6400 (80^2)
+        # 使用簡單的variance正規化策略
+        max_variance = 6400  # 預設值
+        if block_size > 0:
+            if block_size >= 256:
+                max_variance = 8100
+            elif block_size <= 64:
+                max_variance = 4900
+        
+        normalized_variance = min(local_variance / max_variance, 1)
         el_value = int(max_el * (1 - normalized_variance))
         
-        # 確保EL值為奇數
+        # 確保EL值為奇數且在有效範圍內
         el_value = max(1, min(el_value, max_el))
         if el_value % 2 == 0:
             el_value -= 1
         
         local_el[y, x] = el_value
 
-def compute_improved_adaptive_el(img, window_size=5, max_el=7):
-    local_el = cp.empty(img.shape, dtype=cp.int32)
+def compute_improved_adaptive_el(img, window_size=5, max_el=7, block_size=None):
+    """
+    計算改進的自適應EL值
+    """
+    if isinstance(img, cp.ndarray):
+        img = cp.asnumpy(img)
+    
+    local_el = cuda.device_array(img.shape, dtype=cp.int32)
+    
     threads_per_block = (16, 16)
     blocks_per_grid_x = (img.shape[1] + threads_per_block[0] - 1) // threads_per_block[0]
     blocks_per_grid_y = (img.shape[0] + threads_per_block[1] - 1) // threads_per_block[1]
     blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
     
-    compute_improved_adaptive_el_kernel[blocks_per_grid, threads_per_block](img, local_el, window_size, max_el)
+    # 將None轉換為-1，這樣在kernel中可以正確處理
+    block_size_value = -1 if block_size is None else block_size
+    
+    compute_improved_adaptive_el_kernel[blocks_per_grid, threads_per_block](
+        img, local_el, window_size, max_el, block_size_value
+    )
     
     return local_el

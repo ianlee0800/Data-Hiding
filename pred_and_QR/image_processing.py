@@ -81,24 +81,32 @@ def array1D_transfer_to_array2D(array1D):
             i += 1
     return array2D
 
-def split_image_flexible(img, split_size, block_base=False):
+def split_image_flexible(img, split_size, block_base=False, quad_tree=False, positions=None):
     """
-    將圖像切割成 split_size x split_size 個區塊
+    將圖像切割成區塊
     
     Parameters:
     -----------
     img : numpy.ndarray or cupy.ndarray
-        輸入圖像 (512x512)
+        輸入圖像
     split_size : int
         每個維度要切割的數量（例如：4 表示切成 4x4=16 塊）
+        對於quad_tree模式，這個參數代表當前要切割的區塊大小
     block_base : bool
         True: 使用 block-based 分割
         False: 使用 quarter-based 分割
+    quad_tree : bool
+        True: 使用quad tree分割模式
+        False: 使用原有的分割模式
+    positions : list of tuple, optional
+        只在quad_tree=True時使用
+        記錄每個區塊在原圖中的位置 [(y, x), ...]
     
     Returns:
     --------
     list
         包含所有切割後區塊的列表
+        如果是quad_tree模式，還會返回positions列表
     """
     if isinstance(img, cp.ndarray):
         xp = cp
@@ -106,27 +114,57 @@ def split_image_flexible(img, split_size, block_base=False):
         xp = np
 
     height, width = img.shape
-    sub_height = height // split_size
-    sub_width = width // split_size
     
-    sub_images = []
-    if block_base:
-        # Block-based splitting
-        for i in range(split_size):
-            for j in range(split_size):
-                sub_img = img[i*sub_height:(i+1)*sub_height, 
-                             j*sub_width:(j+1)*sub_width]
-                sub_images.append(xp.asarray(sub_img))
+    # quad tree模式
+    if quad_tree:
+        if positions is None:
+            positions = []
+            
+        sub_images = []
+        current_positions = []
+        block_size = split_size  # 在quad tree模式下，split_size代表區塊大小
+        
+        # 檢查輸入的區塊大小是否符合要求
+        if height < block_size or width < block_size:
+            raise ValueError(f"Image size ({height}x{width}) is smaller than block size ({block_size})")
+        
+        for y in range(0, height, block_size):
+            for x in range(0, width, block_size):
+                # 確保不會超出圖像邊界
+                actual_block_size = min(block_size, height - y, width - x)
+                if actual_block_size == block_size:  # 只處理完整的區塊
+                    sub_img = img[y:y+block_size, x:x+block_size]
+                    sub_images.append(xp.asarray(sub_img))
+                    current_positions.append((y, x))
+        
+        if positions is not None:
+            positions.extend(current_positions)
+        
+        return sub_images, current_positions
+    
+    # 原有的分割模式
     else:
-        # Quarter-based splitting (交錯式分割)
-        for i in range(split_size):
-            for j in range(split_size):
-                sub_img = img[i::split_size, j::split_size]
-                sub_images.append(xp.asarray(sub_img))
-    
-    return sub_images
+        sub_height = height // split_size
+        sub_width = width // split_size
+        
+        sub_images = []
+        if block_base:
+            # Block-based splitting
+            for i in range(split_size):
+                for j in range(split_size):
+                    sub_img = img[i*sub_height:(i+1)*sub_height, 
+                                j*sub_width:(j+1)*sub_width]
+                    sub_images.append(xp.asarray(sub_img))
+        else:
+            # Quarter-based splitting (交錯式分割)
+            for i in range(split_size):
+                for j in range(split_size):
+                    sub_img = img[i::split_size, j::split_size]
+                    sub_images.append(xp.asarray(sub_img))
+        
+        return sub_images
 
-def merge_image_flexible(sub_images, split_size, block_base=False):
+def merge_image_flexible(sub_images, split_size, block_base=False, quad_tree=False, positions=None):
     """
     將切割後的區塊合併回完整圖像
     
@@ -136,9 +174,16 @@ def merge_image_flexible(sub_images, split_size, block_base=False):
         包含所有切割後區塊的列表
     split_size : int
         原始切割時的尺寸
+        對於quad_tree模式，這個參數代表區塊大小
     block_base : bool
         True: 使用 block-based 合併
         False: 使用 quarter-based 合併
+    quad_tree : bool
+        True: 使用quad tree合併模式
+        False: 使用原有的合併模式
+    positions : list of tuple, optional
+        只在quad_tree=True時使用
+        記錄每個區塊在原圖中的位置 [(y, x), ...]
     
     Returns:
     --------
@@ -151,26 +196,45 @@ def merge_image_flexible(sub_images, split_size, block_base=False):
     # 確保所有子圖像都是 CuPy 數組
     sub_images = [cp.asarray(img) for img in sub_images]
     
-    sub_height = 512 // split_size
-    sub_width = 512 // split_size
+    # quad tree模式
+    if quad_tree:
+        if positions is None:
+            raise ValueError("Positions must be provided in quad tree mode")
+        
+        # 計算輸出圖像的大小
+        max_y = max(y + sub_images[0].shape[0] for y, _ in positions)
+        max_x = max(x + sub_images[0].shape[1] for _, x in positions)
+        merged = cp.zeros((max_y, max_x), dtype=sub_images[0].dtype)
+        
+        # 將每個區塊放回其原始位置
+        for sub_img, (y, x) in zip(sub_images, positions):
+            block_height, block_width = sub_img.shape
+            merged[y:y+block_height, x:x+block_width] = sub_img
+        
+        return merged
     
-    merged = cp.zeros((512, 512), dtype=sub_images[0].dtype)
-    
-    if block_base:
-        # Block-based merging
-        for idx, sub_img in enumerate(sub_images):
-            i = idx // split_size
-            j = idx % split_size
-            merged[i*sub_height:(i+1)*sub_height, 
-                   j*sub_width:(j+1)*sub_width] = sub_img
+    # 原有的合併模式
     else:
-        # Quarter-based merging (交錯式合併)
-        for idx, sub_img in enumerate(sub_images):
-            i = idx // split_size
-            j = idx % split_size
-            merged[i::split_size, j::split_size] = sub_img
-    
-    return merged
+        sub_height = 512 // split_size
+        sub_width = 512 // split_size
+        
+        merged = cp.zeros((512, 512), dtype=sub_images[0].dtype)
+        
+        if block_base:
+            # Block-based merging
+            for idx, sub_img in enumerate(sub_images):
+                i = idx // split_size
+                j = idx % split_size
+                merged[i*sub_height:(i+1)*sub_height, 
+                      j*sub_width:(j+1)*sub_width] = sub_img
+        else:
+            # Quarter-based merging (交錯式合併)
+            for idx, sub_img in enumerate(sub_images):
+                i = idx // split_size
+                j = idx % split_size
+                merged[i::split_size, j::split_size] = sub_img
+        
+        return merged
 
 def verify_image_dimensions(img, split_size):
     """
