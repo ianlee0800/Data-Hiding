@@ -97,6 +97,41 @@ def calculate_ssim(img1, img2):
     ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
     return round(ssim_map.mean(), 4)
 
+# 在計算 metrics 之前添加的修正程式碼
+def calculate_metrics_with_rotation(current_img, stage_img, original_img, embedding):
+    """
+    計算考慮旋轉的 metrics
+    """
+    # 計算旋轉角度
+    current_rotation = (embedding * 90) % 360
+    
+    # 如果當前階段有旋轉，先將圖像旋轉回原始方向
+    if current_rotation != 0:
+        # 計算需要的逆旋轉次數
+        k = (4 - (current_rotation // 90)) % 4
+        if isinstance(stage_img, cp.ndarray):
+            stage_img_aligned = cp.rot90(stage_img, k=k)
+        else:
+            stage_img_aligned = np.rot90(stage_img, k=k)
+    else:
+        stage_img_aligned = stage_img
+    
+    # 確保數據類型一致
+    if isinstance(stage_img_aligned, cp.ndarray):
+        stage_img_aligned = cp.asnumpy(stage_img_aligned)
+    if isinstance(original_img, cp.ndarray):
+        original_img = cp.asnumpy(original_img)
+        
+    # 計算指標
+    psnr = calculate_psnr(original_img, stage_img_aligned)
+    ssim = calculate_ssim(original_img, stage_img_aligned)
+    hist_corr = histogram_correlation(
+        np.histogram(original_img, bins=256, range=(0, 255))[0],
+        np.histogram(stage_img_aligned, bins=256, range=(0, 255))[0]
+    )
+    
+    return psnr, ssim, hist_corr
+
 def calculate_correlation(img1, img2):
     """計算兩個圖像的相關係數"""
     img1_flat = img1.flatten()

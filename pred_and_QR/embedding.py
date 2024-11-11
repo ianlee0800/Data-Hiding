@@ -469,10 +469,30 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
     el_mode : int
         EL模式 (0:無限制, 1:漸增, 2:漸減)
     """
-    # 檢查嵌入次數是否合理
-    if not (1 <= total_embeddings <= 10):
-        raise ValueError("total_embeddings should be between 1 and 10")
+    def calculate_metrics_with_rotation(original_img, stage_img, current_rotation):
+        """計算考慮旋轉的metrics"""
+        # 確保輸入是numpy array
+        if isinstance(original_img, cp.ndarray):
+            original_img = cp.asnumpy(original_img)
+        if isinstance(stage_img, cp.ndarray):
+            stage_img = cp.asnumpy(stage_img)
+        
+        # 如果需要旋轉，將圖像旋轉回原始方向
+        if current_rotation != 0:
+            k = (-current_rotation // 90) % 4
+            stage_img = np.rot90(stage_img, k=k)
+        
+        # 計算各種指標
+        psnr = calculate_psnr(original_img, stage_img)
+        ssim = calculate_ssim(original_img, stage_img)
+        hist_corr = histogram_correlation(
+            np.histogram(original_img, bins=256, range=(0, 255))[0],
+            np.histogram(stage_img, bins=256, range=(0, 255))[0]
+        )
+        
+        return psnr, ssim, hist_corr
 
+    # 初始化變數
     original_img = cp.asarray(img)
     height, width = original_img.shape
     total_pixels = height * width
@@ -483,7 +503,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
     previous_ssim = 1.0
     previous_payload = float('inf')
 
-    # 用於儲存不同大小區塊的權重
+    # 初始化塊權重字典
     block_weights = {
         512: None,
         256: None,
@@ -491,6 +511,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
         64: None
     }
 
+    # process_block 函數保持不變
     def process_block(block, position, size):
         """處理單個區塊"""
         if size < min_block_size:
@@ -549,7 +570,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                     y_start = position[0] + i * half_size
                     x_start = position[1] + j * half_size
                     sub_block = block[i*half_size:(i+1)*half_size, 
-                                j*half_size:(j+1)*half_size]
+                                    j*half_size:(j+1)*half_size]
                     sub_blocks.extend(process_block(sub_block, 
                                                 (y_start, x_start), 
                                                 half_size))
@@ -606,17 +627,17 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
             stage_info['block_info'][str(size)]['blocks'].append(block_info)
             stage_info['payload'] += payload
             
-            # Debug輸出
             print(f"  Block retained at size {size}x{size}")
             
             return [(embedded_block, position, size)]
 
+    # 主循環
     for embedding in range(total_embeddings):
         print(f"\nStarting embedding {embedding}")
         
-        # 每個stage旋轉90度
-        current_img = cp.rot90(current_img)
-        rotation_angle = embedding * 90
+        # 計算當前旋轉角度
+        current_rotation = (embedding * 90) % 360
+        print(f"Current rotation angle: {current_rotation}°")
         
         if embedding == 0:
             target_psnr = 40.0
@@ -636,7 +657,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
             'ssim': 0,
             'hist_corr': 0,
             'bpp': 0,
-            'rotation': rotation_angle
+            'rotation': current_rotation
         }
         
         # 初始化區塊資訊
@@ -657,29 +678,36 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
 
         # 保存未旋轉的圖像用於下一階段
         next_stage_img = stage_img.copy()
-
-        # 將當前階段圖像旋轉回原始方向
-        comparison_img = stage_img
-        current_rotation = embedding * 90
-        if current_rotation != 0:
-            # 計算需要逆旋轉的次數
-            k = (-current_rotation // 90) % 4
-            comparison_img = cp.rot90(stage_img, k=k)
-
-        # 計算整體指標（使用正確方向的圖像）
-        comparison_img_np = cp.asnumpy(comparison_img)
-        original_img_np = cp.asnumpy(original_img)
         
-        # 重新計算整體指標
-        stage_info['psnr'] = float(calculate_psnr(original_img_np, comparison_img_np))
-        stage_info['ssim'] = float(calculate_ssim(original_img_np, comparison_img_np))
-        stage_info['hist_corr'] = float(histogram_correlation(
-            np.histogram(original_img_np, bins=256, range=(0, 255))[0],
-            np.histogram(comparison_img_np, bins=256, range=(0, 255))[0]
-        ))
+        # 計算整體指標
+        psnr, ssim, hist_corr = calculate_metrics_with_rotation(
+            cp.asnumpy(original_img),
+            cp.asnumpy(stage_img),
+            current_rotation
+        )
+        
+        print("\nMetrics validation:")
+        print(f"Calculated PSNR: {psnr:.2f}")
+        print(f"Calculated SSIM: {ssim:.4f}")
+        
+        stage_info['psnr'] = float(psnr)
+        stage_info['ssim'] = float(ssim)
+        stage_info['hist_corr'] = float(hist_corr)
         stage_info['bpp'] = float(stage_info['payload'] / total_pixels)
         
-        # 檢查效能指標
+        # 檢查異常值
+        if psnr < 28 or ssim < 0.8:
+            print("Warning: Metrics seem unusually low")
+            print(f"Current rotation: {current_rotation}°")
+            # 重新檢查計算
+            test_psnr, test_ssim, _ = calculate_metrics_with_rotation(
+                cp.asnumpy(original_img),
+                cp.asnumpy(stage_img),
+                current_rotation
+            )
+            print(f"Verification - PSNR: {test_psnr:.2f}, SSIM: {test_ssim:.4f}")
+        
+        # 維護前一階段的指標
         if embedding > 0:
             if stage_info['payload'] >= previous_payload:
                 print(f"Warning: Stage {embedding} payload ({stage_info['payload']}) is not less than previous stage ({previous_payload}).")
@@ -688,41 +716,32 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
             
             if stage_info['psnr'] >= previous_psnr:
                 print(f"Warning: Stage {embedding} PSNR ({stage_info['psnr']:.2f}) is not less than previous stage ({previous_psnr:.2f}).")
-                stage_info['psnr'] = previous_psnr * 0.98  # 確保PSNR遞減
         
-        # 保存stage圖像（使用未旋轉回的版本）
+        # 更新stage資訊和準備下一階段
         stage_info['stage_img'] = next_stage_img
-        
-        # 更新stage資訊並打印摘要
         pee_stages.append(stage_info)
         total_payload += stage_info['payload']
         previous_psnr = stage_info['psnr']
         previous_ssim = stage_info['ssim']
         previous_payload = stage_info['payload']
         
+        # 打印階段摘要
         print(f"Embedding {embedding} summary:")
         print(f"  Payload: {stage_info['payload']}")
         print(f"  BPP: {stage_info['bpp']:.4f}")
         print(f"  PSNR: {stage_info['psnr']:.2f}")
         print(f"  SSIM: {stage_info['ssim']:.4f}")
         print(f"  Hist Corr: {stage_info['hist_corr']:.4f}")
-        print(f"  Rotation: {rotation_angle}°")
+        print(f"  Rotation: {current_rotation}°")
         
-        print("\nBlock distribution:")
-        total_blocks = 0
-        for size in sorted(stage_info['block_info'].keys(), key=int, reverse=True):
-            num_blocks = len(stage_info['block_info'][size]['blocks'])
-            total_blocks += num_blocks
-            print(f"  Size {size}x{size}: {num_blocks} blocks")
-        print(f"  Total blocks: {total_blocks}")
-        
-        # 使用未旋轉回的圖像進行下一stage的處理
-        current_img = next_stage_img
+        # 準備下一階段
+        current_img = cp.rot90(next_stage_img)
 
     # 最後將圖像旋轉回原始方向
     final_rotation = (total_embeddings * 90) % 360
     if final_rotation != 0:
-        final_pee_img = cp.asnumpy(cp.rot90(current_img, k=(-final_rotation // 90) % 4))
+        k = (-final_rotation // 90) % 4
+        final_pee_img = cp.asnumpy(cp.rot90(current_img, k=k))
     else:
         final_pee_img = cp.asnumpy(current_img)
 
