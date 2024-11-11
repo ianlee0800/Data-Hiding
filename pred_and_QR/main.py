@@ -35,7 +35,7 @@ def main():
     el_mode = 2  # 0: 無限制, 1: 漸增, 2: 漸減
     use_different_weights = True
     split_first = True  # Use split_first to choose PEE method
-    split_size = 2  # 新增參數：切割尺寸 (4 表示 4x4=16 塊)
+    split_size = 4  # 新增參數：切割尺寸 (4 表示 4x4=16 塊)
     block_base = False  # 選擇 block-based 或 quarter-based 分割
 
     # Create necessary directories
