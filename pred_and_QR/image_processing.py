@@ -1,7 +1,7 @@
 import numpy as np
 import cv2
 import matplotlib.pyplot as plt
-from common import find_max, calculate_psnr, calculate_ssim, histogram_correlation
+from common import calculate_psnr, calculate_ssim, histogram_correlation
 import cupy as cp
 from numba import cuda
 
@@ -329,3 +329,61 @@ def improved_predict_image_cuda(img, weights):
     improved_predict_kernel[blocks_per_grid, threads_per_block](d_img, d_weights, d_pred_img, height, width)
 
     return d_pred_img
+
+def add_grid_lines(img, block_info):
+    """
+    為 quadtree 分割結果添加格線
+    
+    Parameters:
+    -----------
+    img : numpy.ndarray
+        原始圖像
+    block_info : dict
+        包含各區塊資訊的字典，格式如：
+        {
+            '256': {'blocks': [{'position': (y,x), 'size': 256}, ...]},
+            '128': {'blocks': [...]},
+            '64': {'blocks': [...]},
+            '32': {'blocks': [...]},
+            '16': {'blocks': [...]}
+        }
+    
+    Returns:
+    --------
+    numpy.ndarray
+        添加格線後的圖像
+    """
+    grid_img = img.copy()
+    grid_color = 128  # 使用中灰色作為格線顏色
+    
+    # 對不同大小的區塊使用不同的格線寬度，注意使用整數作為鍵值
+    line_widths = {
+        512: 3,
+        256: 3,
+        128: 2,
+        64: 2,
+        32: 1,
+        16: 1
+    }
+    
+    # 從大到小處理各個區塊
+    for size_str in sorted(block_info.keys(), key=lambda x: int(x), reverse=True):
+        size = int(size_str)  # 將字符串轉換為整數
+        line_width = line_widths[size]
+        blocks = block_info[size_str]['blocks']
+        
+        for block in blocks:
+            y, x = block['position']
+            block_size = block['size']
+            
+            # 繪製水平線
+            for i in range(line_width):
+                grid_img[y+i:y+i+1, x:x+block_size] = grid_color  # 上邊界
+                grid_img[y+block_size-i-1:y+block_size-i, x:x+block_size] = grid_color  # 下邊界
+            
+            # 繪製垂直線
+            for i in range(line_width):
+                grid_img[y:y+block_size, x+i:x+i+1] = grid_color  # 左邊界
+                grid_img[y:y+block_size, x+block_size-i-1:x+block_size-i] = grid_color  # 右邊界
+    
+    return grid_img

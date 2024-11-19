@@ -226,3 +226,45 @@ def compute_improved_adaptive_el(img, window_size=5, max_el=7, block_size=None):
     )
     
     return local_el
+
+@cuda.jit
+def calculate_variance_kernel(block, variance_result):
+    """
+    CUDA kernel for calculating variance of image blocks
+    """
+    x, y = cuda.grid(2)
+    if x < block.shape[1] and y < block.shape[0]:
+        # 使用shared memory來優化性能
+        tid = cuda.threadIdx.x + cuda.threadIdx.y * cuda.blockDim.x
+        block_size = block.shape[0] * block.shape[1]
+        
+        # 計算區域平均值
+        local_sum = 0
+        local_sum_sq = 0
+        for i in range(block.shape[0]):
+            for j in range(block.shape[1]):
+                pixel_value = block[i, j]
+                local_sum += pixel_value
+                local_sum_sq += pixel_value * pixel_value
+        
+        mean = local_sum / block_size
+        variance = (local_sum_sq / block_size) - (mean * mean)
+        
+        # 只需要一個線程寫入結果
+        if x == 0 and y == 0:
+            variance_result[0] = variance
+
+def calculate_block_variance_cuda(block):
+    """
+    Calculate variance of a block using CUDA
+    """
+    threads_per_block = (16, 16)
+    blocks_per_grid_x = (block.shape[1] + threads_per_block[0] - 1) // threads_per_block[0]
+    blocks_per_grid_y = (block.shape[0] + threads_per_block[1] - 1) // threads_per_block[1]
+    blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
+    
+    variance_result = cuda.device_array(1, dtype=np.float32)
+    
+    calculate_variance_kernel[blocks_per_grid, threads_per_block](block, variance_result)
+    
+    return variance_result[0]

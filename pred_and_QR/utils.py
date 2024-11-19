@@ -1,7 +1,5 @@
 import numpy as np
 import struct
-import itertools
-import math
 import cupy as cp
 import matplotlib.pyplot as plt
 from common import *
@@ -11,130 +9,6 @@ from prettytable import PrettyTable
 def generate_random_binary_array(size, ratio_of_ones=0.5):
     """生成指定大小的随机二进制数组，可调整1的比例"""
     return np.random.choice([0, 1], size=size, p=[1-ratio_of_ones, ratio_of_ones])
-
-@cuda.jit
-def evaluate_weights_kernel(img, data, EL, weight_combinations, results, target_bpp, target_psnr, stage):
-    idx = cuda.grid(1)
-    if idx < weight_combinations.shape[0]:
-        w1, w2, w3, w4 = weight_combinations[idx]
-        
-        height, width = img.shape
-        payload = 0
-        mse = 0.0
-        
-        for y in range(1, height - 1):
-            for x in range(1, width - 1):
-                # Prediction
-                ul = img[y-1, x-1]
-                up = img[y-1, x]
-                ur = img[y-1, x+1]
-                left = img[y, x-1]
-                p = (w1*up + w2*ul + w3*ur + w4*left) / (w1 + w2 + w3 + w4)
-                pred_val = round(p)
-                
-                # Embedding
-                diff = int(img[y, x]) - int(pred_val)
-                if abs(diff) < EL[y, x] and payload < data.shape[0]:  # Use EL[y, x] instead of just EL
-                    bit = data[payload]
-                    payload += 1
-                    if stage == 0:
-                        # More aggressive embedding for stage 0
-                        embedding_strength = min(3, EL[y, x] - abs(diff))
-                    else:
-                        embedding_strength = 1
-                    
-                    if diff >= 0:
-                        embedded_val = min(255, int(img[y, x]) + bit * embedding_strength)
-                    else:
-                        embedded_val = max(0, int(img[y, x]) - (1 - bit) * embedding_strength)
-                    mse += (embedded_val - img[y, x]) ** 2
-                else:
-                    mse += 0  # No change to pixel
-        
-        if mse > 0:
-            psnr = 10 * math.log10((255 * 255) / (mse / (height * width)))
-        else:
-            psnr = 100.0  # High value for perfect embedding
-        
-        bpp = payload / (height * width)
-        
-        # Adaptive fitness criteria
-        bpp_fitness = min(1.0, bpp / target_bpp)
-        psnr_fitness = max(0, 1 - abs(psnr - target_psnr) / target_psnr)
-        
-        if stage == 0:
-            fitness = bpp_fitness * 0.7 + psnr_fitness * 0.3
-        else:
-            fitness = bpp_fitness * 0.5 + psnr_fitness * 0.5
-        
-        results[idx, 0] = payload
-        results[idx, 1] = psnr
-        results[idx, 2] = fitness
-
-def brute_force_weight_search_cuda(img, data, local_el, target_bpp, target_psnr, stage, block_size=None):
-    """
-    使用暴力搜索找到最佳的權重組合
-    
-    Parameters:
-    -----------
-    img : numpy.ndarray or cupy.ndarray
-        輸入圖像
-    data : numpy.ndarray or cupy.ndarray
-        要嵌入的數據
-    local_el : numpy.ndarray or cupy.ndarray
-        局部EL值
-    target_bpp : float
-        目標BPP
-    target_psnr : float
-        目標PSNR
-    stage : int
-        當前嵌入階段
-    block_size : int, optional
-        區塊大小（僅在quad tree模式下使用）
-    
-    Returns:
-    --------
-    tuple
-        (最佳權重, (payload, psnr))
-    """
-    img = cp.asarray(img)
-    data = cp.asarray(data)
-    
-    weight_combinations = cp.array(list(itertools.product(range(1, 16), repeat=4)), dtype=cp.int32)
-    results = cp.zeros((len(weight_combinations), 3), dtype=cp.float32)
-    
-    # 根據區塊大小調整參數
-    if block_size is not None:
-        # 對較大的區塊增加權重範圍
-        if block_size >= 256:
-            weight_combinations = cp.array(list(itertools.product(range(1, 20), repeat=4)), dtype=cp.int32)
-        # 對較小的區塊減小權重範圍
-        elif block_size <= 64:
-            weight_combinations = cp.array(list(itertools.product(range(1, 12), repeat=4)), dtype=cp.int32)
-    
-    threads_per_block = 256
-    blocks_per_grid = (len(weight_combinations) + threads_per_block - 1) // threads_per_block
-    
-    # 調用評估kernel
-    evaluate_weights_kernel[blocks_per_grid, threads_per_block](
-        img, data, local_el, weight_combinations, results, 
-        target_bpp, target_psnr, stage
-    )
-    
-    # 根據區塊大小調整適應度計算
-    if block_size is not None:
-        # 對較大的區塊更重視PSNR
-        if block_size >= 256:
-            results[:, 2] = results[:, 2] * 0.4 + (results[:, 1] / target_psnr) * 0.6
-        # 對較小的區塊更重視payload
-        elif block_size <= 64:
-            results[:, 2] = results[:, 2] * 0.7 + (results[:, 1] / target_psnr) * 0.3
-    
-    best_idx = cp.argmax(results[:, 2])
-    best_weights = weight_combinations[best_idx]
-    best_payload, best_psnr, best_fitness = results[best_idx]
-    
-    return cp.asnumpy(best_weights), (float(best_payload), float(best_psnr))
 
 def encode_pee_info(pee_info):
     encoded = struct.pack('B', pee_info['total_rotations'])
@@ -315,44 +189,43 @@ def analyze_and_plot_results(bpp_psnr_data, imgName, split_size):
     plt.tight_layout()
     return plt.gcf()
 
-@cuda.jit
-def calculate_variance_kernel(block, variance_result):
+# 在 utils.py 中添加
+def calculate_metrics_with_rotation(original_img, stage_img, current_rotation):
     """
-    CUDA kernel for calculating variance of image blocks
+    計算考慮旋轉的圖像品質指標
+    
+    Parameters:
+    -----------
+    original_img : numpy.ndarray
+        原始圖像
+    stage_img : numpy.ndarray
+        處理後的圖像
+    current_rotation : int
+        當前旋轉角度（度數）
+    
+    Returns:
+    --------
+    tuple
+        (psnr, ssim, hist_corr) 三個品質指標
     """
-    x, y = cuda.grid(2)
-    if x < block.shape[1] and y < block.shape[0]:
-        # 使用shared memory來優化性能
-        tid = cuda.threadIdx.x + cuda.threadIdx.y * cuda.blockDim.x
-        block_size = block.shape[0] * block.shape[1]
-        
-        # 計算區域平均值
-        local_sum = 0
-        local_sum_sq = 0
-        for i in range(block.shape[0]):
-            for j in range(block.shape[1]):
-                pixel_value = block[i, j]
-                local_sum += pixel_value
-                local_sum_sq += pixel_value * pixel_value
-        
-        mean = local_sum / block_size
-        variance = (local_sum_sq / block_size) - (mean * mean)
-        
-        # 只需要一個線程寫入結果
-        if x == 0 and y == 0:
-            variance_result[0] = variance
+    # 確保輸入是numpy array
+    if isinstance(original_img, cp.ndarray):
+        original_img = cp.asnumpy(original_img)
+    if isinstance(stage_img, cp.ndarray):
+        stage_img = cp.asnumpy(stage_img)
+    
+    # 如果需要旋轉，將圖像旋轉回原始方向
+    if current_rotation != 0:
+        k = (-current_rotation // 90) % 4
+        stage_img = np.rot90(stage_img, k=k)
+    
+    # 計算各種指標
+    psnr = calculate_psnr(original_img, stage_img)
+    ssim = calculate_ssim(original_img, stage_img)
+    hist_corr = histogram_correlation(
+        np.histogram(original_img, bins=256, range=(0, 255))[0],
+        np.histogram(stage_img, bins=256, range=(0, 255))[0]
+    )
+    
+    return psnr, ssim, hist_corr
 
-def calculate_block_variance_cuda(block):
-    """
-    Calculate variance of a block using CUDA
-    """
-    threads_per_block = (16, 16)
-    blocks_per_grid_x = (block.shape[1] + threads_per_block[0] - 1) // threads_per_block[0]
-    blocks_per_grid_y = (block.shape[0] + threads_per_block[1] - 1) // threads_per_block[1]
-    blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
-    
-    variance_result = cuda.device_array(1, dtype=np.float32)
-    
-    calculate_variance_kernel[blocks_per_grid, threads_per_block](block, variance_result)
-    
-    return variance_result[0]

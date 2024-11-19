@@ -8,17 +8,17 @@ from image_processing import (
     save_image,
     save_histogram,
     generate_histogram,
-    create_collage
+    add_grid_lines
 )
 from embedding import (
     pee_process_with_rotation_cuda,
-    pee_process_with_split_cuda,
-    pee_process_with_quadtree_cuda
+    pee_process_with_split_cuda
 )
 from utils import (
     create_pee_info_table
 )
 from common import *
+from quadtree import pee_process_with_quadtree_cuda
 
 warnings.simplefilter('ignore', category=NumbaPerformanceWarning)
 
@@ -45,7 +45,7 @@ def main():
     
     # quad tree 特定參數
     quad_tree_params = {
-        'min_block_size': 64,
+        'min_block_size': 16,  # 更新為支援16x16
         'variance_threshold': 300
     }
 
@@ -54,7 +54,6 @@ def main():
     os.makedirs(f"./pred_and_QR/outcome/histogram/{imgName}/difference", exist_ok=True)
     os.makedirs(f"./pred_and_QR/outcome/image/{imgName}", exist_ok=True)
     os.makedirs(f"./pred_and_QR/outcome/plots/{imgName}", exist_ok=True)
-    
     ensure_dir(f"./pred_and_QR/outcome/{imgName}/pee_info.npy")
     
     try:
@@ -73,8 +72,6 @@ def main():
         print(f"Starting encoding process... ({'CUDA' if cp.cuda.is_available() else 'CPU'} mode)")
         print(f"Using method: {method}")
         
-        # X1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding
-        print("\nX1: Improved Adaptive Prediction-Error Expansion (PEE) Embedding")
         try:
             # 執行選定的方法
             if method == "rotation":
@@ -106,8 +103,6 @@ def main():
                     quad_tree_params['variance_threshold'],
                     el_mode
                 )
-            else:
-                raise ValueError(f"Unknown method: {method}")
 
             # Create and print PEE information table
             total_pixels = origImg.size
@@ -117,19 +112,30 @@ def main():
 
             # Save each stage's image and histogram
             for i, stage in enumerate(pee_stages):
-                # Save the stage image
-                save_image(cp.asnumpy(stage['stage_img']), 
+                # 使用原始圖像（無格線）進行質量評估
+                stage_img = cp.asnumpy(stage['stage_img'])
+                
+                # 保存原始階段圖像
+                save_image(stage_img, 
                          f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined.png")
                 
-                # Create and save collage image if available
-                if method != "quadtree" and 'rotated_sub_images' in stage and len(stage['rotated_sub_images']) > 0:
-                    collage = create_collage(stage['rotated_sub_images'])
-                    save_image(collage, f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_rotated_collage.png")
-                
-                # Save histogram
+                # 如果是 quadtree 方法，添加格線
+                if method == "quadtree":
+                    grid_image = add_grid_lines(stage_img.copy(), stage['block_info'])
+                    save_image(grid_image, 
+                             f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_with_grid.png")
+                    print(f"\nBlock statistics for Stage {i}:")
+                    # 從大到小順序打印各個大小的區塊數量
+                    for size in sorted([int(s) for s in stage['block_info'].keys()], reverse=True):
+                        block_count = len(stage['block_info'][str(size)]['blocks'])
+                        if block_count > 0:  # 只打印有區塊的大小
+                            print(f"  {size}x{size} blocks: {block_count}")
+                    print("")  # 空行以提高可讀性
+
+                # 使用無格線的圖像創建直方圖
                 histogram_filename = f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X1_stage_{i}_histogram.png"
                 plt.figure(figsize=(10, 6))
-                plt.bar(range(256), generate_histogram(cp.asnumpy(stage['stage_img'])), alpha=0.7)
+                plt.bar(range(256), generate_histogram(stage_img), alpha=0.7)
                 plt.title(f"Histogram after PEE Stage {i}")
                 plt.xlabel("Pixel Value")
                 plt.ylabel("Frequency")
@@ -137,41 +143,14 @@ def main():
                 plt.close()
 
             # Save final PEE image
-            save_image(final_pee_img, f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_final.png")
-
-            # Prepare and save PEE information
+            save_image(final_pee_img, 
+                      f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_final.png")
+            
+            # 如果是 quadtree 方法，為最終圖像添加格線
             if method == "quadtree":
-                pee_info = {
-                    'method': 'quadtree',
-                    'total_embeddings': total_embeddings,
-                    'min_block_size': quad_tree_params['min_block_size'],
-                    'variance_threshold': quad_tree_params['variance_threshold'],
-                    'stages': [
-                        {
-                            'embedding': stage['embedding'],
-                            'block_info': stage['block_info']
-                        } for stage in pee_stages
-                    ]
-                }
-            else:
-                pee_info = {
-                    'method': method,
-                    'total_embeddings': total_embeddings,
-                    'split_size': split_size,
-                    'block_base': block_base if method == "split" else None,
-                    'stages': [
-                        {
-                            'embedding': stage['embedding'],
-                            'block_params': stage['block_params']
-                        } for stage in pee_stages
-                    ]
-                }
-
-            # Save PEE information
-            pee_info_path = f"./pred_and_QR/outcome/{imgName}/pee_info.npy"
-            ensure_dir(pee_info_path)
-            np.save(pee_info_path, pee_info)
-            print(f"PEE information saved to {pee_info_path}")
+                final_grid_image = add_grid_lines(final_pee_img.copy(), pee_stages[-1]['block_info'])
+                save_image(final_grid_image, 
+                          f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_final_with_grid.png")
 
             # Calculate and save BPP-PSNR data
             bpp_psnr_data = []
