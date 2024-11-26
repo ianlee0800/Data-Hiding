@@ -45,7 +45,7 @@ def main():
     
     # quad tree 特定參數
     quad_tree_params = {
-        'min_block_size': 16,  # 更新為支援16x16
+        'min_block_size': 16,  # 支援到16x16
         'variance_threshold': 300
     }
 
@@ -101,7 +101,8 @@ def main():
                     use_different_weights,
                     quad_tree_params['min_block_size'],
                     quad_tree_params['variance_threshold'],
-                    el_mode
+                    el_mode,
+                    rotation_mode='random'  # 明確指定使用 random mode
                 )
 
             # Create and print PEE information table
@@ -115,24 +116,38 @@ def main():
                 # 使用原始圖像（無格線）進行質量評估
                 stage_img = cp.asnumpy(stage['stage_img'])
                 
-                # 保存原始階段圖像
+                # 保存原始階段圖像（旋轉回0度後的圖像）
                 save_image(stage_img, 
                          f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined.png")
                 
-                # 如果是 quadtree 方法，添加格線
+                # 保存旋轉狀態的圖像（未旋轉回0度）
+                if 'rotated_stage_img' in stage:
+                    rotated_img = cp.asnumpy(stage['rotated_stage_img'])
+                    save_image(rotated_img,
+                             f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_rotated.png")
+                    
+                    # 為旋轉狀態的圖像添加格線
+                    grid_rotated_img = add_grid_lines(rotated_img.copy(), stage['block_info'])
+                    save_image(grid_rotated_img,
+                             f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_rotated_with_grid.png")
+
+                # 為階段圖像添加格線並保存
                 if method == "quadtree":
                     grid_image = add_grid_lines(stage_img.copy(), stage['block_info'])
                     save_image(grid_image, 
                              f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_with_grid.png")
+                
+                # 打印區塊統計資訊
+                if method == "quadtree":
                     print(f"\nBlock statistics for Stage {i}:")
-                    # 從大到小順序打印各個大小的區塊數量
                     for size in sorted([int(s) for s in stage['block_info'].keys()], reverse=True):
                         block_count = len(stage['block_info'][str(size)]['blocks'])
-                        if block_count > 0:  # 只打印有區塊的大小
-                            print(f"  {size}x{size} blocks: {block_count}")
-                    print("")  # 空行以提高可讀性
+                        if block_count > 0:
+                            rotation = stage['block_rotations'][size] if 'block_rotations' in stage else 0
+                            print(f"  {size}x{size} blocks: {block_count}, Rotation: {rotation}°")
+                    print("")
 
-                # 使用無格線的圖像創建直方圖
+                # Create and save histogram
                 histogram_filename = f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X1_stage_{i}_histogram.png"
                 plt.figure(figsize=(10, 6))
                 plt.bar(range(256), generate_histogram(stage_img), alpha=0.7)
@@ -215,7 +230,7 @@ def main():
                        'stages': bpp_psnr_data
                    })
 
-            # Calculate and print final results
+            # Calculate and print final results using original image (no grid)
             final_bpp = total_payload / total_pixels
             final_psnr = calculate_psnr(origImg, final_pee_img)
             final_ssim = calculate_ssim(origImg, final_pee_img)

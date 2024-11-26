@@ -146,7 +146,8 @@ def process_current_block(block, position, size, stage_info, embedding, ratio_of
         raise
 
 def process_block(block, position, size, stage_info, embedding, variance_threshold, 
-                 ratio_of_ones, target_bpp, target_psnr, el_mode, verbose=False):
+                 ratio_of_ones, target_bpp, target_psnr, el_mode, verbose=False,
+                 rotation_mode='none'):
     """
     遞迴處理區塊，決定是否需要進一步分割
     
@@ -172,75 +173,96 @@ def process_block(block, position, size, stage_info, embedding, variance_thresho
         目標 PSNR
     el_mode : int
         EL模式
+    verbose : bool
+        是否輸出詳細資訊
+    rotation_mode : str
+        'none': 原始的 quadtree 方法
+        'random': 使用隨機旋轉的新方法
     
     Returns:
     --------
     list
         包含處理後區塊的列表
     """
-    if size < 16:  # 最小區塊大小限制
-        return []
-    
-    # 計算區塊變異度
-    variance = calculate_block_variance_cuda(block)
-    
-    # 根據區塊大小調整閾值，但移除強制保留大區塊的邏輯
-    adjusted_threshold = variance_threshold
-    if size >= 128:
-        adjusted_threshold *= 1.2  # 稍微提高大區塊的閾值，但不強制保留
-    elif size >= 64:
-        adjusted_threshold *= 1.1
-    elif size >= 32:
-        adjusted_threshold *= 1.0
-    else:  # 16x16 區塊
-        adjusted_threshold *= 0.9
-    
-    # 計算邊緣強度
-    dx = cp.diff(block, axis=1)
-    dy = cp.diff(block, axis=0)
-    edge_strength = float(cp.mean(cp.abs(dx)) + cp.mean(cp.abs(dy)))
-    
-    # 根據邊緣強度微調閾值
-    if edge_strength > variance_threshold * 0.3:
-        adjusted_threshold *= 0.9  # 邊緣區域更容易被分割
-    
-    if verbose:
-        print(f"Block at {position}, size: {size}x{size}")
-        print(f"  Variance: {variance:.2f}")
-        print(f"  Threshold: {adjusted_threshold:.2f}")
-        print(f"  Edge strength: {edge_strength:.2f}")
-    
-    # 純粹基於 variance 決定是否分割
-    if size > 16 and variance > adjusted_threshold:
-        # 繼續分割
-        half_size = size // 2
-        sub_blocks = []
-        for i in range(2):
-            for j in range(2):
-                y_start = position[0] + i * half_size
-                x_start = position[1] + j * half_size
-                sub_block = block[i*half_size:(i+1)*half_size, 
-                                j*half_size:(j+1)*half_size]
-                sub_blocks.extend(process_block(
-                    sub_block, (y_start, x_start), half_size,
-                    stage_info, embedding, variance_threshold,
-                    ratio_of_ones, target_bpp, target_psnr, el_mode,
-                    verbose=verbose
-                ))
-        return sub_blocks
-    else:
-        # 處理當前區塊
-        return process_current_block(
-            block, position, size, stage_info, embedding,
-            ratio_of_ones, target_bpp, target_psnr, el_mode,
-            verbose=verbose
-        )
+    try:
+        if size < 16:  # 最小區塊大小限制
+            return []
+        
+        # 確保 block 是 CuPy 數組
+        if not isinstance(block, cp.ndarray):
+            block = cp.asarray(block)
+        
+        # 計算區塊變異度
+        variance = calculate_block_variance_cuda(block)
+        
+        # 根據區塊大小調整閾值
+        adjusted_threshold = variance_threshold
+        if size >= 128:
+            adjusted_threshold *= 1.2
+        elif size >= 64:
+            adjusted_threshold *= 1.1
+        elif size >= 32:
+            adjusted_threshold *= 1.0
+        else:  # 16x16 區塊
+            adjusted_threshold *= 0.9
+        
+        # 計算邊緣強度
+        dx = cp.diff(block, axis=1)
+        dy = cp.diff(block, axis=0)
+        edge_strength = float(cp.mean(cp.abs(dx)) + cp.mean(cp.abs(dy)))
+        
+        # 根據邊緣強度微調閾值
+        if edge_strength > variance_threshold * 0.3:
+            adjusted_threshold *= 0.9  # 邊緣區域更容易被分割
+        
+        if verbose:
+            print(f"Block at {position}, size: {size}x{size}")
+            print(f"  Variance: {variance:.2f}")
+            print(f"  Threshold: {adjusted_threshold:.2f}")
+            print(f"  Edge strength: {edge_strength:.2f}")
+        
+        # 純粹基於 variance 決定是否分割
+        if size > 16 and variance > adjusted_threshold:
+            # 繼續分割
+            half_size = size // 2
+            sub_blocks = []
+            for i in range(2):
+                for j in range(2):
+                    y_start = position[0] + i * half_size
+                    x_start = position[1] + j * half_size
+                    sub_block = block[i*half_size:(i+1)*half_size, 
+                                    j*half_size:(j+1)*half_size]
+                    sub_blocks.extend(process_block(
+                        sub_block, (y_start, x_start), half_size,
+                        stage_info, embedding, variance_threshold,
+                        ratio_of_ones, target_bpp, target_psnr, el_mode,
+                        verbose=verbose, rotation_mode=rotation_mode
+                    ))
+            return sub_blocks
+        else:
+            # 如果使用隨機旋轉模式，在處理之前進行旋轉
+            if rotation_mode == 'random' and 'block_rotations' in stage_info:
+                rotation = stage_info['block_rotations'][size]
+                if rotation != 0:
+                    k = rotation // 90
+                    block = cp.rot90(block, k=k)
+            
+            # 處理當前區塊
+            return process_current_block(
+                block, position, size, stage_info, embedding,
+                ratio_of_ones, target_bpp, target_psnr, el_mode,
+                verbose=verbose
+            )
+            
+    except Exception as e:
+        print(f"Error processing block at position {position}, size {size}: {str(e)}")
+        raise
 
 def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, 
-                                 min_block_size, variance_threshold, el_mode, verbose=False):
+                                 min_block_size, variance_threshold, el_mode, rotation_mode='none'):
     """
     使用Quad tree的PEE處理函數
-    
+
     Parameters:
     -----------
     img : numpy.ndarray
@@ -257,6 +279,9 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
         變異閾值
     el_mode : int
         EL模式 (0:無限制, 1:漸增, 2:漸減)
+    rotation_mode : str
+        'none': 原始的 quadtree 方法
+        'random': 使用隨機旋轉的新方法
         
     Returns:
     --------
@@ -271,14 +296,16 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
             raise ValueError("min_block_size must be a power of 2")
         if not 0 <= ratio_of_ones <= 1:
             raise ValueError("ratio_of_ones must be between 0 and 1")
-        
+        if rotation_mode not in ['none', 'random']:
+            raise ValueError("rotation_mode must be 'none' or 'random'")
+
         # 初始化
         original_img = cp.asarray(img)
         height, width = original_img.shape
         total_pixels = height * width
         pee_stages = []
         total_payload = 0
-        current_img = original_img.copy()
+        current_img = original_img.copy()  # 保存前一階段的結果（已轉回0度）
         previous_psnr = float('inf')
         previous_ssim = 1.0
         previous_payload = float('inf')
@@ -287,16 +314,12 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
         block_weights = {size: None for size in [512, 256, 128, 64, 32, 16]}
         
         mem_pool = cp.get_default_memory_pool()
-        
+
         try:
             for embedding in range(total_embeddings):
                 print(f"\nStarting embedding {embedding}")
                 print(f"Memory usage before embedding {embedding}: {mem_pool.used_bytes()/1024/1024:.2f} MB")
-                
-                # 計算當前旋轉角度
-                current_rotation = (embedding * 90) % 360
-                print(f"Current rotation angle: {current_rotation}°")
-                
+
                 # 設定目標值
                 if embedding == 0:
                     target_psnr = 40.0
@@ -304,10 +327,10 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                 else:
                     target_psnr = max(28.0, previous_psnr - 1)
                     target_bpp = max(0.5, (previous_payload / total_pixels) * 0.95)
-                
+
                 print(f"Target PSNR for embedding {embedding}: {target_psnr:.2f}")
                 print(f"Target BPP for embedding {embedding}: {target_bpp:.4f}")
-                
+
                 # 初始化階段資訊
                 stage_info = {
                     'embedding': embedding,
@@ -317,65 +340,101 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                     'ssim': 0,
                     'hist_corr': 0,
                     'bpp': 0,
-                    'rotation': current_rotation
+                    'rotation_mode': rotation_mode
                 }
-                
+
+                if rotation_mode == 'random':
+                    # 為每個區塊大小生成隨機旋轉角度
+                    block_rotations = {
+                        size: np.random.choice([-270, -180, -90, 0, 90, 180, 270])
+                        for size in [512, 256, 128, 64, 32, 16]
+                    }
+                    stage_info['block_rotations'] = block_rotations
+                    print("\nBlock rotation angles for this stage:")
+                    for size, angle in sorted(block_rotations.items(), reverse=True):
+                        print(f"  {size}x{size}: {angle}°")
+
                 # 處理整個圖像
                 processed_blocks = process_block(
                     current_img, (0, 0), 512, stage_info, embedding,
                     variance_threshold, ratio_of_ones, target_bpp, target_psnr, el_mode,
-                    verbose=verbose  # 添加 verbose 參數
+                    verbose=False, rotation_mode=rotation_mode
                 )
-                
+
                 # 重建圖像
-                stage_img = cp.zeros_like(current_img)
+                stage_img = cp.zeros_like(current_img)  # 用於儲存轉回0度的圖像
+                rotated_stage_img = cp.zeros_like(current_img)  # 用於儲存旋轉狀態的圖像
+
+                # 重建並處理每個區塊
                 for block, pos, size in processed_blocks:
                     block = cp.asarray(block)
+                    
+                    if rotation_mode == 'random':
+                        # 保存旋轉後的狀態（未轉回0度）
+                        rotated_stage_img[pos[0]:pos[0]+size, pos[1]:pos[1]+size] = block
+                        
+                        # 將區塊旋轉回原始方向
+                        rotation = stage_info['block_rotations'][size]
+                        if rotation != 0:
+                            k = (-rotation // 90) % 4
+                            block = cp.rot90(block, k=k)
+
+                    # 保存轉回0度的狀態
                     stage_img[pos[0]:pos[0]+size, pos[1]:pos[1]+size] = block
-                
-                # 計算階段指標
-                psnr, ssim, hist_corr = calculate_metrics_with_rotation(
-                    current_img,
-                    stage_img,
-                    original_img,
-                    embedding
-                )
-                
+
+                # 保存圖像到stage_info
+                if rotation_mode == 'random':
+                    stage_info['rotated_stage_img'] = rotated_stage_img
                 stage_info['stage_img'] = stage_img
-                stage_info['psnr'] = float(psnr)
-                stage_info['ssim'] = float(ssim)
-                stage_info['hist_corr'] = float(hist_corr)
-                stage_info['bpp'] = float(stage_info['payload'] / total_pixels)
-                
-                # 異常值檢查
-                if psnr < 28 or ssim < 0.8:
-                    print("Warning: Metrics seem unusually low")
-                    print(f"Current rotation: {current_rotation}°")
-                    test_psnr, test_ssim, _ = calculate_metrics_with_rotation(
+
+                # 計算階段指標
+                if rotation_mode == 'random':
+                    # 統一使用原始圖像作為參考
+                    stage_img_np = cp.asnumpy(stage_img)
+                    reference_img_np = cp.asnumpy(original_img)
+
+                    # 計算指標
+                    psnr = calculate_psnr(reference_img_np, stage_img_np)
+                    ssim = calculate_ssim(reference_img_np, stage_img_np)
+                    hist_corr = histogram_correlation(
+                        np.histogram(reference_img_np, bins=256, range=(0, 255))[0],
+                        np.histogram(stage_img_np, bins=256, range=(0, 255))[0]
+                    )
+                else:
+                    # 原始模式的計算方式
+                    psnr, ssim, hist_corr = calculate_metrics_with_rotation(
                         current_img,
                         stage_img,
                         original_img,
                         embedding
                     )
-                    print(f"Verification - PSNR: {test_psnr:.2f}, SSIM: {test_ssim:.4f}")
-                
+
+                stage_info['psnr'] = float(psnr)
+                stage_info['ssim'] = float(ssim)
+                stage_info['hist_corr'] = float(hist_corr)
+                stage_info['bpp'] = float(stage_info['payload'] / total_pixels)
+
+                # 異常值檢查
+                if psnr < 28 or ssim < 0.8:
+                    print("Warning: Metrics seem unusually low")
+
                 # 維護指標
                 if embedding > 0:
                     if stage_info['payload'] >= previous_payload:
                         print(f"Warning: Stage {embedding} payload ({stage_info['payload']}) is not less than previous stage ({previous_payload}).")
                         stage_info['payload'] = int(previous_payload * 0.95)
                         print(f"Adjusted payload: {stage_info['payload']}")
-                    
+
                     if stage_info['psnr'] >= previous_psnr:
                         print(f"Warning: Stage {embedding} PSNR ({stage_info['psnr']:.2f}) is not less than previous stage ({previous_psnr:.2f}).")
-                
+
                 # 更新stage資訊
                 pee_stages.append(stage_info)
                 total_payload += stage_info['payload']
                 previous_psnr = stage_info['psnr']
                 previous_ssim = stage_info['ssim']
                 previous_payload = stage_info['payload']
-                
+
                 # 輸出階段摘要
                 print(f"Embedding {embedding} summary:")
                 print(f"  Payload: {stage_info['payload']}")
@@ -383,33 +442,25 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                 print(f"  PSNR: {stage_info['psnr']:.2f}")
                 print(f"  SSIM: {stage_info['ssim']:.4f}")
                 print(f"  Hist Corr: {stage_info['hist_corr']:.4f}")
-                print(f"  Rotation: {current_rotation}°")
-                
-                # 準備下一階段
-                current_img = cp.rot90(stage_img)
-                
+
+                # 準備下一階段：使用轉回0度的圖像
+                current_img = stage_img.copy()
+
                 # 清理當前階段的記憶體
                 mem_pool.free_all_blocks()
                 print(f"Memory usage after embedding {embedding}: {mem_pool.used_bytes()/1024/1024:.2f} MB")
 
-            # 最後將圖像旋轉回原始方向
-            final_rotation = (total_embeddings * 90) % 360
-            if final_rotation != 0:
-                k = (-final_rotation // 90) % 4
-                final_pee_img = cp.asnumpy(cp.rot90(current_img, k=k))
-            else:
-                final_pee_img = cp.asnumpy(current_img)
+            # 返回最終結果
+            return cp.asnumpy(current_img), int(total_payload), pee_stages
 
-            return final_pee_img, int(total_payload), pee_stages
-            
         except Exception as e:
             print(f"Error in embedding process: {str(e)}")
             raise
-            
+
     except Exception as e:
         print(f"Error in quadtree processing: {str(e)}")
         raise
-        
+
     finally:
         # 確保清理所有記憶體
         cleanup_quadtree_resources()
