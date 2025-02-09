@@ -29,7 +29,7 @@ def ensure_dir(file_path):
 
 def main():
     # Parameter settings
-    imgName = "airplane"  # Image name without extension
+    imgName = "bridge"  # Image name without extension
     filetype = "png"
     total_embeddings = 5
     ratio_of_ones = 0.5
@@ -37,7 +37,7 @@ def main():
     use_different_weights = False # 是否使用不同的權重
     
     # 方法選擇參數
-    method = "quadtree"  # 可選："rotation", "split", "quadtree"
+    method = "split"  # 可選："rotation", "split", "quadtree"
     
     # 各方法共用參數
     split_size = 2  # 用於 rotation 和 split 方法
