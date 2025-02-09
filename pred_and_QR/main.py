@@ -29,7 +29,7 @@ def ensure_dir(file_path):
 
 def main():
     # Parameter settings
-    imgName = "bridge"  # Image name without extension
+    imgName = "airplane"  # Image name without extension
     filetype = "png"
     total_embeddings = 5
     ratio_of_ones = 0.5

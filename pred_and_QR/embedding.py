@@ -292,9 +292,12 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
     block_base : bool
         True: 使用 block-based 分割, False: 使用 quarter-based 分割
     """
+    # 將輸入圖像轉換為 CUDA 陣列
     original_img = cp.asarray(img)
     height, width = original_img.shape
     total_pixels = height * width
+    
+    # 初始化追蹤變數
     pee_stages = []
     total_payload = 0
     current_img = original_img.copy()
@@ -302,9 +305,11 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
     previous_ssim = 1.0
     previous_payload = float('inf')
 
+    # 對每個嵌入階段進行處理
     for embedding in range(total_embeddings):
         print(f"\nStarting embedding {embedding}")
         
+        # 設定目標品質參數
         if embedding == 0:
             target_psnr = 40.0
             target_bpp = 0.9
@@ -315,6 +320,7 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         print(f"Target PSNR for embedding {embedding}: {target_psnr:.2f}")
         print(f"Target BPP for embedding {embedding}: {target_bpp:.4f}")
         
+        # 初始化階段資訊
         stage_info = {
             'embedding': embedding,
             'sub_images': [],
@@ -331,7 +337,7 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         stage_payload = 0
         embedded_sub_images = []
         
-        # 使用新的彈性分割函數
+        # 使用彈性分割函數切割圖像
         sub_images = split_image_flexible(current_img, split_size, block_base)
         
         # 為每個子圖像設置隨機旋轉角度
@@ -345,11 +351,13 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
             first_sub_img = sub_images[0]
             max_sub_payload = first_sub_img.size
         
+        # 處理每個子圖像
         for i, sub_img in enumerate(sub_images):
             sub_img = cp.asarray(sub_img)
             rotation = int(stage_rotations[i])
             rotated_sub_img = cp.rot90(sub_img, k=rotation // 90)
 
+            # 生成嵌入數據
             sub_data = generate_random_binary_array(rotated_sub_img.size, ratio_of_ones)
             sub_data = cp.asarray(sub_data, dtype=cp.uint8)
             
@@ -361,21 +369,35 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
             else:  # No restriction
                 max_el = 7
             
+            # 計算自適應嵌入層級
             local_el = compute_improved_adaptive_el(rotated_sub_img, window_size=5, max_el=max_el)
             
+            # 處理 local_el 的數據類型轉換
+            if hasattr(local_el, 'copy_to_host'):  # Numba DeviceNDArray
+                local_el_np = local_el.copy_to_host()
+            elif isinstance(local_el, cp.ndarray):
+                local_el_np = cp.asnumpy(local_el)
+            else:
+                local_el_np = local_el
+            
+            # 搜索最佳權重
             if use_different_weights or i == 0:
                 weights, (sub_payload, sub_psnr) = brute_force_weight_search_cuda(
                     rotated_sub_img, sub_data, local_el, target_bpp, target_psnr, embedding
                 )
             
+            # 執行數據嵌入
             data_to_embed = sub_data[:min(int(max_sub_payload), len(sub_data))]
-            embedded_sub, payload = multi_pass_embedding(rotated_sub_img, data_to_embed, local_el, weights, embedding)
+            embedded_sub, payload = multi_pass_embedding(
+                rotated_sub_img, data_to_embed, local_el, weights, embedding
+            )
             
+            # 將嵌入後的圖像旋轉回原始方向
             rotated_back_sub = cp.rot90(embedded_sub, k=-rotation // 90)
             embedded_sub_images.append(rotated_back_sub)
             stage_payload += payload
             
-            # 計算各種指標
+            # 計算品質指標
             sub_img_np = cp.asnumpy(sub_img)
             rotated_back_sub_np = cp.asnumpy(rotated_back_sub)
             sub_psnr = calculate_psnr(sub_img_np, rotated_back_sub_np)
@@ -385,12 +407,10 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
                 np.histogram(rotated_back_sub_np, bins=256, range=(0, 255))[0]
             )
             
-            local_el_np = local_el.get()
-            max_el_used = int(np.max(local_el_np))
-
+            # 記錄區塊參數
             block_info = {
                 'weights': weights.tolist() if isinstance(weights, np.ndarray) else weights,
-                'EL': max_el_used,
+                'EL': int(np.max(local_el_np)),
                 'payload': int(payload),
                 'psnr': float(sub_psnr),
                 'ssim': float(sub_ssim),
@@ -402,10 +422,11 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
             stage_info['rotated_sub_images'].append(cp.asnumpy(embedded_sub))
             stage_info['non_rotated_sub_images'].append(cp.asnumpy(rotated_back_sub))
 
-        # 使用新的彈性合併函數
+        # 合併處理後的子圖像
         stage_img = merge_image_flexible(embedded_sub_images, split_size, block_base)
         stage_info['stage_img'] = stage_img
-
+        
+        # 計算階段整體品質指標
         stage_img_np = cp.asnumpy(stage_img)
         original_img_np = cp.asnumpy(original_img)
         stage_info['psnr'] = float(calculate_psnr(original_img_np, stage_img_np))
@@ -416,7 +437,9 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         ))
         stage_info['payload'] = stage_payload
         stage_info['bpp'] = float(stage_info['payload'] / total_pixels)
+        stage_info['rotations'] = stage_rotations.tolist()  # 將旋轉信息整合到 stage_info 中
         
+        # 檢查品質限制
         if embedding > 0:
             if stage_info['payload'] >= previous_payload:
                 print(f"Warning: Stage {embedding} payload ({stage_info['payload']}) is not less than previous stage ({previous_payload}).")
@@ -426,22 +449,23 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
             if stage_info['psnr'] >= previous_psnr:
                 print(f"Warning: Stage {embedding} PSNR ({stage_info['psnr']:.2f}) is not less than previous stage ({previous_psnr:.2f}).")
         
+        # 更新資訊
         pee_stages.append(stage_info)
         total_payload += stage_info['payload']
         previous_psnr = stage_info['psnr']
         previous_ssim = stage_info['ssim']
         previous_payload = stage_info['payload']
 
+        # 輸出階段摘要
         print(f"Embedding {embedding} summary:")
         print(f"  Payload: {stage_info['payload']}")
         print(f"  BPP: {stage_info['bpp']:.4f}")
         print(f"  PSNR: {stage_info['psnr']:.2f}")
         print(f"  SSIM: {stage_info['ssim']:.4f}")
         print(f"  Hist Corr: {stage_info['hist_corr']:.4f}")
-        print(f"  Rotations: {stage_rotations.tolist()}")
 
         current_img = stage_img
 
+    # 返回最終結果
     final_pee_img = cp.asnumpy(current_img)
-    
-    return final_pee_img, int(total_payload), pee_stages, stage_rotations.tolist()
+    return final_pee_img, int(total_payload), pee_stages

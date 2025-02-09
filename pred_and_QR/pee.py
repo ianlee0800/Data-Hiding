@@ -32,25 +32,93 @@ def pee_embedding_adaptive(img, data, pred_img, EL):
 
 @cuda.jit
 def pee_embedding_kernel(img, pred_img, data, embedded, payload, local_el, height, width, stage):
+    """
+    改進的 PEE 嵌入 kernel，著重於提高 PSNR
+    
+    關鍵策略：
+    1. 根據局部差值大小動態調整移動距離
+    2. 優先使用較小的移動量
+    3. 在可能的情況下保持像素在原始位置附近
+    """
     x, y = cuda.grid(2)
     if x < width and y < height:
         diff = int(img[y, x]) - int(pred_img[y, x])
+        pixel_val = int(img[y, x])
+        el = local_el[y, x]
         
-        if abs(diff) < local_el[y, x] and payload[0] < data.size:
-            bit = data[payload[0]]
-            cuda.atomic.add(payload, 0, 1)
-            
-            if stage == 0:
-                embedding_strength = min(3, local_el[y, x] - abs(diff))
+        # 計算局部複雜度
+        local_complexity = 0
+        window_size = 3
+        for i in range(max(0, y-window_size), min(height, y+window_size+1)):
+            for j in range(max(0, x-window_size), min(width, x+window_size+1)):
+                if i != y or j != x:
+                    d = abs(int(img[i, j]) - int(pred_img[i, j]))
+                    local_complexity = max(local_complexity, d)
+        
+        # 根據局部複雜度調整嵌入強度
+        adaptive_el = min(el, max(3, local_complexity // 2))
+        embedding_space = adaptive_el * 2
+        
+        if payload[0] < data.size:
+            if abs(diff) <= adaptive_el:  # 可嵌入區域
+                bit = data[payload[0]]
+                cuda.atomic.add(payload, 0, 1)
+                
+                # 優化的移動策略
+                if diff >= 0:
+                    if bit == 1:
+                        # 漸進式移動：從小移動開始嘗試
+                        for shift in range(adaptive_el, embedding_space + 1):
+                            new_val = pixel_val + (shift - diff)
+                            if 0 <= new_val <= 255:
+                                embedded[y, x] = new_val
+                                break
+                        else:
+                            # 如果所有嘗試都失敗，保持原值
+                            embedded[y, x] = pixel_val
+                    else:
+                        # 保持原位以維持高 PSNR
+                        embedded[y, x] = pixel_val
+                else:
+                    if bit == 1:
+                        # 保持原位以維持高 PSNR
+                        embedded[y, x] = pixel_val
+                    else:
+                        # 漸進式移動：從小移動開始嘗試
+                        for shift in range(adaptive_el, embedding_space + 1):
+                            new_val = pixel_val - (shift + abs(diff))
+                            if 0 <= new_val <= 255:
+                                embedded[y, x] = new_val
+                                break
+                        else:
+                            embedded[y, x] = pixel_val
+                            
+            elif adaptive_el < abs(diff) <= embedding_space:
+                # 智能移位策略：根據局部特性決定移動量
+                if diff > 0:
+                    # 計算最小需要的移動量
+                    min_shift = embedding_space - diff + 1
+                    for shift in range(min_shift, min_shift + adaptive_el):
+                        new_val = pixel_val + shift
+                        if 0 <= new_val <= 255:
+                            embedded[y, x] = new_val
+                            break
+                    else:
+                        embedded[y, x] = pixel_val
+                else:
+                    min_shift = embedding_space - abs(diff) + 1
+                    for shift in range(min_shift, min_shift + adaptive_el):
+                        new_val = pixel_val - shift
+                        if 0 <= new_val <= 255:
+                            embedded[y, x] = new_val
+                            break
+                    else:
+                        embedded[y, x] = pixel_val
             else:
-                embedding_strength = 1
-            
-            if diff >= 0:
-                embedded[y, x] = min(255, int(img[y, x]) + bit * embedding_strength)
-            else:
-                embedded[y, x] = max(0, int(img[y, x]) - (1 - bit) * embedding_strength)
+                # 保持原值
+                embedded[y, x] = pixel_val
         else:
-            embedded[y, x] = img[y, x]
+            embedded[y, x] = pixel_val
 
 def pee_embedding_adaptive_cuda(img, data, pred_img, local_el, stage=0):
     height, width = img.shape
@@ -63,7 +131,8 @@ def pee_embedding_adaptive_cuda(img, data, pred_img, local_el, stage=0):
     blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
 
     pee_embedding_kernel[blocks_per_grid, threads_per_block](
-        img, pred_img, data, d_embedded, d_payload, local_el, height, width, stage
+        img, pred_img, data, d_embedded, d_payload, local_el,
+        height, width, stage
     )
 
     embedded = d_embedded.copy_to_host()
@@ -73,15 +142,14 @@ def pee_embedding_adaptive_cuda(img, data, pred_img, local_el, stage=0):
     return embedded, payload, embedded_data
 
 def multi_pass_embedding(img, data, local_el, weights, stage):
-    
     # Convert CuPy arrays to NumPy if necessary
     if isinstance(img, cp.ndarray):
         img = cp.asnumpy(img)
     if isinstance(data, cp.ndarray):
         data = cp.asnumpy(data)
     
-    # Handle local_el specifically since it's a DeviceNDArray
-    if isinstance(local_el, cuda.cudadrv.devicearray.DeviceNDArray):
+    # Handle local_el specifically - 修改這部分
+    if hasattr(local_el, 'copy_to_host'):  # Numba DeviceNDArray
         local_el_np = local_el.copy_to_host()
     elif isinstance(local_el, cp.ndarray):
         local_el_np = cp.asnumpy(local_el)
