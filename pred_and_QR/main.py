@@ -28,13 +28,20 @@ def ensure_dir(file_path):
         os.makedirs(directory)
 
 def main():
-    # Parameter settings
-    imgName = "airplane"  # Image name without extension
+    """
+    主函數，負責整個數據隱藏過程的控制和執行
+    新增了對指定 payload size 的支援
+    """
+    # 基本參數設置
+    imgName = "bridge"  # 圖像名稱（不含副檔名）
     filetype = "png"
     total_embeddings = 5
     ratio_of_ones = 0.5
     el_mode = 0  # 0: 無限制, 1: 漸增, 2: 漸減
     use_different_weights = False # 是否使用不同的權重
+    
+    # 新增 payload size 控制參數
+    target_payload_size = 10000  # -1 或 0 表示使用原策略，正數表示指定大小
     
     # 方法選擇參數
     method = "split"  # 可選："rotation", "split", "quadtree"
@@ -49,7 +56,7 @@ def main():
         'variance_threshold': 300
     }
 
-    # Create necessary directories
+    # 創建必要的目錄
     os.makedirs(f"./pred_and_QR/outcome/histogram/{imgName}", exist_ok=True)
     os.makedirs(f"./pred_and_QR/outcome/histogram/{imgName}/difference", exist_ok=True)
     os.makedirs(f"./pred_and_QR/outcome/image/{imgName}", exist_ok=True)
@@ -57,20 +64,23 @@ def main():
     ensure_dir(f"./pred_and_QR/outcome/{imgName}/pee_info.npy")
     
     try:
-        # Clean GPU memory
+        # 清理 GPU 記憶體
         cp.get_default_memory_pool().free_all_blocks()
 
-        # Read original image
+        # 讀取原始圖像
         origImg = cv2.imread(f"./pred_and_QR/image/{imgName}.{filetype}", cv2.IMREAD_GRAYSCALE)
         if origImg is None:
             raise ValueError(f"Failed to read image: ./pred_and_QR/image/{imgName}.{filetype}")
         origImg = np.array(origImg).astype(np.uint8)
 
-        # Save original image histogram
-        save_histogram(origImg, f"./pred_and_QR/outcome/histogram/{imgName}/original_histogram.png", "Original Image Histogram")
+        # 儲存原始圖像直方圖
+        save_histogram(origImg, 
+                      f"./pred_and_QR/outcome/histogram/{imgName}/original_histogram.png", 
+                      "Original Image Histogram")
 
         print(f"Starting encoding process... ({'CUDA' if cp.cuda.is_available() else 'CPU'} mode)")
         print(f"Using method: {method}")
+        print(f"Target payload size: {target_payload_size if target_payload_size > 0 else 'Maximum capacity'}")
         
         try:
             # 執行選定的方法
@@ -81,7 +91,8 @@ def main():
                     ratio_of_ones,
                     use_different_weights,
                     split_size,
-                    el_mode
+                    el_mode,
+                    target_payload_size=target_payload_size  # 新增參數
                 )
             elif method == "split":
                 final_pee_img, total_payload, pee_stages = pee_process_with_split_cuda(
@@ -91,7 +102,8 @@ def main():
                     use_different_weights,
                     split_size,
                     el_mode,
-                    block_base
+                    block_base,
+                    target_payload_size=target_payload_size  # 新增參數
                 )
             elif method == "quadtree":
                 final_pee_img, total_payload, pee_stages = pee_process_with_quadtree_cuda(
@@ -102,10 +114,11 @@ def main():
                     quad_tree_params['min_block_size'],
                     quad_tree_params['variance_threshold'],
                     el_mode,
-                    rotation_mode='random'  # 明確指定使用 random mode
+                    rotation_mode='random',
+                    target_payload_size=target_payload_size  # 新增參數
                 )
 
-            # Create and print PEE information table
+            # 建立並列印 PEE 資訊表格
             total_pixels = origImg.size
             pee_table = create_pee_info_table(pee_stages, use_different_weights, total_pixels, 
                                            split_size, method == "quadtree")
@@ -246,10 +259,11 @@ def main():
             print(f"Final SSIM: {final_ssim:.4f}")
             print(f"Final Histogram Correlation: {final_hist_corr:.4f}")
 
-            # Save final results
+            # 更新最終結果儲存
             final_results = {
                 'method': method,
                 'total_payload': total_payload,
+                'target_payload_size': target_payload_size,  # 新增欄位
                 'final_bpp': final_bpp,
                 'final_psnr': final_psnr,
                 'final_ssim': final_ssim,
@@ -284,7 +298,7 @@ def main():
         traceback.print_exc()
     
     finally:
-        # Clean GPU memory
+        # 清理 GPU 記憶體
         cp.get_default_memory_pool().free_all_blocks()
 
 if __name__ == "__main__":

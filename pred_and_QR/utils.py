@@ -6,6 +6,82 @@ from common import *
 from pee import *
 from prettytable import PrettyTable
 
+def generate_embedding_data(total_embeddings, sub_images_per_stage, max_capacity_per_subimage, 
+                           ratio_of_ones=0.5, target_payload_size=-1):
+    """
+    更靈活的嵌入數據生成函數，不強制平均分配 payload
+    
+    Parameters:
+    -----------
+    total_embeddings : int
+        總嵌入階段數
+    sub_images_per_stage : int
+        每個stage的子圖像數量
+    max_capacity_per_subimage : int
+        每個子圖像的最大容量
+    ratio_of_ones : float, optional
+        生成數據中1的比例，默認為0.5
+    target_payload_size : int, optional
+        目標總payload大小，設為-1或0時使用最大容量
+        
+    Returns:
+    --------
+    dict
+        包含每個stage的數據生成資訊
+    """
+    # 如果沒有指定目標payload，使用最大容量模式
+    if target_payload_size <= 0:
+        max_stage_payload = sub_images_per_stage * max_capacity_per_subimage
+        stage_data = []
+        for _ in range(total_embeddings):
+            sub_data_list = []
+            for _ in range(sub_images_per_stage):
+                sub_data = generate_random_binary_array(max_capacity_per_subimage, ratio_of_ones)
+                sub_data_list.append(sub_data)
+            stage_data.append({
+                'sub_data': sub_data_list,
+                'remaining_target': 0
+            })
+        return {
+            'stage_data': stage_data,
+            'total_target': max_stage_payload * total_embeddings
+        }
+    
+    # 使用指定的payload size
+    # 為每個stage生成足夠大的數據，讓它們能夠靈活地達到目標payload
+    total_remaining = target_payload_size
+    stage_data = []
+    
+    # 為每個stage分配潛在的最大容量
+    potential_capacity_per_stage = max_capacity_per_subimage * sub_images_per_stage
+    
+    for stage in range(total_embeddings):
+        sub_data_list = []
+        
+        # 為每個子圖像生成數據
+        for sub_img in range(sub_images_per_stage):
+            # 計算這個子圖像可能需要的最大數據量
+            max_possible = min(max_capacity_per_subimage, total_remaining)
+            
+            # 如果是最後一個stage的最後一個子圖像，確保生成足夠的數據
+            if stage == total_embeddings - 1 and sub_img == sub_images_per_stage - 1:
+                sub_data = generate_random_binary_array(total_remaining, ratio_of_ones)
+            else:
+                sub_data = generate_random_binary_array(max_possible, ratio_of_ones)
+            
+            sub_data_list.append(sub_data)
+        
+        stage_data.append({
+            'sub_data': sub_data_list,
+            'remaining_target': total_remaining  # 記錄當前階段還需要嵌入多少數據
+        })
+    
+    return {
+        'stage_data': stage_data,
+        'total_target': target_payload_size
+    }
+
+# 保留原有函數以保持向後兼容性
 def generate_random_binary_array(size, ratio_of_ones=0.5):
     """生成指定大小的随机二进制数组，可调整1的比例"""
     return np.random.choice([0, 1], size=size, p=[1-ratio_of_ones, ratio_of_ones])

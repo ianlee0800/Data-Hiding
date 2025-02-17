@@ -141,15 +141,38 @@ def pee_embedding_adaptive_cuda(img, data, pred_img, local_el, stage=0):
 
     return embedded, payload, embedded_data
 
-def multi_pass_embedding(img, data, local_el, weights, stage):
-    # Convert CuPy arrays to NumPy if necessary
+def multi_pass_embedding(img, data, local_el, weights, stage, remaining_target=None):
+    """
+    改進的多次嵌入函數，提供更嚴格的payload控制
+    
+    Parameters:
+    -----------
+    img : numpy.ndarray
+        輸入圖像
+    data : numpy.ndarray
+        要嵌入的數據
+    local_el : numpy.ndarray
+        局部嵌入層級
+    weights : numpy.ndarray
+        預測權重
+    stage : int
+        當前嵌入階段
+    remaining_target : int, optional
+        剩餘需要嵌入的數據量，None表示無限制
+        
+    Returns:
+    --------
+    tuple
+        (embedded_image, actual_payload)
+    """
+    # 數據類型轉換
     if isinstance(img, cp.ndarray):
         img = cp.asnumpy(img)
     if isinstance(data, cp.ndarray):
         data = cp.asnumpy(data)
     
-    # Handle local_el specifically - 修改這部分
-    if hasattr(local_el, 'copy_to_host'):  # Numba DeviceNDArray
+    # 處理local_el
+    if hasattr(local_el, 'copy_to_host'):
         local_el_np = local_el.copy_to_host()
     elif isinstance(local_el, cp.ndarray):
         local_el_np = cp.asnumpy(local_el)
@@ -159,24 +182,37 @@ def multi_pass_embedding(img, data, local_el, weights, stage):
     if isinstance(weights, cp.ndarray):
         weights = cp.asnumpy(weights)
     
-    # Convert NumPy arrays to Numba device arrays
+    # 限制數據量
+    if remaining_target is not None:
+        data = data[:min(len(data), remaining_target)]
+    
+    # 轉換為CUDA設備數組
     d_img = cuda.to_device(img)
     d_data = cuda.to_device(data)
     d_local_el = cuda.to_device(local_el_np)
     d_weights = cuda.to_device(weights)
     
+    # 預測圖像
     pred_img = improved_predict_image_cuda(d_img, d_weights)
+    
+    # 第一次嵌入
     embedded, payload, _ = pee_embedding_adaptive_cuda(d_img, d_data, pred_img, d_local_el, stage)
     
-    if stage == 0 and payload < data.size:
-        # Second pass with reduced EL
-        second_el_np = np.minimum(np.maximum(local_el_np - 1, 1), 3)
-        d_second_el = cuda.to_device(second_el_np)
-        second_pred_img = improved_predict_image_cuda(embedded, d_weights)
-        embedded, additional_payload, _ = pee_embedding_adaptive_cuda(embedded, d_data[payload:], second_pred_img, d_second_el, stage)
-        payload += additional_payload
+    # 嚴格控制payload
+    if remaining_target is not None and payload > remaining_target:
+        print(f"Warning: Embedded payload ({payload}) exceeds target ({remaining_target})")
+        print("Re-embedding with stricter control...")
+        
+        # 重新嵌入，使用更嚴格的控制
+        reduced_el = np.minimum(local_el_np, np.ones_like(local_el_np) * 3)  # 降低嵌入層級
+        d_reduced_el = cuda.to_device(reduced_el)
+        
+        remaining_data = data[:remaining_target]  # 嚴格限制數據量
+        d_remaining_data = cuda.to_device(remaining_data)
+        
+        embedded, payload, _ = pee_embedding_adaptive_cuda(d_img, d_remaining_data, pred_img, d_reduced_el, stage)
     
-    return embedded, payload
+    return embedded, min(payload, remaining_target) if remaining_target is not None else payload
 
 @cuda.jit
 def evaluate_weights_kernel(img, data, EL, weight_combinations, results, target_bpp, target_psnr, stage):
