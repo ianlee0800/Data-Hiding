@@ -42,11 +42,11 @@ def main():
     use_different_weights = False 
     
     # 新增 payload size 控制參數
-    target_payload_size = 10000  # -1 或 0 表示使用原策略，正數表示指定大小
+    target_payload_size = -1  # -1 或 0 表示使用原策略，正數表示指定大小
     # 預測方法選擇
     prediction_method = PredictionMethod.GAP  # 預設使用 PROPOSED 方法
     # 方法選擇
-    method = "split"  # 可選："rotation", "split", "quadtree"
+    method = "quadtree"  # 可選："rotation", "split", "quadtree"
     
     # 各方法共用參數
     split_size = 2  # 用於 rotation 和 split 方法
@@ -95,7 +95,8 @@ def main():
                     use_different_weights,
                     split_size,
                     el_mode,
-                    target_payload_size=target_payload_size  # 新增參數
+                    prediction_method=prediction_method,  # 新增參數
+                    target_payload_size=target_payload_size
                 )
             elif method == "split":
                 # 如果使用 MED 或 GAP 方法,強制設置 use_different_weights 為 False
@@ -278,7 +279,9 @@ def main():
                 'final_bpp': final_bpp,
                 'final_psnr': final_psnr,
                 'final_ssim': final_ssim,
-                'final_hist_corr': final_hist_corr
+                'final_hist_corr': final_hist_corr,
+                'split_size': split_size,
+                'block_base': block_base if method == "split" else None
             }
             
             if method == "quadtree":
@@ -296,10 +299,13 @@ def main():
             print(f"Final results saved to ./pred_and_QR/outcome/{imgName}/final_results.npy")
 
         except Exception as e:
-            print(f"Error occurred in PEE process: {e}")
-            import traceback
-            traceback.print_exc()
-            return
+                print(f"Error occurred in PEE process:")
+                print(f"Method: {method}")
+                print(f"Prediction method: {prediction_method.value}")
+                print(f"Error details: {e}")
+                import traceback
+                traceback.print_exc()
+                return
 
         print("PEE encoding process completed.")
 
