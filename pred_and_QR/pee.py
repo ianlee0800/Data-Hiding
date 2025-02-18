@@ -2,7 +2,7 @@ import numpy as np
 from numba import cuda
 import itertools
 import math
-from image_processing import improved_predict_image_cuda
+from image_processing import PredictionMethod, predict_image_cuda
 from common import *
 
 
@@ -141,9 +141,11 @@ def pee_embedding_adaptive_cuda(img, data, pred_img, local_el, stage=0):
 
     return embedded, payload, embedded_data
 
-def multi_pass_embedding(img, data, local_el, weights, stage, remaining_target=None):
+def multi_pass_embedding(img, data, local_el, weights, stage, 
+                        prediction_method=PredictionMethod.PROPOSED,
+                        remaining_target=None):
     """
-    改進的多次嵌入函數，提供更嚴格的payload控制
+    改進的多次嵌入函數，支援多種預測方法
     
     Parameters:
     -----------
@@ -153,12 +155,14 @@ def multi_pass_embedding(img, data, local_el, weights, stage, remaining_target=N
         要嵌入的數據
     local_el : numpy.ndarray
         局部嵌入層級
-    weights : numpy.ndarray
-        預測權重
+    weights : numpy.ndarray or None
+        預測權重，只在使用 PROPOSED 方法時需要
     stage : int
         當前嵌入階段
+    prediction_method : PredictionMethod
+        使用的預測方法
     remaining_target : int, optional
-        剩餘需要嵌入的數據量，None表示無限制
+        剩餘需要嵌入的數據量
         
     Returns:
     --------
@@ -171,7 +175,7 @@ def multi_pass_embedding(img, data, local_el, weights, stage, remaining_target=N
     if isinstance(data, cp.ndarray):
         data = cp.asnumpy(data)
     
-    # 處理local_el
+    # 處理 local_el
     if hasattr(local_el, 'copy_to_host'):
         local_el_np = local_el.copy_to_host()
     elif isinstance(local_el, cp.ndarray):
@@ -179,38 +183,44 @@ def multi_pass_embedding(img, data, local_el, weights, stage, remaining_target=N
     else:
         local_el_np = local_el
     
-    if isinstance(weights, cp.ndarray):
-        weights = cp.asnumpy(weights)
+    # 如果是 PROPOSED 方法，處理權重
+    if prediction_method == PredictionMethod.PROPOSED:
+        if isinstance(weights, cp.ndarray):
+            weights = cp.asnumpy(weights)
+        if weights is None:
+            raise ValueError("Weights must be provided for PROPOSED method")
     
     # 限制數據量
     if remaining_target is not None:
         data = data[:min(len(data), remaining_target)]
     
-    # 轉換為CUDA設備數組
+    # 轉換為 CUDA 設備數組
     d_img = cuda.to_device(img)
     d_data = cuda.to_device(data)
     d_local_el = cuda.to_device(local_el_np)
-    d_weights = cuda.to_device(weights)
     
-    # 預測圖像
-    pred_img = improved_predict_image_cuda(d_img, d_weights)
+    # 使用統一的預測函數接口
+    pred_img = predict_image_cuda(d_img, prediction_method, weights)
     
     # 第一次嵌入
-    embedded, payload, _ = pee_embedding_adaptive_cuda(d_img, d_data, pred_img, d_local_el, stage)
+    embedded, payload, _ = pee_embedding_adaptive_cuda(
+        d_img, d_data, pred_img, d_local_el, stage
+    )
     
-    # 嚴格控制payload
+    # 嚴格控制 payload
     if remaining_target is not None and payload > remaining_target:
         print(f"Warning: Embedded payload ({payload}) exceeds target ({remaining_target})")
         print("Re-embedding with stricter control...")
         
-        # 重新嵌入，使用更嚴格的控制
-        reduced_el = np.minimum(local_el_np, np.ones_like(local_el_np) * 3)  # 降低嵌入層級
+        reduced_el = np.minimum(local_el_np, np.ones_like(local_el_np) * 3)
         d_reduced_el = cuda.to_device(reduced_el)
         
-        remaining_data = data[:remaining_target]  # 嚴格限制數據量
+        remaining_data = data[:remaining_target]
         d_remaining_data = cuda.to_device(remaining_data)
         
-        embedded, payload, _ = pee_embedding_adaptive_cuda(d_img, d_remaining_data, pred_img, d_reduced_el, stage)
+        embedded, payload, _ = pee_embedding_adaptive_cuda(
+            d_img, d_remaining_data, pred_img, d_reduced_el, stage
+        )
     
     return embedded, min(payload, remaining_target) if remaining_target is not None else payload
 

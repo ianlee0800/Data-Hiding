@@ -124,12 +124,12 @@ def decode_pee_info(encoded_data):
 
 def create_pee_info_table(pee_stages, use_different_weights, total_pixels, split_size, quad_tree=False):
     """
-    創建PEE資訊表格
+    創建 PEE 資訊表格的完整函數
     
     Parameters:
     -----------
     pee_stages : list
-        包含所有PEE階段資訊的列表
+        包含所有 PEE 階段資訊的列表
     use_different_weights : bool
         是否對每個子圖像使用不同的權重
     total_pixels : int
@@ -137,32 +137,36 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels, split
     split_size : int
         分割大小
     quad_tree : bool, optional
-        是否使用quad tree模式
-    
+        是否使用 quad tree 模式
+        
     Returns:
     --------
     PrettyTable
-        格式化的表格
+        格式化的表格，包含所有階段的詳細資訊
     """
     table = PrettyTable()
     
     if quad_tree:
-        # Quad tree模式的表格欄位
+        # Quad tree 模式的表格欄位
         table.field_names = [
             "Embedding", "Block Size", "Block Position", "Payload", "BPP",
             "PSNR", "SSIM", "Hist Corr", "Weights", "EL", "Note"
         ]
     else:
-        # 原有模式的表格欄位
+        # 標準模式的表格欄位
         table.field_names = [
             "Embedding", "Sub-image", "Payload", "BPP", "PSNR", "SSIM",
             "Hist Corr", "Weights", "EL", "Rotation", "Note"
         ]
     
+    # 設置列寬以確保更好的可讀性
+    for field in table.field_names:
+        table.max_width[field] = 20
+    
     for stage in pee_stages:
-        # 添加整體stage資訊
+        # 添加整體 stage 資訊
         if quad_tree:
-            # Quad tree模式的整體資訊
+            # Quad tree 模式的整體資訊
             table.add_row([
                 f"{stage['embedding']} (Overall)",
                 "-",
@@ -177,7 +181,7 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels, split
                 "Stage Summary"
             ])
         else:
-            # 原有模式的整體資訊
+            # 標準模式的整體資訊
             table.add_row([
                 f"{stage['embedding']} (Overall)",
                 "-",
@@ -192,14 +196,23 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels, split
                 "Stage Summary"
             ])
         
+        # 添加分隔線
         table.add_row(["-" * 5] * len(table.field_names))
         
         if quad_tree:
-            # 處理quad tree模式的區塊資訊
+            # 處理 quad tree 模式的區塊資訊
             for size in sorted(stage['block_info'].keys(), key=int, reverse=True):
                 blocks = stage['block_info'][size]['blocks']
                 for block in blocks:
                     block_pixels = block['size'] * block['size']
+                    
+                    # 處理權重顯示
+                    weights_display = (
+                        "N/A" if block['weights'] == "N/A"
+                        else ", ".join([f"{w:.2f}" for w in block['weights']]) if block['weights']
+                        else "-"
+                    )
+                    
                     table.add_row([
                         stage['embedding'],
                         f"{block['size']}x{block['size']}",
@@ -209,16 +222,23 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels, split
                         f"{block['psnr']:.2f}",
                         f"{block['ssim']:.4f}",
                         f"{block['hist_corr']:.4f}",
-                        ", ".join([f"{w:.2f}" for w in block['weights']]),
+                        weights_display,
                         block.get('EL', '-'),
                         "Different weights" if use_different_weights else ""
                     ])
         else:
-            # 處理原有模式的區塊資訊
+            # 處理標準模式的區塊資訊
             total_blocks = split_size * split_size
             sub_image_pixels = total_pixels // total_blocks
             
             for i, block in enumerate(stage['block_params']):
+                # 處理權重顯示，考慮不同預測方法的情況
+                weights_display = (
+                    "N/A" if block['weights'] == "N/A"
+                    else ", ".join([f"{w:.2f}" for w in block['weights']]) if block['weights']
+                    else "-"
+                )
+                
                 table.add_row([
                     stage['embedding'] if i == 0 else "",
                     i,
@@ -227,12 +247,13 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels, split
                     f"{block['psnr']:.2f}",
                     f"{block['ssim']:.4f}",
                     f"{block['hist_corr']:.4f}",
-                    ", ".join([f"{w:.2f}" for w in block['weights']]),
+                    weights_display,
                     block['EL'],
                     f"{block['rotation']}°",
                     "Different weights" if use_different_weights else ""
                 ])
         
+        # 添加分隔線
         table.add_row(["-" * 5] * len(table.field_names))
     
     return table

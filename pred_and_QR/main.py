@@ -8,7 +8,8 @@ from image_processing import (
     save_image,
     save_histogram,
     generate_histogram,
-    add_grid_lines
+    add_grid_lines,
+    PredictionMethod
 )
 from embedding import (
     pee_process_with_rotation_cuda,
@@ -33,17 +34,18 @@ def main():
     新增了對指定 payload size 的支援
     """
     # 基本參數設置
-    imgName = "bridge"  # 圖像名稱（不含副檔名）
+    imgName = "bridge"
     filetype = "png"
     total_embeddings = 5
     ratio_of_ones = 0.5
     el_mode = 0  # 0: 無限制, 1: 漸增, 2: 漸減
-    use_different_weights = False # 是否使用不同的權重
+    use_different_weights = False 
     
     # 新增 payload size 控制參數
     target_payload_size = 10000  # -1 或 0 表示使用原策略，正數表示指定大小
-    
-    # 方法選擇參數
+    # 預測方法選擇
+    prediction_method = PredictionMethod.GAP  # 預設使用 PROPOSED 方法
+    # 方法選擇
     method = "split"  # 可選："rotation", "split", "quadtree"
     
     # 各方法共用參數
@@ -80,6 +82,7 @@ def main():
 
         print(f"Starting encoding process... ({'CUDA' if cp.cuda.is_available() else 'CPU'} mode)")
         print(f"Using method: {method}")
+        print(f"Prediction method: {prediction_method.value}")
         print(f"Target payload size: {target_payload_size if target_payload_size > 0 else 'Maximum capacity'}")
         
         try:
@@ -95,6 +98,11 @@ def main():
                     target_payload_size=target_payload_size  # 新增參數
                 )
             elif method == "split":
+                # 如果使用 MED 或 GAP 方法,強制設置 use_different_weights 為 False
+                if prediction_method in [PredictionMethod.MED, PredictionMethod.GAP]:
+                    use_different_weights = False
+                    print("Note: Weight optimization disabled for MED/GAP prediction methods")
+                
                 final_pee_img, total_payload, pee_stages = pee_process_with_split_cuda(
                     origImg,
                     total_embeddings,
@@ -103,7 +111,8 @@ def main():
                     split_size,
                     el_mode,
                     block_base,
-                    target_payload_size=target_payload_size  # 新增參數
+                    prediction_method=prediction_method,
+                    target_payload_size=target_payload_size
                 )
             elif method == "quadtree":
                 final_pee_img, total_payload, pee_stages = pee_process_with_quadtree_cuda(
@@ -253,6 +262,7 @@ def main():
 
             print("\nFinal Results:")
             print(f"Method: {method}")
+            print(f"Prediction Method: {prediction_method.value}")
             print(f"Total Payload: {total_payload}")
             print(f"Final BPP: {final_bpp:.4f}")
             print(f"Final PSNR: {final_psnr:.2f}")
@@ -262,8 +272,9 @@ def main():
             # 更新最終結果儲存
             final_results = {
                 'method': method,
+                'prediction_method': prediction_method.value,
                 'total_payload': total_payload,
-                'target_payload_size': target_payload_size,  # 新增欄位
+                'target_payload_size': target_payload_size,
                 'final_bpp': final_bpp,
                 'final_psnr': final_psnr,
                 'final_ssim': final_ssim,

@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from common import calculate_psnr, calculate_ssim, histogram_correlation
 import cupy as cp
 from numba import cuda
+from enum import Enum
 
 def read_image(filepath, grayscale=True):
     """讀取圖像"""
@@ -289,6 +290,62 @@ def create_collage(images):
     
     return collage
 
+class PredictionMethod(Enum):
+    PROPOSED = "proposed"  # 您現有的weighted prediction方法
+    MED = "med"           # Median Edge Detection
+    GAP = "gap"           # Gradient Adjusted Prediction
+    
+@cuda.jit
+def med_predict_kernel(img, pred_img, height, width):
+    """
+    MED預測的CUDA kernel實現
+    """
+    x, y = cuda.grid(2)
+    if 1 < x < width - 1 and 1 < y < height - 1:
+        a = int(img[y, x-1])    # left
+        b = int(img[y-1, x])    # up
+        c = int(img[y-1, x-1])  # up-left
+        
+        # MED 預測邏輯
+        if c >= max(a, b):
+            pred = min(a, b)
+        elif c <= min(a, b):
+            pred = max(a, b)
+        else:
+            pred = a + b - c
+            
+        pred_img[y, x] = min(255, max(0, pred))
+    else:
+        pred_img[y, x] = img[y, x]
+
+@cuda.jit
+def gap_predict_kernel(img, pred_img, height, width):
+    """
+    GAP預測的CUDA kernel實現
+    """
+    x, y = cuda.grid(2)
+    if 1 < x < width - 1 and 1 < y < height - 1:
+        a = int(img[y, x-1])     # left
+        b = int(img[y-1, x])     # up
+        c = int(img[y-1, x-1])   # up-left
+        d = int(img[y-1, x+1])   # up-right
+        
+        # 計算水平和垂直方向的差異
+        dh = abs(a - c) + abs(b - d)
+        dv = abs(a - c) + abs(b - c)
+        
+        # GAP 預測邏輯
+        if dv - dh > 80:
+            pred = a  # 水平邊緣
+        elif dh - dv > 80:
+            pred = b  # 垂直邊緣
+        else:
+            pred = (a + b) // 2  # 平滑區域
+            
+        pred_img[y, x] = min(255, max(0, pred))
+    else:
+        pred_img[y, x] = img[y, x]
+
 @cuda.jit
 def improved_predict_kernel(img, weights, pred_img, height, width):
     x, y = cuda.grid(2)
@@ -329,6 +386,51 @@ def improved_predict_image_cuda(img, weights):
     improved_predict_kernel[blocks_per_grid, threads_per_block](d_img, d_weights, d_pred_img, height, width)
 
     return d_pred_img
+
+def predict_image_cuda(img, prediction_method, weights=None):
+    """
+    統一的預測函數接口
+    
+    Parameters:
+    -----------
+    img : numpy.ndarray or cupy.ndarray
+        輸入圖像
+    prediction_method : PredictionMethod
+        預測方法
+    weights : numpy.ndarray, optional
+        只在使用PROPOSED方法時需要的權重參數
+        
+    Returns:
+    --------
+    numpy.ndarray
+        預測後的圖像
+    """
+    height, width = img.shape
+    d_img = cuda.to_device(img)
+    d_pred_img = cuda.device_array_like(img)
+
+    threads_per_block = (16, 16)
+    blocks_per_grid_x = (width + threads_per_block[0] - 1) // threads_per_block[0]
+    blocks_per_grid_y = (height + threads_per_block[1] - 1) // threads_per_block[1]
+    blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
+
+    if prediction_method == PredictionMethod.PROPOSED:
+        if weights is None:
+            raise ValueError("Weights must be provided for PROPOSED method")
+        d_weights = cuda.to_device(weights)
+        improved_predict_kernel[blocks_per_grid, threads_per_block](
+            d_img, d_weights, d_pred_img, height, width
+        )
+    elif prediction_method == PredictionMethod.MED:
+        med_predict_kernel[blocks_per_grid, threads_per_block](
+            d_img, d_pred_img, height, width
+        )
+    elif prediction_method == PredictionMethod.GAP:
+        gap_predict_kernel[blocks_per_grid, threads_per_block](
+            d_img, d_pred_img, height, width
+        )
+
+    return d_pred_img.copy_to_host()
 
 def add_grid_lines(img, block_info):
     """

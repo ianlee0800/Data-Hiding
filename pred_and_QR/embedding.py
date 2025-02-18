@@ -273,9 +273,11 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
     return final_pee_img, int(total_payload), pee_stages
 
 def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, 
-                              split_size, el_mode, block_base, target_payload_size=-1):
+                              split_size, el_mode, block_base, 
+                              prediction_method=PredictionMethod.PROPOSED,
+                              target_payload_size=-1):
     """
-    使用彈性分割的 PEE 處理函數，支援精確的 payload 控制
+    使用彈性分割的 PEE 處理函數，支援多種預測方法和精確的 payload 控制
     
     Parameters:
     -----------
@@ -286,15 +288,17 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
     ratio_of_ones : float
         嵌入數據中1的比例
     use_different_weights : bool
-        是否對每個子圖像使用不同的權重
+        是否對每個子圖像使用不同的權重 (僅用於 PROPOSED 方法)
     split_size : int
-        分割大小 (例如：4 表示 4x4=16 塊)
+        分割大小
     el_mode : int
         EL模式 (0:無限制, 1:漸增, 2:漸減)
     block_base : bool
         True: 使用 block-based 分割, False: 使用 quarter-based 分割
+    prediction_method : PredictionMethod
+        預測方法選擇 (PROPOSED, MED, GAP)
     target_payload_size : int
-        目標總payload大小，設為-1或0時使用最大容量
+        目標總payload大小，設為-1時使用最大容量
     """
     # 將輸入圖像轉換為 CUDA 陣列
     original_img = cp.asarray(img)
@@ -305,7 +309,7 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
     sub_images_per_stage = split_size * split_size
     max_capacity_per_subimage = (height * width) // sub_images_per_stage
     
-    # 生成嵌入數據，並考慮目標payload大小
+    # 生成嵌入數據
     embedding_data = generate_embedding_data(
         total_embeddings=total_embeddings,
         sub_images_per_stage=sub_images_per_stage,
@@ -315,13 +319,13 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
     )
     
     # 初始化追蹤變數
-    pee_stages = []  # 儲存所有階段的資訊
-    total_payload = 0  # 記錄總嵌入量
-    current_img = original_img.copy()  # 當前處理的圖像
-    previous_psnr = float('inf')  # 上一階段的PSNR值
-    previous_ssim = 1.0  # 上一階段的SSIM值
+    pee_stages = []
+    total_payload = 0
+    current_img = original_img.copy()
+    previous_psnr = float('inf')
+    previous_ssim = 1.0
     
-    # 設定剩餘目標payload，只在有指定目標時啟用追蹤
+    # 設定剩餘目標payload
     remaining_target = target_payload_size if target_payload_size > 0 else None
     
     # 開始逐階段處理
@@ -332,8 +336,6 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         # 輸出當前階段的目標資訊
         if remaining_target is not None:
             print(f"Remaining target payload: {remaining_target}")
-            if remaining_target <= 0:
-                print(f"Target payload reached. Stage {embedding} will only process image without embedding.")
         
         # 設定目標品質參數
         if embedding == 0:
@@ -343,8 +345,7 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
             target_psnr = max(28.0, previous_psnr - 1)
             target_bpp = max(0.5, (total_payload / total_pixels) * 0.95)
         
-        print(f"Target PSNR for embedding {embedding}: {target_psnr:.2f}")
-        print(f"Target BPP for embedding {embedding}: {target_bpp:.4f}")
+        print(f"Target PSNR: {target_psnr:.2f}, Target BPP: {target_bpp:.4f}")
         
         # 初始化階段資訊
         stage_info = {
@@ -355,16 +356,15 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
             'ssim': 0,
             'hist_corr': 0,
             'bpp': 0,
-            'block_params': [],
-            'rotated_sub_images': [],
-            'non_rotated_sub_images': []
+            'block_params': []
         }
         
         stage_payload = 0
         embedded_sub_images = []
         
-        # 為每個子圖像設置隨機旋轉角度
-        stage_rotations = cp.random.choice([-270, -180, -90, 0, 90, 180, 270], size=split_size * split_size)
+        # 設置隨機旋轉角度
+        stage_rotations = cp.random.choice([-270, -180, -90, 0, 90, 180, 270], 
+                                         size=split_size * split_size)
         
         # 使用彈性分割函數切割圖像
         sub_images = split_image_flexible(current_img, split_size, block_base)
@@ -381,7 +381,7 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
             sub_img = cp.asarray(sub_img)
             rotation = int(stage_rotations[i])
             rotated_sub_img = cp.rot90(sub_img, k=rotation // 90)
-
+            
             # 準備嵌入數據
             sub_data = stage_data['sub_data'][i]
             sub_data = cp.asarray(sub_data, dtype=cp.uint8)
@@ -394,41 +394,47 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
                 current_target = None
             
             # 根據 el_mode 決定 max_el
-            if el_mode == 1:  # Increasing
+            if el_mode == 1:
                 max_el = 3 + embedding * 2
-            elif el_mode == 2:  # Decreasing
+            elif el_mode == 2:
                 max_el = 11 - embedding * 2
-            else:  # No restriction
+            else:
                 max_el = 7
             
             # 計算自適應嵌入層級
-            local_el = compute_improved_adaptive_el(rotated_sub_img, window_size=5, max_el=max_el)
+            local_el = compute_improved_adaptive_el(
+                rotated_sub_img, 
+                window_size=5, 
+                max_el=max_el
+            )
             
-            # 處理 local_el 的數據類型轉換
-            if hasattr(local_el, 'copy_to_host'):
-                local_el_np = local_el.copy_to_host()
-            elif isinstance(local_el, cp.ndarray):
-                local_el_np = cp.asnumpy(local_el)
+            # 根據預測方法進行不同的處理
+            if prediction_method == PredictionMethod.PROPOSED:
+                # 只有 PROPOSED 方法需要進行權重搜索
+                if use_different_weights or i == 0:
+                    weights, (sub_payload, sub_psnr) = brute_force_weight_search_cuda(
+                        rotated_sub_img, sub_data, local_el, target_bpp, target_psnr, embedding
+                    )
             else:
-                local_el_np = local_el
-            
-            # 搜索最佳權重
-            if use_different_weights or i == 0:
-                weights, (sub_payload, sub_psnr) = brute_force_weight_search_cuda(
-                    rotated_sub_img, sub_data, local_el, target_bpp, target_psnr, embedding
-                )
+                # MED 和 GAP 方法不需要權重
+                weights = None
             
             # 執行數據嵌入
             embedded_sub, payload = multi_pass_embedding(
-                rotated_sub_img, sub_data, local_el, weights, embedding,
+                rotated_sub_img,
+                sub_data,
+                local_el,
+                weights,
+                embedding,
+                prediction_method=prediction_method,
                 remaining_target=current_target
             )
             
             # 更新剩餘目標量
             if remaining_target is not None:
-                payload = min(payload, current_target)  # 確保不超過目標
+                payload = min(payload, current_target)
                 remaining_target -= payload
-                print(f"Sub-image {i} embedded {payload} bits, remaining target: {remaining_target}")
+                print(f"Sub-image {i} embedded {payload} bits, remaining: {remaining_target}")
             
             # 將嵌入後的圖像旋轉回原始方向
             rotated_back_sub = cp.rot90(embedded_sub, k=-rotation // 90)
@@ -445,21 +451,22 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
                 np.histogram(rotated_back_sub_np, bins=256, range=(0, 255))[0]
             )
             
-            # 記錄區塊參數
+            # 記錄區塊資訊
             block_info = {
-                'weights': weights.tolist() if isinstance(weights, np.ndarray) else weights,
-                'EL': int(np.max(local_el_np)),
+                'weights': (weights.tolist() if weights is not None and hasattr(weights, 'tolist') 
+                            else "N/A" if prediction_method in [PredictionMethod.MED, PredictionMethod.GAP] 
+                            else None),
+                'EL': int(to_numpy(local_el).max()),
                 'payload': int(payload),
                 'psnr': float(sub_psnr),
                 'ssim': float(sub_ssim),
                 'rotation': rotation,
-                'hist_corr': float(sub_hist_corr)
+                'hist_corr': float(sub_hist_corr),
+                'prediction_method': prediction_method.value
             }
             stage_info['sub_images'].append(block_info)
             stage_info['block_params'].append(block_info)
-            stage_info['rotated_sub_images'].append(cp.asnumpy(embedded_sub))
-            stage_info['non_rotated_sub_images'].append(cp.asnumpy(rotated_back_sub))
-
+        
         # 合併處理後的子圖像
         stage_img = merge_image_flexible(embedded_sub_images, split_size, block_base)
         stage_info['stage_img'] = stage_img
@@ -475,34 +482,24 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         ))
         stage_info['payload'] = stage_payload
         stage_info['bpp'] = float(stage_info['payload'] / total_pixels)
-        stage_info['rotations'] = stage_rotations.tolist()
-        
-        # 檢查品質限制
-        if embedding > 0:
-            if stage_info['psnr'] >= previous_psnr:
-                print(f"Warning: Stage {embedding} PSNR ({stage_info['psnr']:.2f}) is not less than previous stage ({previous_psnr:.2f}).")
+        stage_info['prediction_method'] = prediction_method.value
         
         # 更新資訊
         pee_stages.append(stage_info)
         total_payload += stage_payload
         previous_psnr = stage_info['psnr']
         previous_ssim = stage_info['ssim']
-
-        # 輸出階段摘要
-        print(f"Embedding {embedding} summary:")
-        print(f"  Payload: {stage_info['payload']}")
-        print(f"  BPP: {stage_info['bpp']:.4f}")
-        print(f"  PSNR: {stage_info['psnr']:.2f}")
-        print(f"  SSIM: {stage_info['ssim']:.4f}")
-        print(f"  Hist Corr: {stage_info['hist_corr']:.4f}")
-
-        current_img = stage_img
         
-        # 檢查是否已達到總目標
-        if remaining_target is not None and remaining_target <= 0:
-            print(f"Reached target payload ({target_payload_size} bits) at stage {embedding}")
-            if embedding < total_embeddings - 1:
-                print("Continuing with remaining stages without additional embedding")
+        # 輸出階段摘要
+        print(f"\nEmbedding {embedding} summary:")
+        print(f"Prediction Method: {prediction_method.value}")
+        print(f"Payload: {stage_info['payload']}")
+        print(f"BPP: {stage_info['bpp']:.4f}")
+        print(f"PSNR: {stage_info['psnr']:.2f}")
+        print(f"SSIM: {stage_info['ssim']:.4f}")
+        print(f"Hist Corr: {stage_info['hist_corr']:.4f}")
+        
+        current_img = stage_img
 
     # 返回最終結果
     final_pee_img = cp.asnumpy(current_img)
