@@ -34,19 +34,19 @@ def main():
     新增了對指定 payload size 的支援
     """
     # 基本參數設置
-    imgName = "bridge"
+    imgName = "male"
     filetype = "png"
     total_embeddings = 5
-    ratio_of_ones = 0.5
+    ratio_of_ones = 1
     el_mode = 0  # 0: 無限制, 1: 漸增, 2: 漸減
     use_different_weights = False 
     
     # 新增 payload size 控制參數
-    target_payload_size = -1  # -1 或 0 表示使用原策略，正數表示指定大小
+    target_payload_size = 30000  # -1 或 0 表示使用原策略，正數表示指定大小
     # 預測方法選擇
     prediction_method = PredictionMethod.GAP  # 預設使用 PROPOSED 方法
     # 方法選擇
-    method = "quadtree"  # 可選："rotation", "split", "quadtree"
+    method = "split"  # 可選："rotation", "split", "quadtree"
     
     # 各方法共用參數
     split_size = 2  # 用於 rotation 和 split 方法

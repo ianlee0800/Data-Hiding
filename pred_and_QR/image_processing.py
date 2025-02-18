@@ -165,9 +165,9 @@ def split_image_flexible(img, split_size, block_base=False, quad_tree=False, pos
         
         return sub_images
 
-def merge_image_flexible(sub_images, split_size, block_base=False, quad_tree=False, positions=None):
+def merge_image_flexible(sub_images, split_size, block_base=False):
     """
-    將切割後的區塊合併回完整圖像
+    將切割後的區塊合併回完整圖像，支援不同的輸入尺寸
     
     Parameters:
     -----------
@@ -175,20 +175,13 @@ def merge_image_flexible(sub_images, split_size, block_base=False, quad_tree=Fal
         包含所有切割後區塊的列表
     split_size : int
         原始切割時的尺寸
-        對於quad_tree模式，這個參數代表區塊大小
     block_base : bool
         True: 使用 block-based 合併
         False: 使用 quarter-based 合併
-    quad_tree : bool
-        True: 使用quad tree合併模式
-        False: 使用原有的合併模式
-    positions : list of tuple, optional
-        只在quad_tree=True時使用
-        記錄每個區塊在原圖中的位置 [(y, x), ...]
     
     Returns:
     --------
-    numpy.ndarray or cupy.ndarray
+    cupy.ndarray
         合併後的完整圖像
     """
     if not sub_images:
@@ -197,45 +190,28 @@ def merge_image_flexible(sub_images, split_size, block_base=False, quad_tree=Fal
     # 確保所有子圖像都是 CuPy 數組
     sub_images = [cp.asarray(img) for img in sub_images]
     
-    # quad tree模式
-    if quad_tree:
-        if positions is None:
-            raise ValueError("Positions must be provided in quad tree mode")
-        
-        # 計算輸出圖像的大小
-        max_y = max(y + sub_images[0].shape[0] for y, _ in positions)
-        max_x = max(x + sub_images[0].shape[1] for _, x in positions)
-        merged = cp.zeros((max_y, max_x), dtype=sub_images[0].dtype)
-        
-        # 將每個區塊放回其原始位置
-        for sub_img, (y, x) in zip(sub_images, positions):
-            block_height, block_width = sub_img.shape
-            merged[y:y+block_height, x:x+block_width] = sub_img
-        
-        return merged
+    # 從第一個子圖像獲取尺寸資訊
+    sub_height, sub_width = sub_images[0].shape
+    total_size = sub_height * split_size  # 計算完整圖像的尺寸
     
-    # 原有的合併模式
+    # 創建對應尺寸的輸出圖像
+    merged = cp.zeros((total_size, total_size), dtype=sub_images[0].dtype)
+    
+    if block_base:
+        # Block-based merging
+        for idx, sub_img in enumerate(sub_images):
+            i = idx // split_size
+            j = idx % split_size
+            merged[i*sub_height:(i+1)*sub_height, 
+                  j*sub_width:(j+1)*sub_width] = sub_img
     else:
-        sub_height = 512 // split_size
-        sub_width = 512 // split_size
-        
-        merged = cp.zeros((512, 512), dtype=sub_images[0].dtype)
-        
-        if block_base:
-            # Block-based merging
-            for idx, sub_img in enumerate(sub_images):
-                i = idx // split_size
-                j = idx % split_size
-                merged[i*sub_height:(i+1)*sub_height, 
-                      j*sub_width:(j+1)*sub_width] = sub_img
-        else:
-            # Quarter-based merging (交錯式合併)
-            for idx, sub_img in enumerate(sub_images):
-                i = idx // split_size
-                j = idx % split_size
-                merged[i::split_size, j::split_size] = sub_img
-        
-        return merged
+        # Quarter-based merging (交錯式合併)
+        for idx, sub_img in enumerate(sub_images):
+            i = idx // split_size
+            j = idx % split_size
+            merged[i::split_size, j::split_size] = sub_img
+    
+    return merged
 
 def verify_image_dimensions(img, split_size):
     """
