@@ -23,7 +23,8 @@ from utils import (
     plot_interval_statistics,
     run_multiple_predictors,
     run_precise_measurements,
-    run_multi_predictor_precise_measurements
+    run_multi_predictor_precise_measurements,
+    run_simplified_precise_measurements
 )
 from common import *
 from quadtree import pee_process_with_quadtree_cuda
@@ -41,11 +42,14 @@ def main():
     
     更新功能:
     1. 支持最大嵌入量，並將嵌入數據分成15段進行統計
-    2. 新增菱形預測器(Rhombus Predictor)
-    3. 支持多預測方法自動運行與比較
-    4. 新增精確測量模式，使用15次獨立運行生成精確數據點
-    5. 支持為每個預測器獨立設置ratio_of_ones值
+    2. 新增進度條顯示
+    3. 改進記憶體管理
+    4. 只為 proposed 預測器儲存詳細資訊
+    5. 修復圖表資源管理和 DataFrame 警告
     """
+    # 設置進度條
+    from tqdm import tqdm
+    
     # ==== 參數設置（直接在代碼中調整） ====
     
     # 基本參數設置
@@ -102,8 +106,8 @@ def main():
         print("Running all prediction methods and generating comparison...")
         
         if use_precise_measurement:
-            # 使用精確測量模式
-            print("Using precise measurement mode with 15 separate runs per predictor...")
+            # 使用精確測量模式，改進版：只為 proposed 儲存詳細資訊
+            print("Using precise measurement mode with separate runs per predictor...")
             
             run_multi_predictor_precise_measurements(
                 imgName=imgName,
@@ -158,7 +162,7 @@ def main():
     
     try:
         # 清理 GPU 記憶體
-        cp.get_default_memory_pool().free_all_blocks()
+        cleanup_memory()
 
         # 讀取原始圖像
         origImg = cv2.imread(f"./pred_and_QR/image/{imgName}.{filetype}", cv2.IMREAD_GRAYSCALE)
@@ -170,15 +174,30 @@ def main():
         save_histogram(origImg, 
                       f"./pred_and_QR/outcome/histogram/{imgName}/original_histogram.png", 
                       "Original Image Histogram")
+        plt.close()  # 確保關閉圖表
         
         # 如果使用精確測量模式，執行精確測量後返回
         if use_precise_measurement:
             print(f"\nUsing precise measurement mode with {stats_segments} separate runs...")
-            run_precise_measurements(
-                origImg, imgName, method, prediction_method, ratio_of_ones, 
-                total_embeddings, el_mode, stats_segments, use_different_weights,
-                split_size, block_base, quad_tree_params
-            )
+            
+            # 判斷是否為 proposed 預測器
+            is_proposed = prediction_method_str.upper() == "PROPOSED"
+            
+            if is_proposed:
+                # 為 proposed 執行完整測量，包括圖像和圖表
+                run_precise_measurements(
+                    origImg, imgName, method, prediction_method, ratio_of_ones, 
+                    total_embeddings, el_mode, stats_segments, use_different_weights,
+                    split_size, block_base, quad_tree_params
+                )
+            else:
+                # 為其他預測器執行簡化測量，僅儲存數據
+                run_simplified_precise_measurements(
+                    origImg, imgName, method, prediction_method, ratio_of_ones, 
+                    total_embeddings, el_mode, stats_segments, use_different_weights,
+                    split_size, block_base, quad_tree_params
+                )
+            
             return
 
         print(f"Starting encoding process... ({'CUDA' if cp.cuda.is_available() else 'CPU'} mode)")
@@ -256,31 +275,45 @@ def main():
                     stats_df, imgName, method, prediction_method.value
                 )
 
+            # 只有當處理 proposed 預測器時才儲存詳細圖像
+            is_proposed = prediction_method == PredictionMethod.PROPOSED
+            
             # Save each stage's image and histogram
             for i, stage in enumerate(pee_stages):
                 # 使用原始圖像（無格線）進行質量評估
                 stage_img = cp.asnumpy(stage['stage_img'])
                 
-                # 保存原始階段圖像（旋轉回0度後的圖像）
-                save_image(stage_img, 
-                         f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined.png")
-                
-                # 保存旋轉狀態的圖像（未旋轉回0度）
-                if 'rotated_stage_img' in stage:
-                    rotated_img = cp.asnumpy(stage['rotated_stage_img'])
-                    save_image(rotated_img,
-                             f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_rotated.png")
+                if is_proposed:
+                    # 保存原始階段圖像（旋轉回0度後的圖像）
+                    save_image(stage_img, 
+                             f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_combined.png")
                     
-                    # 為旋轉狀態的圖像添加格線
-                    grid_rotated_img = add_grid_lines(rotated_img.copy(), stage['block_info'])
-                    save_image(grid_rotated_img,
-                             f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_rotated_with_grid.png")
+                    # 保存旋轉狀態的圖像（未旋轉回0度）
+                    if 'rotated_stage_img' in stage:
+                        rotated_img = cp.asnumpy(stage['rotated_stage_img'])
+                        save_image(rotated_img,
+                                 f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_rotated.png")
+                        
+                        # 為旋轉狀態的圖像添加格線
+                        grid_rotated_img = add_grid_lines(rotated_img.copy(), stage['block_info'])
+                        save_image(grid_rotated_img,
+                                 f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_rotated_with_grid.png")
 
-                # 為階段圖像添加格線並保存
-                if method == "quadtree":
-                    grid_image = add_grid_lines(stage_img.copy(), stage['block_info'])
-                    save_image(grid_image, 
-                             f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_with_grid.png")
+                    # 為階段圖像添加格線並保存
+                    if method == "quadtree":
+                        grid_image = add_grid_lines(stage_img.copy(), stage['block_info'])
+                        save_image(grid_image, 
+                                 f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_stage_{i}_with_grid.png")
+                    
+                    # Create and save histogram
+                    histogram_filename = f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X1_stage_{i}_histogram.png"
+                    plt.figure(figsize=(10, 6))
+                    plt.bar(range(256), generate_histogram(stage_img), alpha=0.7)
+                    plt.title(f"Histogram after PEE Stage {i}")
+                    plt.xlabel("Pixel Value")
+                    plt.ylabel("Frequency")
+                    plt.savefig(histogram_filename)
+                    plt.close()
                 
                 # 打印區塊統計資訊
                 if method == "quadtree":
@@ -292,25 +325,17 @@ def main():
                             print(f"  {size}x{size} blocks: {block_count}, Rotation: {rotation}°")
                     print("")
 
-                # Create and save histogram
-                histogram_filename = f"./pred_and_QR/outcome/histogram/{imgName}/{imgName}_X1_stage_{i}_histogram.png"
-                plt.figure(figsize=(10, 6))
-                plt.bar(range(256), generate_histogram(stage_img), alpha=0.7)
-                plt.title(f"Histogram after PEE Stage {i}")
-                plt.xlabel("Pixel Value")
-                plt.ylabel("Frequency")
-                plt.savefig(histogram_filename)
-                plt.close()
-
-            # Save final PEE image
-            save_image(final_pee_img, 
-                      f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_final.png")
-            
-            # 如果是 quadtree 方法，為最終圖像添加格線
-            if method == "quadtree":
-                final_grid_image = add_grid_lines(final_pee_img.copy(), pee_stages[-1]['block_info'])
-                save_image(final_grid_image, 
-                          f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_final_with_grid.png")
+            # 只有處理 proposed 預測器時才儲存最終圖像
+            if is_proposed:
+                # Save final PEE image
+                save_image(final_pee_img, 
+                          f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_final.png")
+                
+                # 如果是 quadtree 方法，為最終圖像添加格線
+                if method == "quadtree":
+                    final_grid_image = add_grid_lines(final_pee_img.copy(), pee_stages[-1]['block_info'])
+                    save_image(final_grid_image, 
+                              f"./pred_and_QR/outcome/image/{imgName}/{imgName}_X1_final_with_grid.png")
 
             # Calculate and save BPP-PSNR data
             bpp_psnr_data = []
@@ -323,45 +348,47 @@ def main():
                     'psnr': stage['psnr']
                 })
 
-            # Plot and save BPP-PSNR curve
-            plt.figure(figsize=(12, 8))
-            bpps = [data['bpp'] for data in bpp_psnr_data]
-            psnrs = [data['psnr'] for data in bpp_psnr_data]
-            
-            plt.plot(bpps, psnrs, 'b.-', linewidth=2, markersize=8, 
-                    label=f'Method: {method}, Predictor: {prediction_method.value}')
-            
-            # Add labels for each point
-            for i, (bpp, psnr) in enumerate(zip(bpps, psnrs)):
-                plt.annotate(f'Stage {i}\n({bpp:.3f}, {psnr:.2f})',
-                            (bpp, psnr), 
-                            textcoords="offset points",
-                            xytext=(0,10), 
-                            ha='center',
-                            bbox=dict(boxstyle='round,pad=0.5', 
-                                     fc='yellow', 
-                                     alpha=0.3),
-                            fontsize=8)
-            
-            plt.xlabel('Accumulated Bits Per Pixel (BPP)', fontsize=12)
-            plt.ylabel('PSNR (dB)', fontsize=12)
-            title = f'BPP-PSNR Curve for {imgName}\n'
-            if method == "quadtree":
-                title += f'Min Block Size: {quad_tree_params["min_block_size"]}'
-            elif method == "split":
-                title += f'Split Size: {split_size}x{split_size}, {"Block-based" if block_base else "Quarter-based"}'
-            else:
-                title += f'Split Size: {split_size}x{split_size}'
-            plt.title(title, fontsize=14)
-            plt.grid(True, linestyle='--', alpha=0.7)
-            plt.legend(fontsize=10)
-            
-            plt.margins(0.1)
-            plt.grid(True, linestyle='--', alpha=0.7)
-            
-            plt.savefig(f"./pred_and_QR/outcome/plots/{imgName}/bpp_psnr_curve.png", 
-                       dpi=300, bbox_inches='tight')
-            plt.close()
+            # 只有處理 proposed 預測器時才繪製和儲存圖表
+            if is_proposed:
+                # Plot and save BPP-PSNR curve
+                plt.figure(figsize=(12, 8))
+                bpps = [data['bpp'] for data in bpp_psnr_data]
+                psnrs = [data['psnr'] for data in bpp_psnr_data]
+                
+                plt.plot(bpps, psnrs, 'b.-', linewidth=2, markersize=8, 
+                        label=f'Method: {method}, Predictor: {prediction_method.value}')
+                
+                # Add labels for each point
+                for i, (bpp, psnr) in enumerate(zip(bpps, psnrs)):
+                    plt.annotate(f'Stage {i}\n({bpp:.3f}, {psnr:.2f})',
+                                (bpp, psnr), 
+                                textcoords="offset points",
+                                xytext=(0,10), 
+                                ha='center',
+                                bbox=dict(boxstyle='round,pad=0.5', 
+                                         fc='yellow', 
+                                         alpha=0.3),
+                                fontsize=8)
+                
+                plt.xlabel('Accumulated Bits Per Pixel (BPP)', fontsize=12)
+                plt.ylabel('PSNR (dB)', fontsize=12)
+                title = f'BPP-PSNR Curve for {imgName}\n'
+                if method == "quadtree":
+                    title += f'Min Block Size: {quad_tree_params["min_block_size"]}'
+                elif method == "split":
+                    title += f'Split Size: {split_size}x{split_size}, {"Block-based" if block_base else "Quarter-based"}'
+                else:
+                    title += f'Split Size: {split_size}x{split_size}'
+                plt.title(title, fontsize=14)
+                plt.grid(True, linestyle='--', alpha=0.7)
+                plt.legend(fontsize=10)
+                
+                plt.margins(0.1)
+                plt.grid(True, linestyle='--', alpha=0.7)
+                
+                plt.savefig(f"./pred_and_QR/outcome/plots/{imgName}/bpp_psnr_curve.png", 
+                           dpi=300, bbox_inches='tight')
+                plt.close()
 
             # Save BPP-PSNR data
             np.save(f"./pred_and_QR/outcome/plots/{imgName}/bpp_psnr_data.npy",
@@ -442,7 +469,7 @@ def main():
     
     finally:
         # 清理 GPU 記憶體
-        cp.get_default_memory_pool().free_all_blocks()
+        cleanup_memory()
 
 if __name__ == "__main__":
     main()

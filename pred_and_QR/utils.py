@@ -8,7 +8,7 @@ import time
 from datetime import datetime
 import cupy as cp
 from prettytable import PrettyTable
-from common import calculate_psnr, calculate_ssim, histogram_correlation
+from common import calculate_psnr, calculate_ssim, histogram_correlation, cleanup_memory
 from image_processing import save_image, generate_histogram, PredictionMethod
 
 # =============================================================================
@@ -595,7 +595,7 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
 
 def plot_precise_measurements(df, imgName, method, prediction_method, output_dir):
     """
-    繪製精確測量結果的折線圖
+    繪製精確測量結果的折線圖，並確保所有圖表資源都被正確釋放
     
     Parameters:
     -----------
@@ -642,6 +642,7 @@ def plot_precise_measurements(df, imgName, method, prediction_method, output_dir
     
     plt.tight_layout()
     plt.savefig(f"{output_dir}/precise_bpp_psnr.png", dpi=300)
+    plt.close()  # 關閉圖表
     
     # 繪製BPP-SSIM折線圖
     plt.figure(figsize=(12, 8))
@@ -675,6 +676,7 @@ def plot_precise_measurements(df, imgName, method, prediction_method, output_dir
     
     plt.tight_layout()
     plt.savefig(f"{output_dir}/precise_bpp_ssim.png", dpi=300)
+    plt.close()  # 關閉圖表
     
     # 繪製BPP-Histogram Correlation折線圖
     plt.figure(figsize=(12, 8))
@@ -708,6 +710,7 @@ def plot_precise_measurements(df, imgName, method, prediction_method, output_dir
     
     plt.tight_layout()
     plt.savefig(f"{output_dir}/precise_bpp_hist_corr.png", dpi=300)
+    plt.close()  # 關閉圖表
     
     # 繪製Target vs Actual Payload折線圖
     plt.figure(figsize=(12, 8))
@@ -745,6 +748,7 @@ def plot_precise_measurements(df, imgName, method, prediction_method, output_dir
     
     plt.tight_layout()
     plt.savefig(f"{output_dir}/target_vs_actual.png", dpi=300)
+    plt.close()  # 關閉圖表
     
     # 繪製Performance vs Percentage折線圖 (多Y軸)
     fig, ax1 = plt.subplots(figsize=(12, 8))
@@ -773,6 +777,7 @@ def plot_precise_measurements(df, imgName, method, prediction_method, output_dir
     
     plt.tight_layout()
     plt.savefig(f"{output_dir}/performance_vs_percentage.png", dpi=300)
+    plt.close()  # 關閉圖表
     
     # 繪製處理時間統計
     plt.figure(figsize=(12, 8))
@@ -791,13 +796,14 @@ def plot_precise_measurements(df, imgName, method, prediction_method, output_dir
     
     plt.tight_layout()
     plt.savefig(f"{output_dir}/processing_time.png", dpi=300)
+    plt.close()  # 關閉圖表
 
 def run_multi_predictor_precise_measurements(imgName, filetype="png", method="quadtree", 
                                            predictor_ratios=None, total_embeddings=5, 
                                            el_mode=0, segments=15, use_different_weights=False,
                                            split_size=2, block_base=False, quad_tree_params=None):
     """
-    為多個預測器運行精確測量並生成比較結果
+    為多個預測器運行精確測量並生成比較結果，只為 proposed 預測器儲存詳細資料
     
     Parameters:
     -----------
@@ -830,6 +836,7 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
         包含各預測器測量結果的字典
     """
     import cv2
+    from tqdm import tqdm
     
     # 設置默認的預測器ratio字典
     if predictor_ratios is None:
@@ -884,8 +891,9 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
     all_results = {}
     
     # 依次運行每種預測方法
-    for prediction_method in prediction_methods:
+    for prediction_method in tqdm(prediction_methods, desc="處理預測器"):
         method_name = prediction_method.value.upper()
+        is_proposed = method_name.upper() == "PROPOSED"  # 檢查是否為 proposed 預測器
         
         print(f"\n{'='*80}")
         print(f"Running precise measurements for {method_name.lower()} predictor")
@@ -900,14 +908,29 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
             f.write(f"Using ratio_of_ones = {current_ratio_of_ones}\n\n")
         
         try:
-            # 執行精確測量
-            predictor_start_time = time.time()
-            results_df = run_precise_measurements(
-                origImg, imgName, method, prediction_method, 
-                current_ratio_of_ones, total_embeddings, 
-                el_mode, segments, use_different_weights,
-                split_size, block_base, quad_tree_params
-            )
+            # 為了簡化數據處理，創建一個自定義的測量函數
+            if is_proposed:
+                # 對於 proposed 預測器，儲存所有詳細資料
+                result_dir = f"./pred_and_QR/outcome/plots/{imgName}/precise_{method_name.lower()}"
+                os.makedirs(result_dir, exist_ok=True)
+                
+                # 執行精確測量
+                predictor_start_time = time.time()
+                results_df = run_precise_measurements(
+                    origImg, imgName, method, prediction_method, 
+                    current_ratio_of_ones, total_embeddings, 
+                    el_mode, segments, use_different_weights,
+                    split_size, block_base, quad_tree_params
+                )
+            else:
+                # 對於其他預測器，僅儲存數據而不儲存圖像和圖表
+                predictor_start_time = time.time()
+                results_df = run_simplified_precise_measurements(
+                    origImg, imgName, method, prediction_method, 
+                    current_ratio_of_ones, total_embeddings, 
+                    el_mode, segments, use_different_weights,
+                    split_size, block_base, quad_tree_params
+                )
             
             predictor_time = time.time() - predictor_start_time
             
@@ -920,6 +943,9 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
                 
             # 保存CSV到比較目錄
             results_df.to_csv(f"{comparison_dir}/{method_name.lower()}_precise.csv", index=False)
+            
+            # 清理記憶體
+            cleanup_memory()
             
         except Exception as e:
             print(f"Error processing {method_name.lower()}: {str(e)}")
@@ -960,7 +986,7 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
 
 def plot_predictor_comparison(all_results, imgName, method, output_dir):
     """
-    繪製多預測器精確測量結果的比較圖表
+    繪製多預測器精確測量結果的比較圖表，並修復 DataFrame 警告
     
     Parameters:
     -----------
@@ -1008,6 +1034,7 @@ def plot_predictor_comparison(all_results, imgName, method, output_dir):
     
     plt.tight_layout()
     plt.savefig(f"{output_dir}/comparison_bpp_psnr.png", dpi=300)
+    plt.close()  # 關閉圖表
     
     # 創建BPP-SSIM比較圖
     plt.figure(figsize=(12, 8))
@@ -1029,6 +1056,7 @@ def plot_predictor_comparison(all_results, imgName, method, output_dir):
     
     plt.tight_layout()
     plt.savefig(f"{output_dir}/comparison_bpp_ssim.png", dpi=300)
+    plt.close()  # 關閉圖表
     
     # 創建BPP-Histogram Correlation比較圖
     plt.figure(figsize=(12, 8))
@@ -1050,6 +1078,7 @@ def plot_predictor_comparison(all_results, imgName, method, output_dir):
     
     plt.tight_layout()
     plt.savefig(f"{output_dir}/comparison_bpp_hist_corr.png", dpi=300)
+    plt.close()  # 關閉圖表
     
     # 創建Capacity Percentage-PSNR比較圖
     plt.figure(figsize=(12, 8))
@@ -1071,6 +1100,7 @@ def plot_predictor_comparison(all_results, imgName, method, output_dir):
     
     plt.tight_layout()
     plt.savefig(f"{output_dir}/comparison_percentage_psnr.png", dpi=300)
+    plt.close()  # 關閉圖表
     
     # 創建Capacity Percentage-SSIM比較圖
     plt.figure(figsize=(12, 8))
@@ -1092,6 +1122,7 @@ def plot_predictor_comparison(all_results, imgName, method, output_dir):
     
     plt.tight_layout()
     plt.savefig(f"{output_dir}/comparison_percentage_ssim.png", dpi=300)
+    plt.close()  # 關閉圖表
     
     # 創建處理時間比較圖
     plt.figure(figsize=(12, 8))
@@ -1113,6 +1144,7 @@ def plot_predictor_comparison(all_results, imgName, method, output_dir):
     
     plt.tight_layout()
     plt.savefig(f"{output_dir}/comparison_processing_time.png", dpi=300)
+    plt.close()  # 關閉圖表
     
     # 創建最大嵌入容量比較圖 (條形圖)
     plt.figure(figsize=(12, 8))
@@ -1123,7 +1155,8 @@ def plot_predictor_comparison(all_results, imgName, method, output_dir):
     for predictor, df in all_results.items():
         max_row = df.loc[df['Target_Percentage'] == 100.0]
         if not max_row.empty:
-            max_payloads.append(float(max_row['Actual_Payload']))
+            # 修正：使用 iloc[0] 來取得 Series 中的單一值
+            max_payloads.append(float(max_row['Actual_Payload'].iloc[0]))
             predictor_names.append(predictor)
     
     bars = plt.bar(predictor_names, max_payloads, color=[colors.get(p, 'gray') for p in predictor_names])
@@ -1142,6 +1175,7 @@ def plot_predictor_comparison(all_results, imgName, method, output_dir):
     
     plt.tight_layout()
     plt.savefig(f"{output_dir}/comparison_max_payload.png", dpi=300)
+    plt.close()  # 關閉圖表
 
 def create_wide_format_tables(all_results, output_dir):
     """
@@ -1731,3 +1765,328 @@ def run_multiple_predictors(imgName, filetype="png", method="quadtree",
             f.write("\nNo valid statistics available for comparison\n")
     
     return None, None
+
+def run_simplified_precise_measurements(origImg, imgName, method, prediction_method, ratio_of_ones, 
+                                      total_embeddings=5, el_mode=0, segments=15, use_different_weights=False,
+                                      split_size=2, block_base=False, quad_tree_params=None):
+    """
+    運行精確的數據點測量，但僅儲存數據而不產生圖像和圖表
+    適用於非 proposed 預測器
+    
+    Parameters:
+    -----------
+    origImg : numpy.ndarray
+        原始圖像
+    imgName : str
+        圖像名稱 (用於保存結果)
+    method : str
+        使用的方法
+    prediction_method : PredictionMethod
+        預測方法
+    ratio_of_ones : float
+        嵌入數據中1的比例
+    total_embeddings : int
+        總嵌入次數
+    el_mode : int
+        EL模式
+    segments : int
+        要測量的數據點數量
+    use_different_weights : bool
+        是否使用不同權重
+    split_size : int
+        分割大小
+    block_base : bool
+        是否使用block base方式
+    quad_tree_params : dict
+        四叉樹參數
+        
+    Returns:
+    --------
+    pandas.DataFrame
+        包含所有測量結果的DataFrame
+    """
+    # 總運行開始時間
+    total_start_time = time.time()
+    method_name = prediction_method.value
+    
+    # 創建結果目錄 (僅用於儲存CSV，不儲存圖像和圖表)
+    result_dir = f"./pred_and_QR/outcome/plots/{imgName}/data_{method_name.lower()}"
+    os.makedirs(result_dir, exist_ok=True)
+    
+    # 記錄運行設置
+    log_file = f"{result_dir}/simplified_measurements_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    with open(log_file, 'w') as f:
+        f.write(f"Simplified measurement run started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Image: {imgName}\n")
+        f.write(f"Method: {method}\n")
+        f.write(f"Prediction method: {method_name}\n")
+        f.write(f"Ratio of ones: {ratio_of_ones}\n")
+        f.write(f"Total embeddings: {total_embeddings}\n")
+        f.write(f"EL mode: {el_mode}\n")
+        f.write(f"Segments: {segments}\n")
+        f.write(f"Use different weights: {use_different_weights}\n")
+        f.write("\n" + "="*80 + "\n\n")
+    
+    # 步驟1: 找出最大嵌入容量
+    print(f"\n{'='*80}")
+    print(f"Step 1: Finding maximum payload capacity for {method_name}")
+    print(f"{'='*80}")
+    
+    with open(log_file, 'a') as f:
+        f.write(f"Step 1: Finding maximum payload capacity\n")
+    
+    start_time = time.time()
+    final_img_max, max_payload, stages_max = run_embedding_with_target(
+        origImg, method, prediction_method, ratio_of_ones, 
+        total_embeddings, el_mode, target_payload_size=-1,
+        split_size=split_size, block_base=block_base, 
+        quad_tree_params=quad_tree_params,
+        use_different_weights=use_different_weights
+    )
+    
+    max_run_time = time.time() - start_time
+    total_pixels = origImg.size
+    
+    print(f"Maximum payload: {max_payload} bits")
+    print(f"Max BPP: {max_payload/total_pixels:.6f}")
+    print(f"Time taken: {max_run_time:.2f} seconds")
+    
+    with open(log_file, 'a') as f:
+        f.write(f"Maximum payload: {max_payload} bits\n")
+        f.write(f"Max BPP: {max_payload/total_pixels:.6f}\n")
+        f.write(f"Time taken: {max_run_time:.2f} seconds\n\n")
+    
+    # 清理記憶體
+    cleanup_memory()
+    
+    # 步驟2: 計算均勻分布的payload點
+    print(f"\n{'='*80}")
+    print(f"Step 2: Calculating {segments} evenly distributed payload points")
+    print(f"{'='*80}")
+    
+    with open(log_file, 'a') as f:
+        f.write(f"Step 2: Calculating {segments} evenly distributed payload points\n")
+    
+    # 計算每個級距的目標嵌入量 (從10%到100%)
+    payload_points = [int(max_payload * (i+1) / segments) for i in range(segments)]
+    
+    print("Target payload points:")
+    for i, target in enumerate(payload_points):
+        print(f"  Point {i+1}: {target} bits ({target/max_payload*100:.1f}% of max)")
+    
+    with open(log_file, 'a') as f:
+        f.write("Target payload points:\n")
+        for i, target in enumerate(payload_points):
+            f.write(f"  Point {i+1}: {target} bits ({target/max_payload*100:.1f}% of max)\n")
+        f.write("\n")
+    
+    # 步驟3: 為每個目標點運行嵌入算法
+    print(f"\n{'='*80}")
+    print(f"Step 3: Running embedding algorithm for each target point")
+    print(f"{'='*80}")
+    
+    with open(log_file, 'a') as f:
+        f.write(f"Step 3: Running embedding algorithm for each target point\n")
+    
+    # 記錄結果
+    results = []
+    
+    # 添加最大嵌入容量的結果
+    psnr_max = calculate_psnr(origImg, final_img_max)
+    ssim_max = calculate_ssim(origImg, final_img_max)
+    hist_corr_max = histogram_correlation(
+        np.histogram(origImg, bins=256, range=(0, 255))[0],
+        np.histogram(final_img_max, bins=256, range=(0, 255))[0]
+    )
+    
+    # 將100%結果加入列表
+    results.append({
+        'Target_Percentage': 100.0,
+        'Target_Payload': max_payload,
+        'Actual_Payload': max_payload,
+        'BPP': max_payload / total_pixels,
+        'PSNR': psnr_max,
+        'SSIM': ssim_max,
+        'Hist_Corr': hist_corr_max,
+        'Processing_Time': max_run_time
+    })
+    
+    # 注意：我們不保存圖像，只記錄數據
+    
+    with open(log_file, 'a') as f:
+        f.write(f"100.0% target (Max capacity):\n")
+        f.write(f"  Target: {max_payload} bits\n")
+        f.write(f"  Actual: {max_payload} bits\n")
+        f.write(f"  BPP: {max_payload/total_pixels:.6f}\n")
+        f.write(f"  PSNR: {psnr_max:.2f}\n")
+        f.write(f"  SSIM: {ssim_max:.4f}\n")
+        f.write(f"  Hist_Corr: {hist_corr_max:.4f}\n")
+        f.write(f"  Time: {max_run_time:.2f} seconds\n\n")
+    
+    # 清理記憶體
+    cleanup_memory()
+    
+    # 使用 tqdm 添加進度條
+    from tqdm import tqdm
+    
+    # 運行其餘級距的測量 (1到segments-1，跳過最後一個因為已經有了max結果)
+    for i, target in enumerate(tqdm(payload_points[:-1], desc=f"處理 {method_name} 數據點")):
+        percentage = (i+1) / segments * 100
+        
+        print(f"\nRunning point {i+1}/{segments}: {target} bits ({percentage:.1f}% of max)")
+        
+        with open(log_file, 'a') as f:
+            f.write(f"{percentage:.1f}% target:\n")
+            f.write(f"  Target: {target} bits\n")
+        
+        start_time = time.time()
+        final_img, actual_payload, stages = run_embedding_with_target(
+            origImg, method, prediction_method, ratio_of_ones, 
+            total_embeddings, el_mode, target_payload_size=target,
+            split_size=split_size, block_base=block_base, 
+            quad_tree_params=quad_tree_params,
+            use_different_weights=use_different_weights
+        )
+        
+        run_time = time.time() - start_time
+        
+        # 計算質量指標
+        psnr = calculate_psnr(origImg, final_img)
+        ssim = calculate_ssim(origImg, final_img)
+        hist_corr = histogram_correlation(
+            np.histogram(origImg, bins=256, range=(0, 255))[0],
+            np.histogram(final_img, bins=256, range=(0, 255))[0]
+        )
+        
+        # 記錄結果
+        results.append({
+            'Target_Percentage': percentage,
+            'Target_Payload': target,
+            'Actual_Payload': actual_payload,
+            'BPP': actual_payload / total_pixels,
+            'PSNR': psnr,
+            'SSIM': ssim,
+            'Hist_Corr': hist_corr,
+            'Processing_Time': run_time
+        })
+        
+        # 注意：我們不保存圖像，只記錄數據
+        
+        print(f"  Actual: {actual_payload} bits")
+        print(f"  BPP: {actual_payload/total_pixels:.6f}")
+        print(f"  PSNR: {psnr:.2f}")
+        print(f"  SSIM: {ssim:.4f}")
+        print(f"  Time: {run_time:.2f} seconds")
+        
+        with open(log_file, 'a') as f:
+            f.write(f"  Actual: {actual_payload} bits\n")
+            f.write(f"  BPP: {actual_payload/total_pixels:.6f}\n")
+            f.write(f"  PSNR: {psnr:.2f}\n")
+            f.write(f"  SSIM: {ssim:.4f}\n")
+            f.write(f"  Hist_Corr: {hist_corr:.4f}\n")
+            f.write(f"  Time: {run_time:.2f} seconds\n\n")
+        
+        # 清理記憶體
+        cleanup_memory()
+    
+    # 按照正確順序排序結果
+    results.sort(key=lambda x: x['Target_Percentage'])
+    
+    # 轉換為DataFrame
+    df = pd.DataFrame(results)
+    
+    # 步驟4: 整理結果
+    print(f"\n{'='*80}")
+    print(f"Step 4: Results summary for {method_name}")
+    print(f"{'='*80}")
+    
+    total_time = time.time() - total_start_time
+    
+    print(f"Total processing time: {total_time:.2f} seconds")
+    print(f"Average time per point: {total_time/segments:.2f} seconds")
+    print(f"Results saved to {result_dir}")
+    
+    with open(log_file, 'a') as f:
+        f.write(f"Results summary:\n")
+        f.write(f"Total processing time: {total_time:.2f} seconds\n")
+        f.write(f"Average time per point: {total_time/segments:.2f} seconds\n")
+        f.write(f"Results saved to {result_dir}\n\n")
+        
+        f.write("Data table:\n")
+        f.write(df.to_string(index=False))
+    
+    # 保存結果
+    csv_path = f"{result_dir}/simplified_measurements.csv"
+    df.to_csv(csv_path, index=False)
+    print(f"Results saved to {csv_path}")
+    
+    # 注意：我們不生成圖表，只保存數據
+    
+    return df
+
+def create_wide_format_tables(all_results, output_dir):
+    """
+    創建寬格式表格，便於論文使用，並修復可能的警告
+    
+    Parameters:
+    -----------
+    all_results : dict
+        包含各預測器測量結果的字典
+    output_dir : str
+        輸出目錄
+    """
+    # 創建PSNR表格 (列：百分比，列：預測器)
+    psnr_table = {'Percentage': []}
+    ssim_table = {'Percentage': []}
+    hist_corr_table = {'Percentage': []}
+    
+    # 確定所有百分比值
+    percentages = []
+    for df in all_results.values():
+        percentages.extend(df['Target_Percentage'].tolist())
+    
+    # 去重並排序
+    percentages = sorted(list(set(percentages)))
+    psnr_table['Percentage'] = percentages
+    ssim_table['Percentage'] = percentages
+    hist_corr_table['Percentage'] = percentages
+    
+    # 填充各預測器的數據
+    for predictor, df in all_results.items():
+        psnr_values = []
+        ssim_values = []
+        hist_corr_values = []
+        
+        for percentage in percentages:
+            # 找到最接近的百分比行
+            closest_idx = (df['Target_Percentage'] - percentage).abs().idxmin()
+            # 使用 .loc[idx, 'column'] 而不是 .loc[idx]['column'] 來避免警告
+            psnr_values.append(df.loc[closest_idx, 'PSNR'])
+            ssim_values.append(df.loc[closest_idx, 'SSIM'])
+            hist_corr_values.append(df.loc[closest_idx, 'Hist_Corr'])
+        
+        psnr_table[predictor] = psnr_values
+        ssim_table[predictor] = ssim_values
+        hist_corr_table[predictor] = hist_corr_values
+    
+    # 創建DataFrame
+    psnr_df = pd.DataFrame(psnr_table)
+    ssim_df = pd.DataFrame(ssim_table)
+    hist_corr_df = pd.DataFrame(hist_corr_table)
+    
+    # 保存表格
+    psnr_df.to_csv(f"{output_dir}/wide_format_psnr.csv", index=False)
+    ssim_df.to_csv(f"{output_dir}/wide_format_ssim.csv", index=False)
+    hist_corr_df.to_csv(f"{output_dir}/wide_format_hist_corr.csv", index=False)
+    
+    # 創建LaTeX格式表格
+    with open(f"{output_dir}/latex_table_psnr.txt", 'w') as f:
+        f.write(psnr_df.to_latex(index=False, float_format="%.2f"))
+    
+    with open(f"{output_dir}/latex_table_ssim.txt", 'w') as f:
+        f.write(ssim_df.to_latex(index=False, float_format="%.4f"))
+    
+    with open(f"{output_dir}/latex_table_hist_corr.txt", 'w') as f:
+        f.write(hist_corr_df.to_latex(index=False, float_format="%.4f"))
+    
+    print(f"Wide format tables saved to {output_dir}")

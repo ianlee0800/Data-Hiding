@@ -268,3 +268,14 @@ def calculate_block_variance_cuda(block):
     calculate_variance_kernel[blocks_per_grid, threads_per_block](block, variance_result)
     
     return variance_result[0]
+
+def cleanup_memory():
+    """清理 GPU 記憶體資源"""
+    try:
+        mem_pool = cp.get_default_memory_pool()
+        pinned_pool = cp.get_default_pinned_memory_pool()
+        mem_pool.free_all_blocks()
+        pinned_pool.free_all_blocks()
+        print("GPU 記憶體已清理完成")
+    except Exception as e:
+        print(f"清理 GPU 記憶體時出錯: {str(e)}")
