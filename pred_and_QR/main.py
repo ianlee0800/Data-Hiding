@@ -53,7 +53,7 @@ def main():
     # ==== 參數設置（直接在代碼中調整） ====
     
     # 基本參數設置
-    imgName = "male"            # 圖像名稱
+    imgName = "bridge"            # 圖像名稱
     filetype = "png"            # 圖像檔案類型
     total_embeddings = 5        # 總嵌入次數
     
