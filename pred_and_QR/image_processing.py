@@ -270,6 +270,7 @@ class PredictionMethod(Enum):
     PROPOSED = "proposed"  # 您現有的weighted prediction方法
     MED = "med"           # Median Edge Detection
     GAP = "gap"           # Gradient Adjusted Prediction
+    RHOMBUS = "rhombus"   # 新增的菱形預測器
     
 @cuda.jit
 def med_predict_kernel(img, pred_img, height, width):
@@ -321,6 +322,97 @@ def gap_predict_kernel(img, pred_img, height, width):
         pred_img[y, x] = min(255, max(0, pred))
     else:
         pred_img[y, x] = img[y, x]
+
+# 2. 新增菱形預測器的 CUDA kernel 實現
+@cuda.jit
+def rhombus_predict_kernel(img, pred_img, height, width):
+    """
+    菱形預測器的CUDA kernel實現
+    使用上、下、左、右四個點的加權平均進行預測
+    
+    預測模式:
+        p1
+      p2 X p3
+        p4
+    其中 X 是要預測的像素，p1、p2、p3、p4 分別是上、左、右、下的鄰居像素
+    """
+    x, y = cuda.grid(2)
+    if 1 < x < width - 1 and 1 < y < height - 1:
+        p1 = int(img[y-1, x])    # 上
+        p2 = int(img[y, x-1])    # 左
+        p3 = int(img[y, x+1])    # 右
+        p4 = int(img[y+1, x])    # 下
+        
+        # 基本加權模式 - 可根據需要調整權重
+        weight_sum = 4
+        pred = (p1 + p2 + p3 + p4) / weight_sum
+        
+        # 邊緣處理：檢測是否存在邊緣並調整預測
+        h_diff = abs(p2 - p3)  # 水平差異
+        v_diff = abs(p1 - p4)  # 垂直差異
+        
+        # 如果存在明顯的邊緣，則偏向沿著邊緣的方向預測
+        if h_diff > v_diff * 2:
+            # 垂直邊緣，優先使用垂直鄰居
+            pred = (p1 + p4) / 2
+        elif v_diff > h_diff * 2:
+            # 水平邊緣，優先使用水平鄰居
+            pred = (p2 + p3) / 2
+            
+        pred_img[y, x] = min(255, max(0, int(pred + 0.5)))  # 四捨五入並確保在有效範圍內
+    else:
+        # 邊界像素保持不變
+        pred_img[y, x] = img[y, x]
+
+# 3. 修改 predict_image_cuda 函數，支持菱形預測器
+def predict_image_cuda(img, prediction_method, weights=None):
+    """
+    統一的預測函數接口
+    
+    Parameters:
+    -----------
+    img : numpy.ndarray or cupy.ndarray
+        輸入圖像
+    prediction_method : PredictionMethod
+        預測方法
+    weights : numpy.ndarray, optional
+        只在使用PROPOSED方法時需要的權重參數
+        
+    Returns:
+    --------
+    numpy.ndarray
+        預測後的圖像
+    """
+    height, width = img.shape
+    d_img = cuda.to_device(img)
+    d_pred_img = cuda.device_array_like(img)
+
+    threads_per_block = (16, 16)
+    blocks_per_grid_x = (width + threads_per_block[0] - 1) // threads_per_block[0]
+    blocks_per_grid_y = (height + threads_per_block[1] - 1) // threads_per_block[1]
+    blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
+
+    if prediction_method == PredictionMethod.PROPOSED:
+        if weights is None:
+            raise ValueError("Weights must be provided for PROPOSED method")
+        d_weights = cuda.to_device(weights)
+        improved_predict_kernel[blocks_per_grid, threads_per_block](
+            d_img, d_weights, d_pred_img, height, width
+        )
+    elif prediction_method == PredictionMethod.MED:
+        med_predict_kernel[blocks_per_grid, threads_per_block](
+            d_img, d_pred_img, height, width
+        )
+    elif prediction_method == PredictionMethod.GAP:
+        gap_predict_kernel[blocks_per_grid, threads_per_block](
+            d_img, d_pred_img, height, width
+        )
+    elif prediction_method == PredictionMethod.RHOMBUS:
+        rhombus_predict_kernel[blocks_per_grid, threads_per_block](
+            d_img, d_pred_img, height, width
+        )
+
+    return d_pred_img.copy_to_host()
 
 @cuda.jit
 def improved_predict_kernel(img, weights, pred_img, height, width):

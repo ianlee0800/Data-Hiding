@@ -1,0 +1,62 @@
+Multi-predictor comparison run started at 2025-02-25 16:29:51
+Image: male.png
+Method: split
+Parameters: embeddings=5, ratio_of_ones=0.5, el_mode=0
+Split size: 2x2, block_base=False
+
+================================================================================
+
+Starting run with proposed predictor at 2025-02-25 16:29:51
+Run completed for proposed predictor
+Total payload: 1329912
+PSNR: 33.68
+SSIM: 0.8855
+Processing time: 7.87 seconds
+
+------------------------------------------------------------
+
+Starting run with med predictor at 2025-02-25 16:29:58
+Run completed for med predictor
+Total payload: 1267370
+PSNR: 34.59
+SSIM: 0.8965
+Processing time: 10.95 seconds
+
+------------------------------------------------------------
+
+Starting run with gap predictor at 2025-02-25 16:30:02
+Run completed for gap predictor
+Total payload: 1213560
+PSNR: 35.18
+SSIM: 0.9035
+Processing time: 14.14 seconds
+
+------------------------------------------------------------
+
+Starting run with rhombus predictor at 2025-02-25 16:30:05
+Run completed for rhombus predictor
+Total payload: 383610
+PSNR: 41.50
+SSIM: 0.9571
+Processing time: 17.26 seconds
+
+------------------------------------------------------------
+
+
+Error generating comparison: 'purple-' is not a valid format string (unrecognized character 'u')
+Traceback (most recent call last):
+  File "c:\Users\Ian Lee\我的雲端硬碟\文件\碩班\Data-Hiding\pred_and_QR\utils.py", line 772, in run_multiple_predictors
+    create_unified_plots(all_stats, imgName, method, comparison_dir)
+  File "c:\Users\Ian Lee\我的雲端硬碟\文件\碩班\Data-Hiding\pred_and_QR\utils.py", line 840, in create_unified_plots
+    plt.plot(df['BPP'], df['PSNR'],
+  File "C:\Users\Ian Lee\Anaconda3\envs\myenv\lib\site-packages\matplotlib\pyplot.py", line 3590, in plot
+    return gca().plot(
+  File "C:\Users\Ian Lee\Anaconda3\envs\myenv\lib\site-packages\matplotlib\axes\_axes.py", line 1724, in plot
+    lines = [*self._get_lines(self, *args, data=data, **kwargs)]
+  File "C:\Users\Ian Lee\Anaconda3\envs\myenv\lib\site-packages\matplotlib\axes\_base.py", line 303, in __call__
+    yield from self._plot_args(
+  File "C:\Users\Ian Lee\Anaconda3\envs\myenv\lib\site-packages\matplotlib\axes\_base.py", line 449, in _plot_args
+    linestyle, marker, color = _process_plot_format(
+  File "C:\Users\Ian Lee\Anaconda3\envs\myenv\lib\site-packages\matplotlib\axes\_base.py", line 197, in _process_plot_format
+    raise ValueError(
+ValueError: 'purple-' is not a valid format string (unrecognized character 'u')

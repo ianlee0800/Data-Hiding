@@ -1,0 +1,28 @@
+Multi-predictor comparison run started at 2025-02-25 16:48:04
+Image: male.png
+Method: quadtree
+Parameters: embeddings=5, proposed_ratio_of_ones=0.5, el_mode=0
+Non-proposed predictors using ratio_of_ones=1.0
+Quadtree params: min_block_size=16, variance_threshold=300
+
+================================================================================
+
+Starting run with proposed predictor at 2025-02-25 16:48:04
+Run completed for proposed predictor (ratio_of_ones=0.5)
+Total payload: 592566
+PSNR: 29.20
+SSIM: 0.2662
+Processing time: 44.26 seconds
+
+------------------------------------------------------------
+
+Starting run with med predictor at 2025-02-25 16:48:49
+Run completed for med predictor (ratio_of_ones=0.75)
+Total payload: 578513
+PSNR: 28.95
+SSIM: 0.2596
+Processing time: 80.90 seconds
+
+------------------------------------------------------------
+
+Starting run with gap predictor at 2025-02-25 16:49:25

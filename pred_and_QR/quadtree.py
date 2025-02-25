@@ -31,50 +31,28 @@ def process_current_block(block, position, size, stage_info, embedding, ratio_of
                          remaining_target=None, verbose=False):
     """
     處理當前區塊的 PEE 嵌入，支援多種預測方法
-    
-    Parameters:
-    -----------
-    block : cupy.ndarray
-        輸入區塊
-    position : tuple
-        區塊在原圖中的位置 (y, x)
-    size : int
-        區塊大小
-    stage_info : dict
-        當前階段的資訊
-    embedding : int
-        當前嵌入階段
-    ratio_of_ones : float
-        嵌入數據中 1 的比例
-    target_bpp : float
-        目標 BPP
-    target_psnr : float
-        目標 PSNR
-    el_mode : int
-        EL模式 (0:無限制, 1:漸增, 2:漸減)
-    prediction_method : PredictionMethod
-        預測方法選擇 (PROPOSED, MED, GAP)
-    remaining_target : int, optional
-        剩餘需要嵌入的數據量
-    verbose : bool
-        是否輸出詳細資訊
     """
     try:
         # 確保 block 是 CuPy 數組
         if not isinstance(block, cp.ndarray):
             block = cp.asarray(block)
         
-        # 根據 el_mode 和區塊大小決定 max_el
+        # 計算區塊大小和目標容量
+        block_size = block.size
+        if remaining_target is not None:
+            block_size = min(block_size, remaining_target)
+        
+        # 首先根據 el_mode 決定初始 max_el 值
         if el_mode == 1:  # Increasing
             max_el = 3 + embedding * 2
         elif el_mode == 2:  # Decreasing
             max_el = 11 - embedding * 2
         else:  # No restriction
             max_el = 7
-        
-        # 對於小區塊調整參數
+            
+        # 然後根據區塊大小調整參數
         if size <= 32:
-            max_el = min(max_el, 5)
+            max_el = min(max_el, 5)  # 現在可以安全地使用 max_el
             local_target_bpp = target_bpp * 0.8
             local_target_psnr = target_psnr + 2
         else:
@@ -85,62 +63,47 @@ def process_current_block(block, position, size, stage_info, embedding, ratio_of
         local_el = compute_improved_adaptive_el(
             block, 
             window_size=min(5, size//4),
-            max_el=max_el, 
+            max_el=max_el,  # 使用已經正確初始化的 max_el
             block_size=size
         )
         
         # 生成嵌入數據
-        block_size = block.size
-        if remaining_target is not None:
-            block_size = min(block_size, remaining_target)
+        data_to_embed = generate_random_binary_array(block_size, ratio_of_ones)
+        data_to_embed = cp.asarray(data_to_embed, dtype=cp.uint8)
         
-        sub_data = generate_random_binary_array(block_size, ratio_of_ones)
-        sub_data = cp.asarray(sub_data, dtype=cp.uint8)
-        
-        # 根據預測方法調整處理邏輯
-        if prediction_method in [PredictionMethod.MED, PredictionMethod.GAP]:
-            # MED 和 GAP 方法的處理
-            data_to_embed = generate_random_binary_array(block_size, ratio_of_ones)
-            data_to_embed = cp.asarray(data_to_embed)
-            
-            # 直接使用相應的預測方法，不需要權重
-            embedded_block, payload = multi_pass_embedding(
-                block, 
-                data_to_embed, 
-                local_el, 
-                None,  # 不使用權重
-                embedding,
-                prediction_method=prediction_method,
-                remaining_target=remaining_target
-            )
-        else:
-            # PROPOSED 方法的處理
+        # 根據預測方法進行不同的處理
+        if prediction_method == PredictionMethod.PROPOSED:
+            # PROPOSED 方法需要計算權重
             weights, (sub_payload, sub_psnr) = brute_force_weight_search_cuda(
-                block, sub_data, local_el, local_target_bpp, local_target_psnr, 
+                block, data_to_embed, local_el, local_target_bpp, local_target_psnr, 
                 embedding, block_size=size
             )
+        else:
+            # MED 和 GAP 方法不需要權重
+            weights = None
             
-            embedded_block, payload = multi_pass_embedding(
-                block,
-                data_to_embed,
-                local_el,
-                weights,
-                embedding,
-                prediction_method=prediction_method,
-                remaining_target=remaining_target
-            )
+        # 執行數據嵌入
+        embedded_block, payload = multi_pass_embedding(
+            block,
+            data_to_embed,
+            local_el,
+            weights,
+            embedding,
+            prediction_method=prediction_method,
+            remaining_target=remaining_target
+        )
         
         # 確保結果是 CuPy 數組
         if not isinstance(embedded_block, cp.ndarray):
             embedded_block = cp.asarray(embedded_block)
         
-        # 記錄區塊資訊時加入預測方法相關資訊
+        # 計算並記錄區塊資訊
         block_info = {
             'position': position,
             'size': size,
             'weights': (weights.tolist() if weights is not None and hasattr(weights, 'tolist') 
-                    else "N/A" if prediction_method in [PredictionMethod.MED, PredictionMethod.GAP] 
-                    else None),
+                       else "N/A" if prediction_method in [PredictionMethod.MED, PredictionMethod.GAP] 
+                       else None),
             'payload': int(payload),
             'psnr': float(calculate_psnr(cp.asnumpy(block), cp.asnumpy(embedded_block))),
             'ssim': float(calculate_ssim(cp.asnumpy(block), cp.asnumpy(embedded_block))),
@@ -152,7 +115,7 @@ def process_current_block(block, position, size, stage_info, embedding, ratio_of
             'prediction_method': prediction_method.value
         }
         
-        # 更新stage資訊
+        # 更新階段資訊
         stage_info['block_info'][str(size)]['blocks'].append(block_info)
         stage_info['payload'] += payload
         

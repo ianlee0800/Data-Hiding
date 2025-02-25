@@ -1,0 +1,55 @@
+Multi-predictor comparison run started at 2025-02-25 16:40:25
+Image: male.png
+Method: quadtree
+Parameters: embeddings=5, proposed_ratio_of_ones=0.5, el_mode=0
+Non-proposed predictors using ratio_of_ones=1.0
+Quadtree params: min_block_size=16, variance_threshold=300
+
+================================================================================
+
+Starting run with proposed predictor at 2025-02-25 16:40:25
+Run completed for proposed predictor (ratio_of_ones=0.5)
+Total payload: 594117
+PSNR: 29.19
+SSIM: 0.2658
+Processing time: 44.41 seconds
+
+------------------------------------------------------------
+
+Starting run with med predictor at 2025-02-25 16:41:10
+Run completed for med predictor (ratio_of_ones=1.0)
+Total payload: 568232
+PSNR: 28.65
+SSIM: 0.2530
+Processing time: 78.37 seconds
+
+------------------------------------------------------------
+
+Starting run with gap predictor at 2025-02-25 16:41:43
+Run completed for gap predictor (ratio_of_ones=1.0)
+Total payload: 549993
+PSNR: 28.69
+SSIM: 0.2531
+Processing time: 112.64 seconds
+
+------------------------------------------------------------
+
+Starting run with rhombus predictor at 2025-02-25 16:42:18
+Run completed for rhombus predictor (ratio_of_ones=1.0)
+Total payload: 65108
+PSNR: 29.54
+SSIM: 0.2766
+Processing time: 145.15 seconds
+
+------------------------------------------------------------
+
+
+Comparison completed at 2025-02-25 16:42:52
+Total processing time: 146.73 seconds
+
+Summary Results:
+  predictor  ratio_of_ones  total_payload       bpp       psnr    ssim  hist_corr
+0  proposed            0.5         594117  0.566594  29.194571  0.2658   0.490871
+1       med            1.0         568232  0.541908  28.649800  0.2530   0.489460
+2       gap            1.0         549993  0.524514  28.694025  0.2531   0.489623
+3   rhombus            1.0          65108  0.062092  29.541819  0.2766   0.491729

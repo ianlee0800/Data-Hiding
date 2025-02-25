@@ -16,7 +16,11 @@ from embedding import (
     pee_process_with_split_cuda
 )
 from utils import (
-    create_pee_info_table
+    create_pee_info_table,
+    generate_interval_statistics,
+    save_interval_statistics,
+    plot_interval_statistics,
+    run_multiple_predictors
 )
 from common import *
 from quadtree import pee_process_with_quadtree_cuda
@@ -31,32 +35,95 @@ def ensure_dir(file_path):
 def main():
     """
     主函數，負責整個數據隱藏過程的控制和執行
-    新增了對指定 payload size 的支援
+    
+    更新功能:
+    1. 支持最大嵌入量，並將嵌入數據分成15段進行統計
+    2. 新增菱形預測器(Rhombus Predictor)
+    3. 支持多預測方法自動運行與比較
+    4. 圖表使用曲線圖代替折線圖，視覺效果更佳
+    5. 支持為每個預測器獨立設置ratio_of_ones值
     """
+    # ==== 參數設置（直接在代碼中調整） ====
+    
     # 基本參數設置
-    imgName = "male"
-    filetype = "png"
-    total_embeddings = 5
-    ratio_of_ones = 1
-    el_mode = 0  # 0: 無限制, 1: 漸增, 2: 漸減
+    imgName = "barbara"            # 圖像名稱
+    filetype = "png"            # 圖像檔案類型
+    total_embeddings = 5        # 總嵌入次數
+    
+    # 各預測器的ratio_of_ones設置
+    predictor_ratios = {
+        "PROPOSED": 0.5,        # proposed預測器的ratio_of_ones
+        "MED": 1.0,             # MED預測器的ratio_of_ones
+        "GAP": 0.7,             # GAP預測器的ratio_of_ones
+        "RHOMBUS": 0.9          # RHOMBUS預測器的ratio_of_ones
+    }
+    
+    el_mode = 0                 # 0: 無限制, 1: 漸增, 2: 漸減
     use_different_weights = False 
     
-    # 新增 payload size 控制參數
-    target_payload_size = 30000  # -1 或 0 表示使用原策略，正數表示指定大小
+    # 設置為使用最大嵌入量
+    target_payload_size = -1    # -1 表示使用最大嵌入量
+    
+    # 統計分段數量
+    stats_segments = 15
+    
     # 預測方法選擇
-    prediction_method = PredictionMethod.GAP  # 預設使用 PROPOSED 方法
+    # 可選：PROPOSED, MED, GAP, RHOMBUS, ALL (ALL表示運行所有方法並生成比較)
+    prediction_method_str = "ALL"
+    
     # 方法選擇
-    method = "split"  # 可選："rotation", "split", "quadtree"
+    method = "split"         # 可選："rotation", "split", "quadtree"
     
     # 各方法共用參數
-    split_size = 2  # 用於 rotation 和 split 方法
-    block_base = False  # 用於 split 方法
+    split_size = 2              # 用於 rotation 和 split 方法
+    block_base = False          # 用於 split 方法
     
     # quad tree 特定參數
     quad_tree_params = {
-        'min_block_size': 16,  # 支援到16x16
+        'min_block_size': 16,   # 支援到16x16
         'variance_threshold': 300
     }
+    
+    # ==== 主程序開始 ====
+    
+    # 處理預測方法選擇
+    prediction_method_map = {
+        "PROPOSED": PredictionMethod.PROPOSED,
+        "MED": PredictionMethod.MED,
+        "GAP": PredictionMethod.GAP,
+        "RHOMBUS": PredictionMethod.RHOMBUS
+    }
+    
+    # 如果選擇 ALL，則執行所有預測方法並生成比較
+    if prediction_method_str.upper() == "ALL":
+        print("Running all prediction methods and generating comparison...")
+        
+        run_multiple_predictors(
+            imgName=imgName,
+            filetype=filetype,
+            method=method,
+            total_embeddings=total_embeddings,
+            predictor_ratios=predictor_ratios,  # 傳入預測器比例字典
+            el_mode=el_mode,
+            use_different_weights=use_different_weights,
+            split_size=split_size,
+            block_base=block_base,
+            quad_tree_params=quad_tree_params,
+            stats_segments=stats_segments
+        )
+        
+        return
+    
+    # 否則，執行單一預測方法
+    prediction_method = prediction_method_map.get(prediction_method_str.upper())
+    if prediction_method is None:
+        print(f"Error: Unknown prediction method: {prediction_method_str}")
+        print(f"Available options: PROPOSED, MED, GAP, RHOMBUS, ALL")
+        return
+
+    # 獲取當前預測器的ratio_of_ones
+    ratio_of_ones = predictor_ratios.get(prediction_method_str.upper(), 0.5)
+    print(f"Using ratio_of_ones = {ratio_of_ones} for {prediction_method_str} predictor")
 
     # 創建必要的目錄
     os.makedirs(f"./pred_and_QR/outcome/histogram/{imgName}", exist_ok=True)
@@ -86,6 +153,11 @@ def main():
         print(f"Target payload size: {target_payload_size if target_payload_size > 0 else 'Maximum capacity'}")
         
         try:
+            # 如果使用 MED、GAP 或 RHOMBUS 方法，強制設置 use_different_weights 為 False
+            if prediction_method in [PredictionMethod.MED, PredictionMethod.GAP, PredictionMethod.RHOMBUS]:
+                use_different_weights = False
+                print(f"Note: Weight optimization disabled for {prediction_method.value} prediction method")
+                
             # 執行選定的方法
             if method == "rotation":
                 final_pee_img, total_payload, pee_stages = pee_process_with_rotation_cuda(
@@ -95,15 +167,10 @@ def main():
                     use_different_weights,
                     split_size,
                     el_mode,
-                    prediction_method=prediction_method,  # 新增參數
+                    prediction_method=prediction_method,
                     target_payload_size=target_payload_size
                 )
             elif method == "split":
-                # 如果使用 MED 或 GAP 方法,強制設置 use_different_weights 為 False
-                if prediction_method in [PredictionMethod.MED, PredictionMethod.GAP]:
-                    use_different_weights = False
-                    print("Note: Weight optimization disabled for MED/GAP prediction methods")
-                
                 final_pee_img, total_payload, pee_stages = pee_process_with_split_cuda(
                     origImg,
                     total_embeddings,
@@ -125,7 +192,8 @@ def main():
                     quad_tree_params['variance_threshold'],
                     el_mode,
                     rotation_mode='random',
-                    target_payload_size=target_payload_size  # 新增參數
+                    prediction_method=prediction_method,
+                    target_payload_size=target_payload_size
                 )
 
             # 建立並列印 PEE 資訊表格
@@ -133,6 +201,26 @@ def main():
             pee_table = create_pee_info_table(pee_stages, use_different_weights, total_pixels, 
                                            split_size, method == "quadtree")
             print(pee_table)
+
+            # 生成並保存統計數據
+            print("\nGenerating interval statistics...")
+            stats_df, stats_table = generate_interval_statistics(
+                origImg, pee_stages, total_payload, segments=stats_segments
+            )
+            
+            if stats_df is not None:
+                print("\nInterval Statistics:")
+                print(stats_table)
+                
+                # 保存統計數據
+                save_interval_statistics(
+                    stats_df, imgName, method, prediction_method.value
+                )
+                
+                # 繪製統計圖表
+                plot_interval_statistics(
+                    stats_df, imgName, method, prediction_method.value
+                )
 
             # Save each stage's image and histogram
             for i, stage in enumerate(pee_stages):
@@ -207,7 +295,7 @@ def main():
             psnrs = [data['psnr'] for data in bpp_psnr_data]
             
             plt.plot(bpps, psnrs, 'b.-', linewidth=2, markersize=8, 
-                    label=f'Method: {method}')
+                    label=f'Method: {method}, Predictor: {prediction_method.value}')
             
             # Add labels for each point
             for i, (bpp, psnr) in enumerate(zip(bpps, psnrs)):
@@ -245,12 +333,15 @@ def main():
             np.save(f"./pred_and_QR/outcome/plots/{imgName}/bpp_psnr_data.npy",
                    {
                        'method': method,
+                       'prediction_method': prediction_method.value,
+                       'ratio_of_ones': ratio_of_ones,
                        'bpp': bpps,
                        'psnr': psnrs,
                        'split_size': split_size if method != "quadtree" else None,
                        'block_base': block_base if method == "split" else None,
                        'min_block_size': quad_tree_params['min_block_size'] if method == "quadtree" else None,
-                       'stages': bpp_psnr_data
+                       'stages': bpp_psnr_data,
+                       'interval_stats': stats_df.to_dict('records') if stats_df is not None else None
                    })
 
             # Calculate and print final results using original image (no grid)
@@ -264,6 +355,7 @@ def main():
             print("\nFinal Results:")
             print(f"Method: {method}")
             print(f"Prediction Method: {prediction_method.value}")
+            print(f"Ratio of Ones: {ratio_of_ones}")
             print(f"Total Payload: {total_payload}")
             print(f"Final BPP: {final_bpp:.4f}")
             print(f"Final PSNR: {final_psnr:.2f}")
@@ -274,6 +366,7 @@ def main():
             final_results = {
                 'method': method,
                 'prediction_method': prediction_method.value,
+                'ratio_of_ones': ratio_of_ones,
                 'total_payload': total_payload,
                 'target_payload_size': target_payload_size,
                 'final_bpp': final_bpp,

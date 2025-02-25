@@ -1,0 +1,59 @@
+Multi-predictor comparison run started at 2025-02-25 17:00:31
+Image: bridge.png
+Method: split
+Parameters: embeddings=5, el_mode=0
+Predictor ratio settings:
+  PROPOSED: 0.5
+  MED: 1.0
+  GAP: 0.7
+  RHOMBUS: 0.9
+Split size: 2x2, block_base=False
+
+================================================================================
+
+Starting run with proposed predictor at 2025-02-25 17:00:31
+Run completed for proposed predictor (ratio_of_ones=0.5)
+Total payload: 220856
+PSNR: 35.61
+SSIM: 0.9691
+Processing time: 2.92 seconds
+
+------------------------------------------------------------
+
+Starting run with med predictor at 2025-02-25 17:00:34
+Run completed for med predictor (ratio_of_ones=1.0)
+Total payload: 266885
+PSNR: 34.25
+SSIM: 0.9565
+Processing time: 3.81 seconds
+
+------------------------------------------------------------
+
+Starting run with gap predictor at 2025-02-25 17:00:35
+Run completed for gap predictor (ratio_of_ones=0.7)
+Total payload: 248927
+PSNR: 35.92
+SSIM: 0.9683
+Processing time: 4.73 seconds
+
+------------------------------------------------------------
+
+Starting run with rhombus predictor at 2025-02-25 17:00:36
+Run completed for rhombus predictor (ratio_of_ones=0.9)
+Total payload: 29936
+PSNR: 45.37
+SSIM: 0.9952
+Processing time: 5.57 seconds
+
+------------------------------------------------------------
+
+
+Comparison completed at 2025-02-25 17:00:38
+Total processing time: 6.93 seconds
+
+Summary Results:
+  predictor  ratio_of_ones  total_payload       bpp       psnr    ssim  hist_corr
+0  proposed            0.5         220856  0.842499  35.612860  0.9691   0.966455
+1       med            1.0         266885  1.018085  34.249178  0.9565   0.939760
+2       gap            0.7         248927  0.949581  35.921720  0.9683   0.951799
+3   rhombus            0.9          29936  0.114197  45.370528  0.9952   0.994585
