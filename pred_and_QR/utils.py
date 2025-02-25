@@ -1,142 +1,36 @@
+# utils.py - 重新整理後的版本
+
 import numpy as np
-import struct
-import cupy as cp
-import matplotlib.pyplot as plt
-from prettytable import PrettyTable
 import pandas as pd
+import matplotlib.pyplot as plt
 import os
 import time
 from datetime import datetime
+import cupy as cp
+from prettytable import PrettyTable
+from common import calculate_psnr, calculate_ssim, histogram_correlation
+from image_processing import save_image, generate_histogram, PredictionMethod
 
-from common import (
-    calculate_psnr,
-    calculate_ssim,
-    histogram_correlation
-)
+# =============================================================================
+# 第一部分：基本工具函數
+# =============================================================================
 
-from image_processing import (
-    save_image,
-    generate_histogram,
-    PredictionMethod
-)
-
-def generate_embedding_data(total_embeddings, sub_images_per_stage, max_capacity_per_subimage, 
-                           ratio_of_ones=0.5, target_payload_size=-1):
-    """
-    更靈活的嵌入數據生成函數，不強制平均分配 payload
-    
-    Parameters:
-    -----------
-    total_embeddings : int
-        總嵌入階段數
-    sub_images_per_stage : int
-        每個stage的子圖像數量
-    max_capacity_per_subimage : int
-        每個子圖像的最大容量
-    ratio_of_ones : float, optional
-        生成數據中1的比例，默認為0.5
-    target_payload_size : int, optional
-        目標總payload大小，設為-1或0時使用最大容量
-        
-    Returns:
-    --------
-    dict
-        包含每個stage的數據生成資訊
-    """
-    # 如果沒有指定目標payload，使用最大容量模式
-    if target_payload_size <= 0:
-        max_stage_payload = sub_images_per_stage * max_capacity_per_subimage
-        stage_data = []
-        for _ in range(total_embeddings):
-            sub_data_list = []
-            for _ in range(sub_images_per_stage):
-                sub_data = generate_random_binary_array(max_capacity_per_subimage, ratio_of_ones)
-                sub_data_list.append(sub_data)
-            stage_data.append({
-                'sub_data': sub_data_list,
-                'remaining_target': 0
-            })
-        return {
-            'stage_data': stage_data,
-            'total_target': max_stage_payload * total_embeddings
-        }
-    
-    # 使用指定的payload size
-    # 為每個stage生成足夠大的數據，讓它們能夠靈活地達到目標payload
-    total_remaining = target_payload_size
-    stage_data = []
-    
-    # 為每個stage分配潛在的最大容量
-    potential_capacity_per_stage = max_capacity_per_subimage * sub_images_per_stage
-    
-    for stage in range(total_embeddings):
-        sub_data_list = []
-        
-        # 為每個子圖像生成數據
-        for sub_img in range(sub_images_per_stage):
-            # 計算這個子圖像可能需要的最大數據量
-            max_possible = min(max_capacity_per_subimage, total_remaining)
-            
-            # 如果是最後一個stage的最後一個子圖像，確保生成足夠的數據
-            if stage == total_embeddings - 1 and sub_img == sub_images_per_stage - 1:
-                sub_data = generate_random_binary_array(total_remaining, ratio_of_ones)
-            else:
-                sub_data = generate_random_binary_array(max_possible, ratio_of_ones)
-            
-            sub_data_list.append(sub_data)
-        
-        stage_data.append({
-            'sub_data': sub_data_list,
-            'remaining_target': total_remaining  # 記錄當前階段還需要嵌入多少數據
-        })
-    
-    return {
-        'stage_data': stage_data,
-        'total_target': target_payload_size
-    }
-
-# 保留原有函數以保持向後兼容性
 def generate_random_binary_array(size, ratio_of_ones=0.5):
     """生成指定大小的随机二进制数组，可调整1的比例"""
     return np.random.choice([0, 1], size=size, p=[1-ratio_of_ones, ratio_of_ones])
 
-def encode_pee_info(pee_info):
-    encoded = struct.pack('B', pee_info['total_rotations'])
-    for stage in pee_info['stages']:
-        for block in stage['block_params']:
-            # 编码权重（每个权重使用4位，4个权重共16位）
-            weights_packed = sum(w << (4 * i) for i, w in enumerate(block['weights']))
-            encoded += struct.pack('>HBH', 
-                weights_packed,
-                block['EL'],
-                block['payload']
-            )
-    return encoded
+def ensure_dir(file_path):
+    """確保目錄存在，如果不存在則創建"""
+    directory = os.path.dirname(file_path)
+    if not os.path.exists(directory):
+        os.makedirs(directory)
 
-def decode_pee_info(encoded_data):
-    total_rotations = struct.unpack('B', encoded_data[:1])[0]
-    stages = []
-    offset = 1
+# =============================================================================
+# 第二部分：PEE 資訊表格相關功能
+# =============================================================================
 
-    for _ in range(total_rotations):
-        block_params = []
-        for _ in range(4):  # 每次旋转有4个块
-            weights_packed, EL, payload = struct.unpack('>HBH', encoded_data[offset:offset+5])
-            weights = [(weights_packed >> (4 * i)) & 0xF for i in range(4)]
-            block_params.append({
-                'weights': weights,
-                'EL': EL,
-                'payload': payload
-            })
-            offset += 5
-        stages.append({'block_params': block_params})
-
-    return {
-        'total_rotations': total_rotations,
-        'stages': stages
-    }
-
-def create_pee_info_table(pee_stages, use_different_weights, total_pixels, split_size, quad_tree=False):
+def create_pee_info_table(pee_stages, use_different_weights, total_pixels, 
+                         split_size, quad_tree=False):
     """
     創建 PEE 資訊表格的完整函數
     
@@ -272,76 +166,1059 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels, split
     
     return table
 
-def analyze_and_plot_results(bpp_psnr_data, imgName, split_size):
-    """
-    分析結果並繪製圖表
-    """
-    plt.figure(figsize=(12, 8))
-    
-    # 繪製 BPP-PSNR 曲線
-    bpps = [data['bpp'] for data in bpp_psnr_data]
-    psnrs = [data['psnr'] for data in bpp_psnr_data]
-    
-    plt.plot(bpps, psnrs, 'b.-', linewidth=2, markersize=8, 
-             label=f'Split Size: {split_size}x{split_size}')
-    
-    plt.xlabel('Bits Per Pixel (BPP)', fontsize=12)
-    plt.ylabel('PSNR (dB)', fontsize=12)
-    plt.title(f'BPP-PSNR Curve for {imgName}', fontsize=14)
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.legend(fontsize=10)
-    
-    # 添加數據標籤
-    for i, (bpp, psnr) in enumerate(zip(bpps, psnrs)):
-        plt.annotate(f'Stage {i}\n({bpp:.3f}, {psnr:.2f})',
-                    (bpp, psnr), textcoords="offset points",
-                    xytext=(0,10), ha='center')
-    
-    plt.tight_layout()
-    return plt.gcf()
+# =============================================================================
+# 第三部分：嵌入數據生成相關函數
+# =============================================================================
 
-def calculate_metrics_with_rotation(original_img, stage_img, current_rotation):
+def generate_embedding_data(total_embeddings, sub_images_per_stage, max_capacity_per_subimage, 
+                           ratio_of_ones=0.5, target_payload_size=-1):
     """
-    計算考慮旋轉的圖像品質指標
+    生成嵌入數據
     
     Parameters:
     -----------
-    original_img : numpy.ndarray
-        原始圖像
-    stage_img : numpy.ndarray
-        處理後的圖像
-    current_rotation : int
-        當前旋轉角度（度數）
+    total_embeddings : int
+        總嵌入階段數
+    sub_images_per_stage : int
+        每個stage的子圖像數量
+    max_capacity_per_subimage : int
+        每個子圖像的最大容量
+    ratio_of_ones : float, optional
+        生成數據中1的比例，默認為0.5
+    target_payload_size : int, optional
+        目標總payload大小，設為-1或0時使用最大容量
+        
+    Returns:
+    --------
+    dict
+        包含每個stage的數據生成資訊
+    """
+    # 如果沒有指定目標payload，使用最大容量模式
+    if target_payload_size <= 0:
+        max_stage_payload = sub_images_per_stage * max_capacity_per_subimage
+        stage_data = []
+        for _ in range(total_embeddings):
+            sub_data_list = []
+            for _ in range(sub_images_per_stage):
+                sub_data = generate_random_binary_array(max_capacity_per_subimage, ratio_of_ones)
+                sub_data_list.append(sub_data)
+            stage_data.append({
+                'sub_data': sub_data_list,
+                'remaining_target': 0
+            })
+        return {
+            'stage_data': stage_data,
+            'total_target': max_stage_payload * total_embeddings
+        }
     
+    # 使用指定的payload size
+    total_remaining = target_payload_size
+    stage_data = []
+    
+    # 為每個stage分配潛在的最大容量
+    potential_capacity_per_stage = max_capacity_per_subimage * sub_images_per_stage
+    
+    for stage in range(total_embeddings):
+        sub_data_list = []
+        
+        for sub_img in range(sub_images_per_stage):
+            # 計算這個子圖像可能需要的最大數據量
+            max_possible = min(max_capacity_per_subimage, total_remaining)
+            
+            # 如果是最後一個stage的最後一個子圖像，確保生成足夠的數據
+            if stage == total_embeddings - 1 and sub_img == sub_images_per_stage - 1:
+                sub_data = generate_random_binary_array(total_remaining, ratio_of_ones)
+            else:
+                sub_data = generate_random_binary_array(max_possible, ratio_of_ones)
+            
+            sub_data_list.append(sub_data)
+        
+        stage_data.append({
+            'sub_data': sub_data_list,
+            'remaining_target': total_remaining  # 記錄當前階段還需要嵌入多少數據
+        })
+    
+    return {
+        'stage_data': stage_data,
+        'total_target': target_payload_size
+    }
+
+# =============================================================================
+# 第四部分：精確測量相關函數
+# =============================================================================
+
+def run_embedding_with_target(origImg, method, prediction_method, ratio_of_ones, 
+                             total_embeddings, el_mode, target_payload_size,
+                             split_size=2, block_base=False, quad_tree_params=None,
+                             use_different_weights=False):
+    """
+    執行特定嵌入算法，針對特定的目標payload
+    
+    Parameters:
+    -----------
+    origImg : numpy.ndarray
+        原始圖像
+    method : str
+        使用的方法 ("rotation", "split", "quadtree")
+    prediction_method : PredictionMethod
+        預測方法
+    ratio_of_ones : float
+        嵌入數據中1的比例
+    total_embeddings : int
+        總嵌入次數
+    el_mode : int
+        EL模式
+    target_payload_size : int
+        目標嵌入量
+    split_size : int, optional
+        分割大小
+    block_base : bool, optional
+        是否使用block base方式
+    quad_tree_params : dict, optional
+        四叉樹參數
+    use_different_weights : bool, optional
+        是否使用不同權重
+        
     Returns:
     --------
     tuple
-        (psnr, ssim, hist_corr) 三個品質指標
+        (final_img, actual_payload, stages)
     """
-    # 確保輸入是numpy array
-    if isinstance(original_img, cp.ndarray):
-        original_img = cp.asnumpy(original_img)
-    if isinstance(stage_img, cp.ndarray):
-        stage_img = cp.asnumpy(stage_img)
+    from embedding import (
+        pee_process_with_rotation_cuda,
+        pee_process_with_split_cuda
+    )
+    from quadtree import pee_process_with_quadtree_cuda
     
-    # 如果需要旋轉，將圖像旋轉回原始方向
-    if current_rotation != 0:
-        k = (-current_rotation // 90) % 4
-        stage_img = np.rot90(stage_img, k=k)
+    # 重置GPU記憶體
+    cp.get_default_memory_pool().free_all_blocks()
     
-    # 計算各種指標
-    psnr = calculate_psnr(original_img, stage_img)
-    ssim = calculate_ssim(original_img, stage_img)
-    hist_corr = histogram_correlation(
-        np.histogram(original_img, bins=256, range=(0, 255))[0],
-        np.histogram(stage_img, bins=256, range=(0, 255))[0]
+    # 根據方法選擇相應的嵌入算法
+    if method == "rotation":
+        final_img, actual_payload, stages = pee_process_with_rotation_cuda(
+            origImg,
+            total_embeddings,
+            ratio_of_ones,
+            use_different_weights,
+            split_size,
+            el_mode,
+            prediction_method=prediction_method,
+            target_payload_size=target_payload_size
+        )
+    elif method == "split":
+        final_img, actual_payload, stages = pee_process_with_split_cuda(
+            origImg,
+            total_embeddings,
+            ratio_of_ones,
+            use_different_weights,
+            split_size,
+            el_mode,
+            block_base,
+            prediction_method=prediction_method,
+            target_payload_size=target_payload_size
+        )
+    elif method == "quadtree":
+        if quad_tree_params is None:
+            quad_tree_params = {
+                'min_block_size': 16,
+                'variance_threshold': 300
+            }
+        
+        final_img, actual_payload, stages = pee_process_with_quadtree_cuda(
+            origImg,
+            total_embeddings,
+            ratio_of_ones,
+            use_different_weights,
+            quad_tree_params['min_block_size'],
+            quad_tree_params['variance_threshold'],
+            el_mode,
+            rotation_mode='random',
+            prediction_method=prediction_method,
+            target_payload_size=target_payload_size
+        )
+    else:
+        raise ValueError(f"Unknown method: {method}")
+    
+    return final_img, actual_payload, stages
+
+def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_of_ones, 
+                            total_embeddings=5, el_mode=0, segments=15, use_different_weights=False,
+                            split_size=2, block_base=False, quad_tree_params=None):
+    """
+    運行精確的數據點測量，為均勻分布的payload目標單獨執行嵌入算法
+    
+    Parameters:
+    -----------
+    origImg : numpy.ndarray
+        原始圖像
+    imgName : str
+        圖像名稱 (用於保存結果)
+    method : str
+        使用的方法
+    prediction_method : PredictionMethod
+        預測方法
+    ratio_of_ones : float
+        嵌入數據中1的比例
+    total_embeddings : int
+        總嵌入次數
+    el_mode : int
+        EL模式
+    segments : int
+        要測量的數據點數量
+    use_different_weights : bool
+        是否使用不同權重
+    split_size : int
+        分割大小
+    block_base : bool
+        是否使用block base方式
+    quad_tree_params : dict
+        四叉樹參數
+        
+    Returns:
+    --------
+    pandas.DataFrame
+        包含所有測量結果的DataFrame
+    """
+    # 總運行開始時間
+    total_start_time = time.time()
+    
+    # 創建結果目錄
+    if isinstance(prediction_method, str):
+        method_name = prediction_method
+    else:
+        method_name = prediction_method.value
+        
+    result_dir = f"./pred_and_QR/outcome/plots/{imgName}/precise_{method_name}"
+    os.makedirs(result_dir, exist_ok=True)
+    
+    # 記錄運行設置
+    log_file = f"{result_dir}/precise_measurements_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    with open(log_file, 'w') as f:
+        f.write(f"Precise measurement run started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Image: {imgName}\n")
+        f.write(f"Method: {method}\n")
+        f.write(f"Prediction method: {method_name}\n")
+        f.write(f"Ratio of ones: {ratio_of_ones}\n")
+        f.write(f"Total embeddings: {total_embeddings}\n")
+        f.write(f"EL mode: {el_mode}\n")
+        f.write(f"Segments: {segments}\n")
+        f.write(f"Use different weights: {use_different_weights}\n")
+        f.write("\n" + "="*80 + "\n\n")
+    
+    # 步驟1: 找出最大嵌入容量
+    print(f"\n{'='*80}")
+    print(f"Step 1: Finding maximum payload capacity")
+    print(f"{'='*80}")
+    
+    with open(log_file, 'a') as f:
+        f.write(f"Step 1: Finding maximum payload capacity\n")
+    
+    start_time = time.time()
+    final_img_max, max_payload, stages_max = run_embedding_with_target(
+        origImg, method, prediction_method, ratio_of_ones, 
+        total_embeddings, el_mode, target_payload_size=-1,
+        split_size=split_size, block_base=block_base, 
+        quad_tree_params=quad_tree_params,
+        use_different_weights=use_different_weights
     )
     
-    return psnr, ssim, hist_corr
+    max_run_time = time.time() - start_time
+    total_pixels = origImg.size
+    
+    print(f"Maximum payload: {max_payload} bits")
+    print(f"Max BPP: {max_payload/total_pixels:.6f}")
+    print(f"Time taken: {max_run_time:.2f} seconds")
+    
+    with open(log_file, 'a') as f:
+        f.write(f"Maximum payload: {max_payload} bits\n")
+        f.write(f"Max BPP: {max_payload/total_pixels:.6f}\n")
+        f.write(f"Time taken: {max_run_time:.2f} seconds\n\n")
+    
+    # 步驟2: 計算均勻分布的payload點
+    print(f"\n{'='*80}")
+    print(f"Step 2: Calculating {segments} evenly distributed payload points")
+    print(f"{'='*80}")
+    
+    with open(log_file, 'a') as f:
+        f.write(f"Step 2: Calculating {segments} evenly distributed payload points\n")
+    
+    # 計算每個級距的目標嵌入量 (從10%到100%)
+    payload_points = [int(max_payload * (i+1) / segments) for i in range(segments)]
+    
+    print("Target payload points:")
+    for i, target in enumerate(payload_points):
+        print(f"  Point {i+1}: {target} bits ({target/max_payload*100:.1f}% of max)")
+    
+    with open(log_file, 'a') as f:
+        f.write("Target payload points:\n")
+        for i, target in enumerate(payload_points):
+            f.write(f"  Point {i+1}: {target} bits ({target/max_payload*100:.1f}% of max)\n")
+        f.write("\n")
+    
+    # 步驟3: 為每個目標點運行嵌入算法
+    print(f"\n{'='*80}")
+    print(f"Step 3: Running embedding algorithm for each target point")
+    print(f"{'='*80}")
+    
+    with open(log_file, 'a') as f:
+        f.write(f"Step 3: Running embedding algorithm for each target point\n")
+    
+    # 記錄結果
+    results = []
+    
+    # 添加最大嵌入容量的結果
+    psnr_max = calculate_psnr(origImg, final_img_max)
+    ssim_max = calculate_ssim(origImg, final_img_max)
+    hist_corr_max = histogram_correlation(
+        np.histogram(origImg, bins=256, range=(0, 255))[0],
+        np.histogram(final_img_max, bins=256, range=(0, 255))[0]
+    )
+    
+    # 將100%結果加入列表
+    results.append({
+        'Target_Percentage': 100.0,
+        'Target_Payload': max_payload,
+        'Actual_Payload': max_payload,
+        'BPP': max_payload / total_pixels,
+        'PSNR': psnr_max,
+        'SSIM': ssim_max,
+        'Hist_Corr': hist_corr_max,
+        'Processing_Time': max_run_time
+    })
+    
+    # 保存最大容量的嵌入圖像
+    save_image(final_img_max, f"{result_dir}/embedded_100pct.png")
+    
+    with open(log_file, 'a') as f:
+        f.write(f"100.0% target (Max capacity):\n")
+        f.write(f"  Target: {max_payload} bits\n")
+        f.write(f"  Actual: {max_payload} bits\n")
+        f.write(f"  BPP: {max_payload/total_pixels:.6f}\n")
+        f.write(f"  PSNR: {psnr_max:.2f}\n")
+        f.write(f"  SSIM: {ssim_max:.4f}\n")
+        f.write(f"  Hist_Corr: {hist_corr_max:.4f}\n")
+        f.write(f"  Time: {max_run_time:.2f} seconds\n\n")
+    
+    # 運行其餘級距的測量 (1到segments-1，跳過最後一個因為已經有了max結果)
+    for i, target in enumerate(payload_points[:-1]):
+        percentage = (i+1) / segments * 100
+        
+        print(f"\nRunning point {i+1}/{segments}: {target} bits ({percentage:.1f}% of max)")
+        
+        with open(log_file, 'a') as f:
+            f.write(f"{percentage:.1f}% target:\n")
+            f.write(f"  Target: {target} bits\n")
+        
+        start_time = time.time()
+        final_img, actual_payload, stages = run_embedding_with_target(
+            origImg, method, prediction_method, ratio_of_ones, 
+            total_embeddings, el_mode, target_payload_size=target,
+            split_size=split_size, block_base=block_base, 
+            quad_tree_params=quad_tree_params,
+            use_different_weights=use_different_weights
+        )
+        
+        run_time = time.time() - start_time
+        
+        # 計算質量指標
+        psnr = calculate_psnr(origImg, final_img)
+        ssim = calculate_ssim(origImg, final_img)
+        hist_corr = histogram_correlation(
+            np.histogram(origImg, bins=256, range=(0, 255))[0],
+            np.histogram(final_img, bins=256, range=(0, 255))[0]
+        )
+        
+        # 記錄結果
+        results.append({
+            'Target_Percentage': percentage,
+            'Target_Payload': target,
+            'Actual_Payload': actual_payload,
+            'BPP': actual_payload / total_pixels,
+            'PSNR': psnr,
+            'SSIM': ssim,
+            'Hist_Corr': hist_corr,
+            'Processing_Time': run_time
+        })
+        
+        # 保存嵌入圖像
+        save_image(final_img, f"{result_dir}/embedded_{int(percentage)}pct.png")
+        
+        print(f"  Actual: {actual_payload} bits")
+        print(f"  BPP: {actual_payload/total_pixels:.6f}")
+        print(f"  PSNR: {psnr:.2f}")
+        print(f"  SSIM: {ssim:.4f}")
+        print(f"  Time: {run_time:.2f} seconds")
+        
+        with open(log_file, 'a') as f:
+            f.write(f"  Actual: {actual_payload} bits\n")
+            f.write(f"  BPP: {actual_payload/total_pixels:.6f}\n")
+            f.write(f"  PSNR: {psnr:.2f}\n")
+            f.write(f"  SSIM: {ssim:.4f}\n")
+            f.write(f"  Hist_Corr: {hist_corr:.4f}\n")
+            f.write(f"  Time: {run_time:.2f} seconds\n\n")
+    
+    # 按照正確順序排序結果
+    results.sort(key=lambda x: x['Target_Percentage'])
+    
+    # 轉換為DataFrame
+    df = pd.DataFrame(results)
+    
+    # 步驟4: 整理結果
+    print(f"\n{'='*80}")
+    print(f"Step 4: Results summary")
+    print(f"{'='*80}")
+    
+    total_time = time.time() - total_start_time
+    
+    print(f"Total processing time: {total_time:.2f} seconds")
+    print(f"Average time per point: {total_time/segments:.2f} seconds")
+    print(f"Results saved to {result_dir}")
+    
+    with open(log_file, 'a') as f:
+        f.write(f"Results summary:\n")
+        f.write(f"Total processing time: {total_time:.2f} seconds\n")
+        f.write(f"Average time per point: {total_time/segments:.2f} seconds\n")
+        f.write(f"Results saved to {result_dir}\n\n")
+        
+        f.write("Data table:\n")
+        f.write(df.to_string(index=False))
+    
+    # 保存結果
+    csv_path = f"{result_dir}/precise_measurements.csv"
+    df.to_csv(csv_path, index=False)
+    print(f"Results saved to {csv_path}")
+    
+    # 繪製圖表
+    plot_precise_measurements(df, imgName, method, method_name, result_dir)
+    
+    return df
+
+def plot_precise_measurements(df, imgName, method, prediction_method, output_dir):
+    """
+    繪製精確測量結果的折線圖
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        包含測量結果的DataFrame
+    imgName : str
+        圖像名稱
+    method : str
+        使用的方法
+    prediction_method : str
+        預測方法
+    output_dir : str
+        輸出目錄
+    """
+    # 繪製BPP-PSNR折線圖
+    plt.figure(figsize=(12, 8))
+    
+    plt.plot(df['BPP'], df['PSNR'], 
+             color='blue',
+             linewidth=2.5,
+             marker='o',
+             markersize=8,
+             label=f'Method: {method}, Predictor: {prediction_method}')
+    
+    # 添加數據標籤
+    for i, row in enumerate(df.itertuples()):
+        if i % 3 == 0 or i == len(df) - 1:  # 只標記部分點，避免擁擠
+            plt.annotate(f'({row.BPP:.4f}, {row.PSNR:.2f})',
+                        (row.BPP, row.PSNR), 
+                        textcoords="offset points",
+                        xytext=(0,10), 
+                        ha='center',
+                        bbox=dict(boxstyle='round,pad=0.5', 
+                                 fc='yellow', 
+                                 alpha=0.3),
+                        fontsize=8)
+    
+    plt.xlabel('Bits Per Pixel (BPP)', fontsize=14)
+    plt.ylabel('PSNR (dB)', fontsize=14)
+    plt.title(f'Precise BPP-PSNR Measurements for {imgName}\n'
+              f'Method: {method}, Predictor: {prediction_method}', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/precise_bpp_psnr.png", dpi=300)
+    
+    # 繪製BPP-SSIM折線圖
+    plt.figure(figsize=(12, 8))
+    
+    plt.plot(df['BPP'], df['SSIM'], 
+             color='red',
+             linewidth=2.5,
+             marker='o',
+             markersize=8,
+             label=f'Method: {method}, Predictor: {prediction_method}')
+    
+    # 添加數據標籤
+    for i, row in enumerate(df.itertuples()):
+        if i % 3 == 0 or i == len(df) - 1:  # 只標記部分點，避免擁擠
+            plt.annotate(f'({row.BPP:.4f}, {row.SSIM:.4f})',
+                        (row.BPP, row.SSIM), 
+                        textcoords="offset points",
+                        xytext=(0,10), 
+                        ha='center',
+                        bbox=dict(boxstyle='round,pad=0.5', 
+                                 fc='yellow', 
+                                 alpha=0.3),
+                        fontsize=8)
+    
+    plt.xlabel('Bits Per Pixel (BPP)', fontsize=14)
+    plt.ylabel('SSIM', fontsize=14)
+    plt.title(f'Precise BPP-SSIM Measurements for {imgName}\n'
+              f'Method: {method}, Predictor: {prediction_method}', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/precise_bpp_ssim.png", dpi=300)
+    
+    # 繪製BPP-Histogram Correlation折線圖
+    plt.figure(figsize=(12, 8))
+    
+    plt.plot(df['BPP'], df['Hist_Corr'], 
+             color='green',
+             linewidth=2.5,
+             marker='o',
+             markersize=8,
+             label=f'Method: {method}, Predictor: {prediction_method}')
+    
+    # 添加數據標籤
+    for i, row in enumerate(df.itertuples()):
+        if i % 3 == 0 or i == len(df) - 1:  # 只標記部分點，避免擁擠
+            plt.annotate(f'({row.BPP:.4f}, {row.Hist_Corr:.4f})',
+                        (row.BPP, row.Hist_Corr), 
+                        textcoords="offset points",
+                        xytext=(0,10), 
+                        ha='center',
+                        bbox=dict(boxstyle='round,pad=0.5', 
+                                 fc='yellow', 
+                                 alpha=0.3),
+                        fontsize=8)
+    
+    plt.xlabel('Bits Per Pixel (BPP)', fontsize=14)
+    plt.ylabel('Histogram Correlation', fontsize=14)
+    plt.title(f'Precise BPP-Histogram Correlation Measurements for {imgName}\n'
+              f'Method: {method}, Predictor: {prediction_method}', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/precise_bpp_hist_corr.png", dpi=300)
+    
+    # 繪製Target vs Actual Payload折線圖
+    plt.figure(figsize=(12, 8))
+    
+    # 理想線 (Target = Actual)
+    ideal_line = np.linspace(0, df['Target_Payload'].max(), 100)
+    plt.plot(ideal_line, ideal_line, 'k--', alpha=0.5, label='Target = Actual')
+    
+    # 實際結果
+    plt.scatter(df['Target_Payload'], df['Actual_Payload'], 
+               color='purple',
+               s=100, 
+               alpha=0.7,
+               label='Actual Results')
+    
+    # 添加數據標籤
+    for i, row in enumerate(df.itertuples()):
+        if i % 3 == 0 or i == len(df) - 1:  # 只標記部分點，避免擁擠
+            plt.annotate(f'({row.Target_Percentage:.0f}%)',
+                        (row.Target_Payload, row.Actual_Payload), 
+                        textcoords="offset points",
+                        xytext=(0,10), 
+                        ha='center',
+                        bbox=dict(boxstyle='round,pad=0.5', 
+                                 fc='yellow', 
+                                 alpha=0.3),
+                        fontsize=8)
+    
+    plt.xlabel('Target Payload (bits)', fontsize=14)
+    plt.ylabel('Actual Payload (bits)', fontsize=14)
+    plt.title(f'Target vs Actual Payload for {imgName}\n'
+              f'Method: {method}, Predictor: {prediction_method}', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/target_vs_actual.png", dpi=300)
+    
+    # 繪製Performance vs Percentage折線圖 (多Y軸)
+    fig, ax1 = plt.subplots(figsize=(12, 8))
+    
+    color1 = 'blue'
+    ax1.set_xlabel('Capacity Percentage (%)', fontsize=14)
+    ax1.set_ylabel('PSNR (dB)', color=color1, fontsize=14)
+    ax1.plot(df['Target_Percentage'], df['PSNR'], 
+            color=color1, marker='o', linewidth=2.5, markersize=8)
+    ax1.tick_params(axis='y', labelcolor=color1)
+    
+    ax2 = ax1.twinx()
+    color2 = 'red'
+    ax2.set_ylabel('SSIM', color=color2, fontsize=14)
+    ax2.plot(df['Target_Percentage'], df['SSIM'], 
+            color=color2, marker='s', linewidth=2.5, markersize=8)
+    ax2.tick_params(axis='y', labelcolor=color2)
+    
+    plt.title(f'Performance vs Capacity Percentage for {imgName}\n'
+              f'Method: {method}, Predictor: {prediction_method}', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, ['PSNR', 'SSIM'], loc='best', fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/performance_vs_percentage.png", dpi=300)
+    
+    # 繪製處理時間統計
+    plt.figure(figsize=(12, 8))
+    
+    plt.plot(df['Target_Percentage'], df['Processing_Time'], 
+             color='purple',
+             linewidth=2.5,
+             marker='o',
+             markersize=8)
+    
+    plt.xlabel('Capacity Percentage (%)', fontsize=14)
+    plt.ylabel('Processing Time (seconds)', fontsize=14)
+    plt.title(f'Processing Time vs Capacity Percentage for {imgName}\n'
+              f'Method: {method}, Predictor: {prediction_method}', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/processing_time.png", dpi=300)
+
+def run_multi_predictor_precise_measurements(imgName, filetype="png", method="quadtree", 
+                                           predictor_ratios=None, total_embeddings=5, 
+                                           el_mode=0, segments=15, use_different_weights=False,
+                                           split_size=2, block_base=False, quad_tree_params=None):
+    """
+    為多個預測器運行精確測量並生成比較結果
+    
+    Parameters:
+    -----------
+    imgName : str
+        圖像名稱
+    filetype : str
+        圖像檔案類型
+    method : str
+        使用的方法
+    predictor_ratios : dict
+        各預測器的ratio_of_ones設置
+    total_embeddings : int
+        總嵌入次數
+    el_mode : int
+        EL模式
+    segments : int
+        要測量的數據點數量
+    use_different_weights : bool
+        是否使用不同權重
+    split_size : int
+        分割大小
+    block_base : bool
+        是否使用block base方式
+    quad_tree_params : dict
+        四叉樹參數
+        
+    Returns:
+    --------
+    dict
+        包含各預測器測量結果的字典
+    """
+    import cv2
+    
+    # 設置默認的預測器ratio字典
+    if predictor_ratios is None:
+        predictor_ratios = {
+            "PROPOSED": 0.5,
+            "MED": 1.0,
+            "GAP": 1.0,
+            "RHOMBUS": 1.0
+        }
+    
+    # 讀取原始圖像
+    origImg = cv2.imread(f"./pred_and_QR/image/{imgName}.{filetype}", cv2.IMREAD_GRAYSCALE)
+    if origImg is None:
+        raise ValueError(f"Failed to read image: ./pred_and_QR/image/{imgName}.{filetype}")
+    origImg = np.array(origImg).astype(np.uint8)
+    
+    # 預測方法列表
+    prediction_methods = [
+        PredictionMethod.PROPOSED,
+        PredictionMethod.MED,
+        PredictionMethod.GAP,
+        PredictionMethod.RHOMBUS
+    ]
+    
+    # 創建比較結果目錄
+    comparison_dir = f"./pred_and_QR/outcome/plots/{imgName}/precise_comparison"
+    os.makedirs(comparison_dir, exist_ok=True)
+    
+    # 記錄總運行開始時間
+    total_start_time = time.time()
+    
+    # 創建記錄檔案
+    log_file = f"{comparison_dir}/multi_predictor_precise_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    with open(log_file, 'w') as f:
+        f.write(f"Multi-predictor precise measurement run started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Image: {imgName}.{filetype}\n")
+        f.write(f"Method: {method}\n")
+        f.write(f"Total embeddings: {total_embeddings}\n")
+        f.write(f"EL mode: {el_mode}\n")
+        f.write(f"Segments: {segments}\n")
+        f.write("Predictor ratio settings:\n")
+        for pred, ratio in predictor_ratios.items():
+            f.write(f"  {pred}: {ratio}\n")
+            
+        if method == "quadtree":
+            f.write(f"Quadtree params: min_block_size={quad_tree_params['min_block_size']}, variance_threshold={quad_tree_params['variance_threshold']}\n")
+        else:
+            f.write(f"Split size: {split_size}x{split_size}, block_base={block_base}\n")
+        f.write("\n" + "="*80 + "\n\n")
+    
+    # 儲存所有預測方法的結果
+    all_results = {}
+    
+    # 依次運行每種預測方法
+    for prediction_method in prediction_methods:
+        method_name = prediction_method.value.upper()
+        
+        print(f"\n{'='*80}")
+        print(f"Running precise measurements for {method_name.lower()} predictor")
+        print(f"{'='*80}")
+        
+        # 獲取當前預測器的ratio_of_ones
+        current_ratio_of_ones = predictor_ratios.get(method_name, 0.5)
+        print(f"Using ratio_of_ones = {current_ratio_of_ones}")
+        
+        with open(log_file, 'a') as f:
+            f.write(f"Starting precise measurements for {method_name.lower()} predictor\n")
+            f.write(f"Using ratio_of_ones = {current_ratio_of_ones}\n\n")
+        
+        try:
+            # 執行精確測量
+            predictor_start_time = time.time()
+            results_df = run_precise_measurements(
+                origImg, imgName, method, prediction_method, 
+                current_ratio_of_ones, total_embeddings, 
+                el_mode, segments, use_different_weights,
+                split_size, block_base, quad_tree_params
+            )
+            
+            predictor_time = time.time() - predictor_start_time
+            
+            # 保存結果
+            all_results[method_name.lower()] = results_df
+            
+            with open(log_file, 'a') as f:
+                f.write(f"Completed measurements for {method_name.lower()} predictor\n")
+                f.write(f"Time taken: {predictor_time:.2f} seconds\n\n")
+                
+            # 保存CSV到比較目錄
+            results_df.to_csv(f"{comparison_dir}/{method_name.lower()}_precise.csv", index=False)
+            
+        except Exception as e:
+            print(f"Error processing {method_name.lower()}: {str(e)}")
+            with open(log_file, 'a') as f:
+                f.write(f"Error processing {method_name.lower()}: {str(e)}\n")
+                import traceback
+                f.write(traceback.format_exc())
+                f.write("\n\n")
+    
+    # 生成比較圖表
+    try:
+        if all_results:
+            plot_predictor_comparison(all_results, imgName, method, comparison_dir)
+            
+            # 記錄運行時間
+            total_time = time.time() - total_start_time
+            
+            with open(log_file, 'a') as f:
+                f.write(f"\nComparison completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                f.write(f"Total processing time: {total_time:.2f} seconds\n\n")
+                
+            print(f"\nComparison completed and saved to {comparison_dir}")
+            print(f"Total processing time: {total_time:.2f} seconds")
+            
+            # 創建寬格式表格，便於論文使用
+            create_wide_format_tables(all_results, comparison_dir)
+            
+            return all_results
+            
+    except Exception as e:
+        print(f"Error generating comparison: {str(e)}")
+        with open(log_file, 'a') as f:
+            f.write(f"\nError generating comparison: {str(e)}\n")
+            import traceback
+            f.write(traceback.format_exc())
+    
+    return all_results
+
+def plot_predictor_comparison(all_results, imgName, method, output_dir):
+    """
+    繪製多預測器精確測量結果的比較圖表
+    
+    Parameters:
+    -----------
+    all_results : dict
+        包含各預測器測量結果的字典
+    imgName : str
+        圖像名稱
+    method : str
+        使用的方法
+    output_dir : str
+        輸出目錄
+    """
+    # 設置不同預測方法的顏色和標記
+    colors = {
+        'proposed': 'blue',
+        'med': 'red',
+        'gap': 'green',
+        'rhombus': 'purple'
+    }
+    
+    markers = {
+        'proposed': 'o',
+        'med': 's',
+        'gap': '^',
+        'rhombus': 'D'
+    }
+    
+    # 創建BPP-PSNR比較圖
+    plt.figure(figsize=(12, 8))
+    
+    for predictor, df in all_results.items():
+        plt.plot(df['BPP'], df['PSNR'], 
+                 color=colors.get(predictor, 'black'),
+                 linewidth=2.5,
+                 marker=markers.get(predictor, 'x'),
+                 markersize=8,
+                 label=f'Predictor: {predictor}')
+    
+    plt.xlabel('Bits Per Pixel (BPP)', fontsize=14)
+    plt.ylabel('PSNR (dB)', fontsize=14)
+    plt.title(f'Precise Measurement Comparison of Different Predictors\n'
+              f'Method: {method}, Image: {imgName}', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/comparison_bpp_psnr.png", dpi=300)
+    
+    # 創建BPP-SSIM比較圖
+    plt.figure(figsize=(12, 8))
+    
+    for predictor, df in all_results.items():
+        plt.plot(df['BPP'], df['SSIM'], 
+                 color=colors.get(predictor, 'black'),
+                 linewidth=2.5,
+                 marker=markers.get(predictor, 'x'),
+                 markersize=8,
+                 label=f'Predictor: {predictor}')
+    
+    plt.xlabel('Bits Per Pixel (BPP)', fontsize=14)
+    plt.ylabel('SSIM', fontsize=14)
+    plt.title(f'Precise Measurement Comparison of Different Predictors\n'
+              f'Method: {method}, Image: {imgName}', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/comparison_bpp_ssim.png", dpi=300)
+    
+    # 創建BPP-Histogram Correlation比較圖
+    plt.figure(figsize=(12, 8))
+    
+    for predictor, df in all_results.items():
+        plt.plot(df['BPP'], df['Hist_Corr'], 
+                 color=colors.get(predictor, 'black'),
+                 linewidth=2.5,
+                 marker=markers.get(predictor, 'x'),
+                 markersize=8,
+                 label=f'Predictor: {predictor}')
+    
+    plt.xlabel('Bits Per Pixel (BPP)', fontsize=14)
+    plt.ylabel('Histogram Correlation', fontsize=14)
+    plt.title(f'Precise Measurement Comparison of Different Predictors\n'
+              f'Method: {method}, Image: {imgName}', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/comparison_bpp_hist_corr.png", dpi=300)
+    
+    # 創建Capacity Percentage-PSNR比較圖
+    plt.figure(figsize=(12, 8))
+    
+    for predictor, df in all_results.items():
+        plt.plot(df['Target_Percentage'], df['PSNR'], 
+                 color=colors.get(predictor, 'black'),
+                 linewidth=2.5,
+                 marker=markers.get(predictor, 'x'),
+                 markersize=8,
+                 label=f'Predictor: {predictor}')
+    
+    plt.xlabel('Capacity Percentage (%)', fontsize=14)
+    plt.ylabel('PSNR (dB)', fontsize=14)
+    plt.title(f'PSNR vs Capacity Percentage Comparison\n'
+              f'Method: {method}, Image: {imgName}', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/comparison_percentage_psnr.png", dpi=300)
+    
+    # 創建Capacity Percentage-SSIM比較圖
+    plt.figure(figsize=(12, 8))
+    
+    for predictor, df in all_results.items():
+        plt.plot(df['Target_Percentage'], df['SSIM'], 
+                 color=colors.get(predictor, 'black'),
+                 linewidth=2.5,
+                 marker=markers.get(predictor, 'x'),
+                 markersize=8,
+                 label=f'Predictor: {predictor}')
+    
+    plt.xlabel('Capacity Percentage (%)', fontsize=14)
+    plt.ylabel('SSIM', fontsize=14)
+    plt.title(f'SSIM vs Capacity Percentage Comparison\n'
+              f'Method: {method}, Image: {imgName}', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/comparison_percentage_ssim.png", dpi=300)
+    
+    # 創建處理時間比較圖
+    plt.figure(figsize=(12, 8))
+    
+    for predictor, df in all_results.items():
+        plt.plot(df['Target_Percentage'], df['Processing_Time'], 
+                 color=colors.get(predictor, 'black'),
+                 linewidth=2.5,
+                 marker=markers.get(predictor, 'x'),
+                 markersize=8,
+                 label=f'Predictor: {predictor}')
+    
+    plt.xlabel('Capacity Percentage (%)', fontsize=14)
+    plt.ylabel('Processing Time (seconds)', fontsize=14)
+    plt.title(f'Processing Time Comparison\n'
+              f'Method: {method}, Image: {imgName}', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/comparison_processing_time.png", dpi=300)
+    
+    # 創建最大嵌入容量比較圖 (條形圖)
+    plt.figure(figsize=(12, 8))
+    
+    max_payloads = []
+    predictor_names = []
+    
+    for predictor, df in all_results.items():
+        max_row = df.loc[df['Target_Percentage'] == 100.0]
+        if not max_row.empty:
+            max_payloads.append(float(max_row['Actual_Payload']))
+            predictor_names.append(predictor)
+    
+    bars = plt.bar(predictor_names, max_payloads, color=[colors.get(p, 'gray') for p in predictor_names])
+    
+    # 在條形上添加數值標籤
+    for bar, payload in zip(bars, max_payloads):
+        plt.text(bar.get_x() + bar.get_width()/2., bar.get_height() + 0.1,
+                f'{int(payload)}',
+                ha='center', va='bottom', fontsize=12)
+    
+    plt.xlabel('Predictor', fontsize=14)
+    plt.ylabel('Maximum Payload (bits)', fontsize=14)
+    plt.title(f'Maximum Payload Comparison\n'
+              f'Method: {method}, Image: {imgName}', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.3, axis='y')
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/comparison_max_payload.png", dpi=300)
+
+def create_wide_format_tables(all_results, output_dir):
+    """
+    創建寬格式表格，便於論文使用
+    
+    Parameters:
+    -----------
+    all_results : dict
+        包含各預測器測量結果的字典
+    output_dir : str
+        輸出目錄
+    """
+    # 創建PSNR表格 (列：百分比，列：預測器)
+    psnr_table = {'Percentage': []}
+    ssim_table = {'Percentage': []}
+    hist_corr_table = {'Percentage': []}
+    
+    # 確定所有百分比值
+    percentages = []
+    for df in all_results.values():
+        percentages.extend(df['Target_Percentage'].tolist())
+    
+    # 去重並排序
+    percentages = sorted(list(set(percentages)))
+    psnr_table['Percentage'] = percentages
+    ssim_table['Percentage'] = percentages
+    hist_corr_table['Percentage'] = percentages
+    
+    # 填充各預測器的數據
+    for predictor, df in all_results.items():
+        psnr_values = []
+        ssim_values = []
+        hist_corr_values = []
+        
+        for percentage in percentages:
+            # 找到最接近的百分比行
+            closest_idx = (df['Target_Percentage'] - percentage).abs().idxmin()
+            row = df.loc[closest_idx]
+            
+            psnr_values.append(row['PSNR'])
+            ssim_values.append(row['SSIM'])
+            hist_corr_values.append(row['Hist_Corr'])
+        
+        psnr_table[predictor] = psnr_values
+        ssim_table[predictor] = ssim_values
+        hist_corr_table[predictor] = hist_corr_values
+    
+    # 創建DataFrame
+    psnr_df = pd.DataFrame(psnr_table)
+    ssim_df = pd.DataFrame(ssim_table)
+    hist_corr_df = pd.DataFrame(hist_corr_table)
+    
+    # 保存表格
+    psnr_df.to_csv(f"{output_dir}/wide_format_psnr.csv", index=False)
+    ssim_df.to_csv(f"{output_dir}/wide_format_ssim.csv", index=False)
+    hist_corr_df.to_csv(f"{output_dir}/wide_format_hist_corr.csv", index=False)
+    
+    # 創建LaTeX格式表格
+    with open(f"{output_dir}/latex_table_psnr.txt", 'w') as f:
+        f.write(psnr_df.to_latex(index=False, float_format="%.2f"))
+    
+    with open(f"{output_dir}/latex_table_ssim.txt", 'w') as f:
+        f.write(ssim_df.to_latex(index=False, float_format="%.4f"))
+    
+    with open(f"{output_dir}/latex_table_hist_corr.txt", 'w') as f:
+        f.write(hist_corr_df.to_latex(index=False, float_format="%.4f"))
+    
+    print(f"Wide format tables saved to {output_dir}")
+
+# =============================================================================
+# 第五部分：舊版測量和繪圖函數（保留以保持向後兼容性）
+# =============================================================================
 
 def generate_interval_statistics(original_img, stages, total_payload, segments=15):
     """
     根據總嵌入容量生成均勻分布的統計數據表格
+    (近似方法，使用已有的階段結果進行插值)
     
     Parameters:
     -----------
@@ -374,7 +1251,7 @@ def generate_interval_statistics(original_img, stages, total_payload, segments=1
     # 確保至少有2個段
     segments = max(2, min(segments, total_payload))
     
-    # 計算每個數據點的嵌入量
+    # 計算每個級距的目標嵌入量
     payload_interval = total_payload / segments
     payload_points = [int(i * payload_interval) for i in range(1, segments + 1)]
     
@@ -477,7 +1354,7 @@ def save_interval_statistics(df, imgName, method, prediction_method):
 
 def plot_interval_statistics(df, imgName, method, prediction_method):
     """
-    繪製統計數據曲線圖
+    繪製統計數據折線圖
     
     Parameters:
     -----------
@@ -495,59 +1372,24 @@ def plot_interval_statistics(df, imgName, method, prediction_method):
     tuple
         (fig_psnr, fig_ssim) PSNR和SSIM圖表
     """
-    import matplotlib.pyplot as plt
-    from scipy.interpolate import make_interp_spline
-    import numpy as np
-    
     # 將數據排序
     df_sorted = df.sort_values('BPP')
     
-    # 繪製BPP-PSNR曲線
+    # 繪製BPP-PSNR折線圖
     fig_psnr = plt.figure(figsize=(10, 6))
     
-    x = df_sorted['BPP'].values
-    y = df_sorted['PSNR'].values
-    
-    # 如果數據點足夠多，則使用平滑曲線
-    if len(x) > 3:
-        # 創建平滑曲線 - 增加插值點數量
-        x_smooth = np.linspace(min(x), max(x), 300)
-        try:
-            # 使用三次樣條插值
-            spl = make_interp_spline(x, y, k=3)
-            y_smooth = spl(x_smooth)
-            
-            # 繪製平滑曲線
-            plt.plot(x_smooth, y_smooth, 
-                     color='blue',
-                     linewidth=2.5,
-                     label=f'Method: {method}, Predictor: {prediction_method}')
-        except:
-            # 如果插值失敗，則退回到簡單的平滑方法
-            print(f"Warning: Spline interpolation failed. Using basic smoothing.")
-            plt.plot(x, y, 
-                     color='blue',
-                     linewidth=2.5,
-                     label=f'Method: {method}, Predictor: {prediction_method}')
-    else:
-        # 數據點太少，直接連線
-        plt.plot(x, y, 
-                 color='blue',
-                 linewidth=2.5,
-                 label=f'Method: {method}, Predictor: {prediction_method}')
-    
-    # 在原始數據點添加標記
-    plt.scatter(x, y, 
-               color='blue',
-               marker='o',
-               s=80, 
-               alpha=0.7)
+    plt.plot(df_sorted['BPP'], df_sorted['PSNR'], 
+             color='blue',
+             linewidth=2.5,
+             marker='o',
+             markersize=8,
+             label=f'Method: {method}, Predictor: {prediction_method}')
     
     # 添加數據標籤
-    for i, (bpp, psnr) in enumerate(zip(x, y)):
-        if i % 3 == 0 or i == len(x) - 1:  # 只標記部分點，避免擁擠
-            plt.annotate(f'({bpp:.4f}, {psnr:.2f})',
-                        (bpp, psnr), 
+    for i, row in enumerate(df_sorted.itertuples()):
+        if i % 3 == 0 or i == len(df_sorted) - 1:  # 只標記部分點，避免擁擠
+            plt.annotate(f'({row.BPP:.4f}, {row.PSNR:.2f})',
+                        (row.BPP, row.PSNR), 
                         textcoords="offset points",
                         xytext=(0,10), 
                         ha='center',
@@ -566,52 +1408,21 @@ def plot_interval_statistics(df, imgName, method, prediction_method):
     plt.savefig(f"./pred_and_QR/outcome/plots/{imgName}/bpp_psnr_{method}_{prediction_method}.png", 
                dpi=300, bbox_inches='tight')
     
-    # 繪製BPP-SSIM曲線
+    # 繪製BPP-SSIM折線圖
     fig_ssim = plt.figure(figsize=(10, 6))
     
-    x = df_sorted['BPP'].values
-    y = df_sorted['SSIM'].values
-    
-    # 如果數據點足夠多，則使用平滑曲線
-    if len(x) > 3:
-        # 創建平滑曲線 - 增加插值點數量
-        x_smooth = np.linspace(min(x), max(x), 300)
-        try:
-            # 使用三次樣條插值
-            spl = make_interp_spline(x, y, k=3)
-            y_smooth = spl(x_smooth)
-            
-            # 繪製平滑曲線
-            plt.plot(x_smooth, y_smooth, 
-                     color='red',
-                     linewidth=2.5,
-                     label=f'Method: {method}, Predictor: {prediction_method}')
-        except:
-            # 如果插值失敗，則退回到簡單的平滑方法
-            print(f"Warning: Spline interpolation failed. Using basic smoothing.")
-            plt.plot(x, y, 
-                     color='red',
-                     linewidth=2.5,
-                     label=f'Method: {method}, Predictor: {prediction_method}')
-    else:
-        # 數據點太少，直接連線
-        plt.plot(x, y, 
-                 color='red',
-                 linewidth=2.5,
-                 label=f'Method: {method}, Predictor: {prediction_method}')
-    
-    # 在原始數據點添加標記
-    plt.scatter(x, y, 
-               color='red',
-               marker='o',
-               s=80, 
-               alpha=0.7)
+    plt.plot(df_sorted['BPP'], df_sorted['SSIM'], 
+             color='red',
+             linewidth=2.5,
+             marker='o',
+             markersize=8,
+             label=f'Method: {method}, Predictor: {prediction_method}')
     
     # 添加數據標籤
-    for i, (bpp, ssim) in enumerate(zip(x, y)):
-        if i % 3 == 0 or i == len(x) - 1:  # 只標記部分點，避免擁擠
-            plt.annotate(f'({bpp:.4f}, {ssim:.4f})',
-                        (bpp, ssim), 
+    for i, row in enumerate(df_sorted.itertuples()):
+        if i % 3 == 0 or i == len(df_sorted) - 1:  # 只標記部分點，避免擁擠
+            plt.annotate(f'({row.BPP:.4f}, {row.SSIM:.4f})',
+                        (row.BPP, row.SSIM), 
                         textcoords="offset points",
                         xytext=(0,10), 
                         ha='center',
@@ -630,47 +1441,16 @@ def plot_interval_statistics(df, imgName, method, prediction_method):
     plt.savefig(f"./pred_and_QR/outcome/plots/{imgName}/bpp_ssim_{method}_{prediction_method}.png", 
                dpi=300, bbox_inches='tight')
     
-    # 如果有直方圖相關性數據，也繪製相應的曲線圖
+    # 如果有直方圖相關性數據，也繪製相應的折線圖
     if 'Hist_Corr' in df.columns:
         fig_hist = plt.figure(figsize=(10, 6))
         
-        x = df_sorted['BPP'].values
-        y = df_sorted['Hist_Corr'].values
-        
-        # 如果數據點足夠多，則使用平滑曲線
-        if len(x) > 3:
-            # 創建平滑曲線 - 增加插值點數量
-            x_smooth = np.linspace(min(x), max(x), 300)
-            try:
-                # 使用三次樣條插值
-                spl = make_interp_spline(x, y, k=3)
-                y_smooth = spl(x_smooth)
-                
-                # 繪製平滑曲線
-                plt.plot(x_smooth, y_smooth, 
-                         color='green',
-                         linewidth=2.5,
-                         label=f'Method: {method}, Predictor: {prediction_method}')
-            except:
-                # 如果插值失敗，則退回到簡單的平滑方法
-                print(f"Warning: Spline interpolation failed. Using basic smoothing.")
-                plt.plot(x, y, 
-                         color='green',
-                         linewidth=2.5,
-                         label=f'Method: {method}, Predictor: {prediction_method}')
-        else:
-            # 數據點太少，直接連線
-            plt.plot(x, y, 
-                     color='green',
-                     linewidth=2.5,
-                     label=f'Method: {method}, Predictor: {prediction_method}')
-        
-        # 在原始數據點添加標記
-        plt.scatter(x, y, 
-                   color='green',
-                   marker='o',
-                   s=80, 
-                   alpha=0.7)
+        plt.plot(df_sorted['BPP'], df_sorted['Hist_Corr'], 
+                 color='green',
+                 linewidth=2.5,
+                 marker='o',
+                 markersize=8,
+                 label=f'Method: {method}, Predictor: {prediction_method}')
         
         plt.xlabel('Bits Per Pixel (BPP)', fontsize=12)
         plt.ylabel('Histogram Correlation', fontsize=12)
@@ -686,12 +1466,14 @@ def plot_interval_statistics(df, imgName, method, prediction_method):
     
     return fig_psnr, fig_ssim
 
-def run_multiple_predictors(imgName, filetype="png", method="quadtree", total_embeddings=5, 
-                           predictor_ratios=None, el_mode=0, use_different_weights=False,
+def run_multiple_predictors(imgName, filetype="png", method="quadtree", 
+                           predictor_ratios=None, total_embeddings=5, 
+                           el_mode=0, use_different_weights=False,
                            split_size=2, block_base=False, 
                            quad_tree_params=None, stats_segments=15):
     """
     自動運行多種預測方法並生成比較結果
+    (使用近似方法)
     
     Parameters:
     -----------
@@ -700,37 +1482,34 @@ def run_multiple_predictors(imgName, filetype="png", method="quadtree", total_em
     filetype : str
         圖像檔案類型
     method : str
-        使用的方法（"rotation", "split", "quadtree"）
+        使用的方法
+    predictor_ratios : dict
+        各預測器的ratio_of_ones設置
     total_embeddings : int
         總嵌入次數
-    predictor_ratios : dict
-        各預測器的ratio_of_ones設置，鍵為預測器名稱，值為ratio值
     el_mode : int
-        EL模式 (0:無限制, 1:漸增, 2:漸減)
+        EL模式
     use_different_weights : bool
         是否對每個子圖像使用不同的權重
     split_size : int
         分割大小
     block_base : bool
-        是否使用 block-base 分割
+        是否使用block base方式
     quad_tree_params : dict
         四叉樹參數
     stats_segments : int
         統計分段數量
+        
+    Returns:
+    --------
+    tuple
+        (results_df, all_stats) 包含比較結果的DataFrame和統計數據
     """
     from embedding import (
         pee_process_with_rotation_cuda,
         pee_process_with_split_cuda
     )
     from quadtree import pee_process_with_quadtree_cuda
-    import time
-    from datetime import datetime
-    import pandas as pd
-    import os
-    import cupy as cp
-    import numpy as np
-    from image_processing import save_image, generate_histogram, PredictionMethod
-    from common import calculate_psnr, calculate_ssim, histogram_correlation
     import cv2
     
     # 設置默認的預測器ratio字典
@@ -789,6 +1568,7 @@ def run_multiple_predictors(imgName, filetype="png", method="quadtree", total_em
     # 依次運行每種預測方法
     for prediction_method in prediction_methods:
         method_name = prediction_method.value.upper()
+        
         print(f"\n{'='*80}")
         print(f"Running with {method_name.lower()} predictor...")
         print(f"{'='*80}\n")
@@ -800,15 +1580,15 @@ def run_multiple_predictors(imgName, filetype="png", method="quadtree", total_em
         # 重置 GPU 記憶體
         cp.get_default_memory_pool().free_all_blocks()
         
+        # 獲取當前預測器的ratio_of_ones
+        current_ratio_of_ones = predictor_ratios.get(method_name, 0.5)
+        print(f"Using ratio_of_ones = {current_ratio_of_ones}")
+        
         # 針對 MED、GAP 和 RHOMBUS，強制設置 use_different_weights = False
         current_use_weights = use_different_weights
         if prediction_method in [PredictionMethod.MED, PredictionMethod.GAP, PredictionMethod.RHOMBUS]:
             current_use_weights = False
             print(f"Note: Weight optimization disabled for {method_name.lower()} prediction method")
-        
-        # 獲取當前預測器的ratio_of_ones
-        current_ratio_of_ones = predictor_ratios.get(method_name, 0.5)
-        print(f"Using ratio_of_ones = {current_ratio_of_ones} for {method_name.lower()} predictor")
         
         try:
             # 執行選定的方法
@@ -816,7 +1596,7 @@ def run_multiple_predictors(imgName, filetype="png", method="quadtree", total_em
                 final_pee_img, total_payload, pee_stages = pee_process_with_rotation_cuda(
                     origImg,
                     total_embeddings,
-                    current_ratio_of_ones,  # 使用當前預測器的ratio_of_ones
+                    current_ratio_of_ones,
                     current_use_weights,
                     split_size,
                     el_mode,
@@ -827,7 +1607,7 @@ def run_multiple_predictors(imgName, filetype="png", method="quadtree", total_em
                 final_pee_img, total_payload, pee_stages = pee_process_with_split_cuda(
                     origImg,
                     total_embeddings,
-                    current_ratio_of_ones,  # 使用當前預測器的ratio_of_ones
+                    current_ratio_of_ones,
                     current_use_weights,
                     split_size,
                     el_mode,
@@ -839,7 +1619,7 @@ def run_multiple_predictors(imgName, filetype="png", method="quadtree", total_em
                 final_pee_img, total_payload, pee_stages = pee_process_with_quadtree_cuda(
                     origImg,
                     total_embeddings,
-                    current_ratio_of_ones,  # 使用當前預測器的ratio_of_ones
+                    current_ratio_of_ones,
                     current_use_weights,
                     quad_tree_params['min_block_size'],
                     quad_tree_params['variance_threshold'],
@@ -850,18 +1630,16 @@ def run_multiple_predictors(imgName, filetype="png", method="quadtree", total_em
                 )
             
             # 生成統計數據
-            print("\nGenerating statistics...")
+            print("\nGenerating interval statistics...")
             stats_df, stats_table = generate_interval_statistics(
                 origImg, pee_stages, total_payload, segments=stats_segments
             )
             
             # 保存統計數據
             if stats_df is not None:
-                # 添加預測器和ratio_of_ones資訊到DataFrame
+                # 記錄統計數據
                 stats_df['Predictor'] = method_name.lower()
                 stats_df['Ratio_of_Ones'] = current_ratio_of_ones
-                
-                # 記錄統計數據
                 all_stats[method_name.lower()] = stats_df
                 
                 # 保存為CSV
@@ -888,7 +1666,7 @@ def run_multiple_predictors(imgName, filetype="png", method="quadtree", total_em
                 
                 # 記錄到日誌
                 with open(log_file, 'a') as f:
-                    f.write(f"Run completed for {method_name.lower()} predictor (ratio_of_ones={current_ratio_of_ones})\n")
+                    f.write(f"Run completed for {method_name.lower()} predictor\n")
                     f.write(f"Total payload: {total_payload}\n")
                     f.write(f"PSNR: {final_psnr:.2f}\n")
                     f.write(f"SSIM: {final_ssim:.4f}\n")
@@ -924,7 +1702,7 @@ def run_multiple_predictors(imgName, filetype="png", method="quadtree", total_em
             results_df.to_csv(results_csv, index=False)
             
             # 創建統一的折線圖
-            create_unified_plots(all_stats, imgName, method, comparison_dir)
+            plot_predictor_comparison(all_stats, imgName, method, comparison_dir)
             
             # 記錄到日誌
             with open(log_file, 'a') as f:
@@ -939,7 +1717,7 @@ def run_multiple_predictors(imgName, filetype="png", method="quadtree", total_em
             print(results_df)
             
             return results_df, all_stats
-        
+            
         except Exception as e:
             print(f"Error generating comparison: {str(e)}")
             with open(log_file, 'a') as f:
@@ -953,339 +1731,3 @@ def run_multiple_predictors(imgName, filetype="png", method="quadtree", total_em
             f.write("\nNo valid statistics available for comparison\n")
     
     return None, None
-
-# 修改utils.py中的create_unified_plots函數，從曲線圖改回線性折線圖
-
-def create_unified_plots(all_stats, imgName, method, output_dir):
-    """
-    創建統一的線性折線圖，顯示所有預測方法的比較
-    
-    Parameters:
-    -----------
-    all_stats : dict
-        字典，包含各預測方法的統計數據框
-    imgName : str
-        圖像名稱
-    method : str
-        使用的方法
-    output_dir : str
-        輸出目錄
-    """
-    import matplotlib.pyplot as plt
-    import numpy as np
-    
-    if not all_stats:
-        print("No data available for plotting")
-        return
-    
-    # 設置不同預測方法的顏色和標記
-    colors = {
-        'proposed': 'blue',
-        'med': 'red',
-        'gap': 'green',
-        'rhombus': 'purple'
-    }
-    
-    markers = {
-        'proposed': 'o',
-        'med': 's',
-        'gap': '^',
-        'rhombus': 'D'
-    }
-    
-    # 創建統一的BPP-PSNR折線圖
-    plt.figure(figsize=(12, 8))
-    
-    for predictor, df in all_stats.items():
-        # 將數據排序為升序
-        df_sorted = df.sort_values('BPP')
-        x = df_sorted['BPP'].values
-        y = df_sorted['PSNR'].values
-        
-        # 使用直接連接的折線圖（而非曲線圖）
-        plt.plot(x, y, 
-                 color=colors.get(predictor, 'black'),
-                 linewidth=2.5,
-                 marker=markers.get(predictor, 'x'),
-                 markersize=8,
-                 label=f'Predictor: {predictor}')
-    
-    plt.xlabel('Bits Per Pixel (BPP)', fontsize=14)
-    plt.ylabel('PSNR (dB)', fontsize=14)
-    plt.title(f'Comparison of Different Predictors\nMethod: {method}, Image: {imgName}', fontsize=16)
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.legend(fontsize=12)
-    
-    plt.tight_layout()
-    plt.savefig(f"{output_dir}/unified_bpp_psnr.png", dpi=300)
-    
-    # 創建統一的BPP-SSIM折線圖
-    plt.figure(figsize=(12, 8))
-    
-    for predictor, df in all_stats.items():
-        # 將數據排序為升序
-        df_sorted = df.sort_values('BPP')
-        x = df_sorted['BPP'].values
-        y = df_sorted['SSIM'].values
-        
-        # 使用直接連接的折線圖（而非曲線圖）
-        plt.plot(x, y, 
-                 color=colors.get(predictor, 'black'),
-                 linewidth=2.5,
-                 marker=markers.get(predictor, 'x'),
-                 markersize=8,
-                 label=f'Predictor: {predictor}')
-    
-    plt.xlabel('Bits Per Pixel (BPP)', fontsize=14)
-    plt.ylabel('SSIM', fontsize=14)
-    plt.title(f'Comparison of Different Predictors (SSIM)\nMethod: {method}, Image: {imgName}', fontsize=16)
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.legend(fontsize=12)
-    
-    plt.tight_layout()
-    plt.savefig(f"{output_dir}/unified_bpp_ssim.png", dpi=300)
-    
-    # 創建統一的直方圖相關性折線圖
-    if 'Hist_Corr' in next(iter(all_stats.values())).columns:
-        plt.figure(figsize=(12, 8))
-        
-        for predictor, df in all_stats.items():
-            # 將數據排序為升序
-            df_sorted = df.sort_values('BPP')
-            x = df_sorted['BPP'].values
-            y = df_sorted['Hist_Corr'].values
-            
-            # 使用直接連接的折線圖（而非曲線圖）
-            plt.plot(x, y, 
-                     color=colors.get(predictor, 'black'),
-                     linewidth=2.5,
-                     marker=markers.get(predictor, 'x'),
-                     markersize=8,
-                     label=f'Predictor: {predictor}')
-        
-        plt.xlabel('Bits Per Pixel (BPP)', fontsize=14)
-        plt.ylabel('Histogram Correlation', fontsize=14)
-        plt.title(f'Comparison of Different Predictors (Histogram Correlation)\nMethod: {method}, Image: {imgName}', fontsize=16)
-        plt.grid(True, linestyle='--', alpha=0.7)
-        plt.legend(fontsize=12)
-        
-        plt.tight_layout()
-        plt.savefig(f"{output_dir}/unified_bpp_histcorr.png", dpi=300)
-    
-    # 創建合併的CSV統計數據
-    create_combined_csv(all_stats, output_dir)
-
-# 修改plot_interval_statistics函數，從曲線圖改回線性折線圖
-def plot_interval_statistics(df, imgName, method, prediction_method):
-    """
-    繪製統計數據線性折線圖
-    
-    Parameters:
-    -----------
-    df : pandas.DataFrame
-        包含統計數據的DataFrame
-    imgName : str
-        圖像名稱
-    method : str
-        使用的方法
-    prediction_method : str
-        使用的預測方法
-        
-    Returns:
-    --------
-    tuple
-        (fig_psnr, fig_ssim) PSNR和SSIM圖表
-    """
-    import matplotlib.pyplot as plt
-    import numpy as np
-    
-    # 將數據排序
-    df_sorted = df.sort_values('BPP')
-    
-    # 繪製BPP-PSNR折線圖
-    fig_psnr = plt.figure(figsize=(10, 6))
-    
-    x = df_sorted['BPP'].values
-    y = df_sorted['PSNR'].values
-    
-    # 使用直接連接的折線圖（而非曲線圖）
-    plt.plot(x, y, 
-             color='blue',
-             linewidth=2.5,
-             marker='o',
-             markersize=8,
-             label=f'Method: {method}, Predictor: {prediction_method}')
-    
-    # 添加數據標籤
-    for i, (bpp, psnr) in enumerate(zip(x, y)):
-        if i % 3 == 0 or i == len(x) - 1:  # 只標記部分點，避免擁擠
-            plt.annotate(f'({bpp:.4f}, {psnr:.2f})',
-                        (bpp, psnr), 
-                        textcoords="offset points",
-                        xytext=(0,10), 
-                        ha='center',
-                        bbox=dict(boxstyle='round,pad=0.5', 
-                                 fc='yellow', 
-                                 alpha=0.3),
-                        fontsize=8)
-    
-    plt.xlabel('Bits Per Pixel (BPP)', fontsize=12)
-    plt.ylabel('PSNR (dB)', fontsize=12)
-    plt.title(f'BPP-PSNR Curve for {imgName}\nMethod: {method}, Predictor: {prediction_method}', fontsize=14)
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.legend(fontsize=10)
-    
-    # 保存圖表
-    plt.savefig(f"./pred_and_QR/outcome/plots/{imgName}/bpp_psnr_{method}_{prediction_method}.png", 
-               dpi=300, bbox_inches='tight')
-    
-    # 繪製BPP-SSIM折線圖
-    fig_ssim = plt.figure(figsize=(10, 6))
-    
-    x = df_sorted['BPP'].values
-    y = df_sorted['SSIM'].values
-    
-    # 使用直接連接的折線圖（而非曲線圖）
-    plt.plot(x, y, 
-             color='red',
-             linewidth=2.5,
-             marker='o',
-             markersize=8,
-             label=f'Method: {method}, Predictor: {prediction_method}')
-    
-    # 添加數據標籤
-    for i, (bpp, ssim) in enumerate(zip(x, y)):
-        if i % 3 == 0 or i == len(x) - 1:  # 只標記部分點，避免擁擠
-            plt.annotate(f'({bpp:.4f}, {ssim:.4f})',
-                        (bpp, ssim), 
-                        textcoords="offset points",
-                        xytext=(0,10), 
-                        ha='center',
-                        bbox=dict(boxstyle='round,pad=0.5', 
-                                 fc='yellow', 
-                                 alpha=0.3),
-                        fontsize=8)
-    
-    plt.xlabel('Bits Per Pixel (BPP)', fontsize=12)
-    plt.ylabel('SSIM', fontsize=12)
-    plt.title(f'BPP-SSIM Curve for {imgName}\nMethod: {method}, Predictor: {prediction_method}', fontsize=14)
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.legend(fontsize=10)
-    
-    # 保存圖表
-    plt.savefig(f"./pred_and_QR/outcome/plots/{imgName}/bpp_ssim_{method}_{prediction_method}.png", 
-               dpi=300, bbox_inches='tight')
-    
-    # 如果有直方圖相關性數據，也繪製相應的折線圖
-    if 'Hist_Corr' in df.columns:
-        fig_hist = plt.figure(figsize=(10, 6))
-        
-        x = df_sorted['BPP'].values
-        y = df_sorted['Hist_Corr'].values
-        
-        # 使用直接連接的折線圖（而非曲線圖）
-        plt.plot(x, y, 
-                 color='green',
-                 linewidth=2.5,
-                 marker='o',
-                 markersize=8,
-                 label=f'Method: {method}, Predictor: {prediction_method}')
-        
-        plt.xlabel('Bits Per Pixel (BPP)', fontsize=12)
-        plt.ylabel('Histogram Correlation', fontsize=12)
-        plt.title(f'BPP-Histogram Correlation Curve for {imgName}\nMethod: {method}, Predictor: {prediction_method}', fontsize=14)
-        plt.grid(True, linestyle='--', alpha=0.7)
-        plt.legend(fontsize=10)
-        
-        # 保存圖表
-        plt.savefig(f"./pred_and_QR/outcome/plots/{imgName}/bpp_histcorr_{method}_{prediction_method}.png", 
-                   dpi=300, bbox_inches='tight')
-        
-        return fig_psnr, fig_ssim, fig_hist
-    
-    return fig_psnr, fig_ssim
-
-def create_combined_csv(all_stats, output_dir):
-    """
-    創建合併的CSV統計數據，方便論文使用
-    
-    Parameters:
-    -----------
-    all_stats : dict
-        字典，包含各預測方法的統計數據框
-    output_dir : str
-        輸出目錄
-    """
-    # 初始化合併數據的列表
-    combined_data = []
-    
-    # 添加所有預測方法的數據
-    for predictor, df in all_stats.items():
-        for _, row in df.iterrows():
-            data_point = {
-                'Predictor': predictor,
-                'Payload': row['Payload'],
-                'BPP': row['BPP'],
-                'PSNR': row['PSNR'],
-                'SSIM': row['SSIM']
-            }
-            if 'Hist_Corr' in row:
-                data_point['Hist_Corr'] = row['Hist_Corr']
-            
-            combined_data.append(data_point)
-    
-    # 創建並保存合併的DataFrame
-    combined_df = pd.DataFrame(combined_data)
-    combined_csv = f"{output_dir}/combined_statistics.csv"
-    combined_df.to_csv(combined_csv, index=False)
-    
-    print(f"Combined statistics saved to {combined_csv}")
-    
-    # 創建寬格式的DataFrame (對於論文中的表格可能更有用)
-    # 對於每個指標類型 (PSNR, SSIM等)，創建一個表格，其中各列是不同的BPP值，各行是不同的預測方法
-    
-    # 首先找出所有唯一的BPP值
-    all_bpp = set()
-    for df in all_stats.values():
-        all_bpp.update(df['BPP'].values)
-    all_bpp = sorted(list(all_bpp))
-    
-    # 標準化BPP值（選擇最接近的值）
-    # 這對於生成表格很有用，因為不同預測方法可能產生略微不同的BPP值
-    standard_bpp = []
-    
-    # 如果BPP值較多，選擇15個均勻分布的點
-    if len(all_bpp) > 15:
-        min_bpp = min(all_bpp)
-        max_bpp = max(all_bpp)
-        standard_bpp = np.linspace(min_bpp, max_bpp, 15).tolist()
-    else:
-        standard_bpp = all_bpp
-    
-    # 對於每個指標類型，創建一個寬格式的DataFrame
-    for metric in ['PSNR', 'SSIM', 'Hist_Corr']:
-        if metric not in next(iter(all_stats.values())).columns and metric != 'PSNR' and metric != 'SSIM':
-            continue
-        
-        # 初始化結果字典
-        wide_data = {'BPP': standard_bpp}
-        
-        # 對於每個預測方法，尋找與標準BPP最接近的值
-        for predictor, df in all_stats.items():
-            metric_values = []
-            
-            for bpp in standard_bpp:
-                # 找到最接近的BPP值
-                closest_idx = (df['BPP'] - bpp).abs().idxmin()
-                closest_row = df.loc[closest_idx]
-                
-                metric_values.append(closest_row[metric])
-            
-            wide_data[predictor] = metric_values
-        
-        # 創建並保存寬格式的DataFrame
-        wide_df = pd.DataFrame(wide_data)
-        wide_csv = f"{output_dir}/wide_format_{metric.lower()}.csv"
-        wide_df.to_csv(wide_csv, index=False)
-        
-        print(f"Wide format {metric} data saved to {wide_csv}")

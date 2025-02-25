@@ -4,6 +4,7 @@ import os
 import matplotlib.pyplot as plt
 import cupy as cp
 import numpy as np
+import cv2
 from image_processing import (
     save_image,
     save_histogram,
@@ -20,7 +21,9 @@ from utils import (
     generate_interval_statistics,
     save_interval_statistics,
     plot_interval_statistics,
-    run_multiple_predictors
+    run_multiple_predictors,
+    run_precise_measurements,
+    run_multi_predictor_precise_measurements
 )
 from common import *
 from quadtree import pee_process_with_quadtree_cuda
@@ -40,13 +43,13 @@ def main():
     1. 支持最大嵌入量，並將嵌入數據分成15段進行統計
     2. 新增菱形預測器(Rhombus Predictor)
     3. 支持多預測方法自動運行與比較
-    4. 圖表使用曲線圖代替折線圖，視覺效果更佳
+    4. 新增精確測量模式，使用15次獨立運行生成精確數據點
     5. 支持為每個預測器獨立設置ratio_of_ones值
     """
     # ==== 參數設置（直接在代碼中調整） ====
     
     # 基本參數設置
-    imgName = "barbara"            # 圖像名稱
+    imgName = "male"            # 圖像名稱
     filetype = "png"            # 圖像檔案類型
     total_embeddings = 5        # 總嵌入次數
     
@@ -61,8 +64,8 @@ def main():
     el_mode = 0                 # 0: 無限制, 1: 漸增, 2: 漸減
     use_different_weights = False 
     
-    # 設置為使用最大嵌入量
-    target_payload_size = -1    # -1 表示使用最大嵌入量
+    # 測量方式
+    use_precise_measurement = True  # True: 使用精確測量模式, False: 使用近似模式
     
     # 統計分段數量
     stats_segments = 15
@@ -98,19 +101,40 @@ def main():
     if prediction_method_str.upper() == "ALL":
         print("Running all prediction methods and generating comparison...")
         
-        run_multiple_predictors(
-            imgName=imgName,
-            filetype=filetype,
-            method=method,
-            total_embeddings=total_embeddings,
-            predictor_ratios=predictor_ratios,  # 傳入預測器比例字典
-            el_mode=el_mode,
-            use_different_weights=use_different_weights,
-            split_size=split_size,
-            block_base=block_base,
-            quad_tree_params=quad_tree_params,
-            stats_segments=stats_segments
-        )
+        if use_precise_measurement:
+            # 使用精確測量模式
+            print("Using precise measurement mode with 15 separate runs per predictor...")
+            
+            run_multi_predictor_precise_measurements(
+                imgName=imgName,
+                filetype=filetype,
+                method=method,
+                predictor_ratios=predictor_ratios,
+                total_embeddings=total_embeddings,
+                el_mode=el_mode,
+                segments=stats_segments,
+                use_different_weights=use_different_weights,
+                split_size=split_size,
+                block_base=block_base,
+                quad_tree_params=quad_tree_params
+            )
+        else:
+            # 使用近似模式
+            print("Using approximate measurement mode based on stages...")
+            
+            run_multiple_predictors(
+                imgName=imgName,
+                filetype=filetype,
+                method=method,
+                predictor_ratios=predictor_ratios,
+                total_embeddings=total_embeddings,
+                el_mode=el_mode,
+                use_different_weights=use_different_weights,
+                split_size=split_size,
+                block_base=block_base,
+                quad_tree_params=quad_tree_params,
+                stats_segments=stats_segments
+            )
         
         return
     
@@ -146,11 +170,21 @@ def main():
         save_histogram(origImg, 
                       f"./pred_and_QR/outcome/histogram/{imgName}/original_histogram.png", 
                       "Original Image Histogram")
+        
+        # 如果使用精確測量模式，執行精確測量後返回
+        if use_precise_measurement:
+            print(f"\nUsing precise measurement mode with {stats_segments} separate runs...")
+            run_precise_measurements(
+                origImg, imgName, method, prediction_method, ratio_of_ones, 
+                total_embeddings, el_mode, stats_segments, use_different_weights,
+                split_size, block_base, quad_tree_params
+            )
+            return
 
         print(f"Starting encoding process... ({'CUDA' if cp.cuda.is_available() else 'CPU'} mode)")
         print(f"Using method: {method}")
         print(f"Prediction method: {prediction_method.value}")
-        print(f"Target payload size: {target_payload_size if target_payload_size > 0 else 'Maximum capacity'}")
+        print(f"Using approximate measurement mode based on stages...")
         
         try:
             # 如果使用 MED、GAP 或 RHOMBUS 方法，強制設置 use_different_weights 為 False
@@ -168,7 +202,7 @@ def main():
                     split_size,
                     el_mode,
                     prediction_method=prediction_method,
-                    target_payload_size=target_payload_size
+                    target_payload_size=-1  # 使用最大嵌入量
                 )
             elif method == "split":
                 final_pee_img, total_payload, pee_stages = pee_process_with_split_cuda(
@@ -180,7 +214,7 @@ def main():
                     el_mode,
                     block_base,
                     prediction_method=prediction_method,
-                    target_payload_size=target_payload_size
+                    target_payload_size=-1  # 使用最大嵌入量
                 )
             elif method == "quadtree":
                 final_pee_img, total_payload, pee_stages = pee_process_with_quadtree_cuda(
@@ -193,7 +227,7 @@ def main():
                     el_mode,
                     rotation_mode='random',
                     prediction_method=prediction_method,
-                    target_payload_size=target_payload_size
+                    target_payload_size=-1  # 使用最大嵌入量
                 )
 
             # 建立並列印 PEE 資訊表格
@@ -368,7 +402,6 @@ def main():
                 'prediction_method': prediction_method.value,
                 'ratio_of_ones': ratio_of_ones,
                 'total_payload': total_payload,
-                'target_payload_size': target_payload_size,
                 'final_bpp': final_bpp,
                 'final_psnr': final_psnr,
                 'final_ssim': final_ssim,
