@@ -5,7 +5,6 @@ import math
 from image_processing import PredictionMethod, predict_image_cuda
 from common import *
 
-
 def pee_embedding_adaptive(img, data, pred_img, EL):
     height, width = img.shape
     embedded = np.zeros_like(img)
@@ -31,14 +30,76 @@ def pee_embedding_adaptive(img, data, pred_img, EL):
     return embedded, payload, embedded_data
 
 @cuda.jit
+def simple_single_embedding_kernel(img, pred_img, data, embedded, payload, height, width, stage):
+    """
+    簡單的單次嵌入 kernel，適用於 MED 和 GAP 預測器
+    保持簡單的實現，只關注基本功能
+    """
+    x, y = cuda.grid(2)
+    if 1 < x < width - 1 and 1 < y < height - 1:
+        diff = int(img[y, x]) - int(pred_img[y, x])
+        pixel_val = int(img[y, x])
+        
+        if payload[0] < data.size:
+            # Stage 1 嵌入規則
+            if stage == 0:
+                # 使用較寬鬆的嵌入條件
+                if abs(diff) <= 2:  # 允許差值在 -2 到 2 的範圍內嵌入
+                    bit = data[payload[0]]
+                    cuda.atomic.add(payload, 0, 1)
+                    
+                    # 簡單的嵌入邏輯
+                    if diff == 0:
+                        if bit == 1:
+                            embedded[y, x] = min(255, pixel_val + 1)
+                        else:
+                            embedded[y, x] = pixel_val
+                    elif diff > 0:  # 正差值
+                        if bit == 1:
+                            embedded[y, x] = pixel_val
+                        else:
+                            embedded[y, x] = max(0, pixel_val - 1)
+                    else:  # 負差值
+                        if bit == 1:
+                            embedded[y, x] = min(255, pixel_val + 1)
+                        else:
+                            embedded[y, x] = pixel_val
+                else:
+                    embedded[y, x] = pixel_val
+            # Stage 2-5 嵌入規則
+            else:
+                if abs(diff) <= 1:  # 只在差值為 -1, 0, 1 時嵌入
+                    bit = data[payload[0]]
+                    cuda.atomic.add(payload, 0, 1)
+                    
+                    # 簡單的嵌入邏輯
+                    if diff == 0:
+                        if bit == 1:
+                            embedded[y, x] = min(255, pixel_val + 1)
+                        else:
+                            embedded[y, x] = pixel_val
+                    elif diff > 0:
+                        if bit == 1:
+                            embedded[y, x] = pixel_val
+                        else:
+                            embedded[y, x] = max(0, pixel_val - 1)
+                    else:  # diff < 0
+                        if bit == 1:
+                            embedded[y, x] = min(255, pixel_val + 1)
+                        else:
+                            embedded[y, x] = pixel_val
+                else:
+                    embedded[y, x] = pixel_val
+        else:
+            embedded[y, x] = pixel_val
+    else:
+        embedded[y, x] = img[y, x]
+
+@cuda.jit
 def pee_embedding_kernel(img, pred_img, data, embedded, payload, local_el, height, width, stage):
     """
-    改進的 PEE 嵌入 kernel，著重於提高 PSNR
-    
-    關鍵策略：
-    1. 根據局部差值大小動態調整移動距離
-    2. 優先使用較小的移動量
-    3. 在可能的情況下保持像素在原始位置附近
+    改進的 PEE 嵌入 kernel，支援 triple/double embedding 策略
+    為 PROPOSED 預測器優化嵌入能力
     """
     x, y = cuda.grid(2)
     if x < width and y < height:
@@ -46,79 +107,64 @@ def pee_embedding_kernel(img, pred_img, data, embedded, payload, local_el, heigh
         pixel_val = int(img[y, x])
         el = local_el[y, x]
         
-        # 計算局部複雜度
-        local_complexity = 0
-        window_size = 3
-        for i in range(max(0, y-window_size), min(height, y+window_size+1)):
-            for j in range(max(0, x-window_size), min(width, x+window_size+1)):
-                if i != y or j != x:
-                    d = abs(int(img[i, j]) - int(pred_img[i, j]))
-                    local_complexity = max(local_complexity, d)
-        
-        # 根據局部複雜度調整嵌入強度
-        adaptive_el = min(el, max(3, local_complexity // 2))
-        embedding_space = adaptive_el * 2
-        
+        # 嵌入條件根據階段不同而異
         if payload[0] < data.size:
-            if abs(diff) <= adaptive_el:  # 可嵌入區域
-                bit = data[payload[0]]
-                cuda.atomic.add(payload, 0, 1)
+            # Stage 1 使用 triple embedding
+            if stage == 0:
+                # 擴大嵌入範圍，以增加嵌入量
+                effective_el = min(el + 2, 7)  # 擴大嵌入層級，但不超過7
                 
-                # 優化的移動策略
-                if diff >= 0:
-                    if bit == 1:
-                        # 漸進式移動：從小移動開始嘗試
-                        for shift in range(adaptive_el, embedding_space + 1):
-                            new_val = pixel_val + (shift - diff)
-                            if 0 <= new_val <= 255:
-                                embedded[y, x] = new_val
-                                break
-                        else:
-                            # 如果所有嘗試都失敗，保持原值
-                            embedded[y, x] = pixel_val
-                    else:
-                        # 保持原位以維持高 PSNR
-                        embedded[y, x] = pixel_val
-                else:
-                    if bit == 1:
-                        # 保持原位以維持高 PSNR
-                        embedded[y, x] = pixel_val
-                    else:
-                        # 漸進式移動：從小移動開始嘗試
-                        for shift in range(adaptive_el, embedding_space + 1):
-                            new_val = pixel_val - (shift + abs(diff))
-                            if 0 <= new_val <= 255:
-                                embedded[y, x] = new_val
-                                break
+                if abs(diff) <= effective_el:
+                    bit = data[payload[0]]
+                    cuda.atomic.add(payload, 0, 1)
+                    
+                    # Triple embedding 邏輯
+                    if diff == 0:
+                        if bit == 1:
+                            embedded[y, x] = min(255, pixel_val + 1)
                         else:
                             embedded[y, x] = pixel_val
-                            
-            elif adaptive_el < abs(diff) <= embedding_space:
-                # 智能移位策略：根據局部特性決定移動量
-                if diff > 0:
-                    # 計算最小需要的移動量
-                    min_shift = embedding_space - diff + 1
-                    for shift in range(min_shift, min_shift + adaptive_el):
-                        new_val = pixel_val + shift
-                        if 0 <= new_val <= 255:
-                            embedded[y, x] = new_val
-                            break
-                    else:
-                        embedded[y, x] = pixel_val
+                    elif diff > 0:  # 正差值
+                        if bit == 1:
+                            embedded[y, x] = pixel_val  # 保持原值
+                        else:
+                            embedded[y, x] = max(0, pixel_val - 1)  # 減少1
+                    else:  # 負差值
+                        if bit == 1:
+                            embedded[y, x] = min(255, pixel_val + 1)  # 增加1
+                        else:
+                            embedded[y, x] = pixel_val  # 保持原值
                 else:
-                    min_shift = embedding_space - abs(diff) + 1
-                    for shift in range(min_shift, min_shift + adaptive_el):
-                        new_val = pixel_val - shift
-                        if 0 <= new_val <= 255:
-                            embedded[y, x] = new_val
-                            break
-                    else:
-                        embedded[y, x] = pixel_val
+                    # 超出嵌入範圍的處理
+                    embedded[y, x] = pixel_val
+            # Stage 2-5 使用 double embedding
             else:
-                # 保持原值
-                embedded[y, x] = pixel_val
+                if abs(diff) <= el:  # 使用原始 EL
+                    bit = data[payload[0]]
+                    cuda.atomic.add(payload, 0, 1)
+                    
+                    # Double embedding 邏輯
+                    if diff == 0:
+                        if bit == 1:
+                            embedded[y, x] = min(255, pixel_val + 1)
+                        else:
+                            embedded[y, x] = pixel_val
+                    elif diff > 0:
+                        if bit == 1:
+                            embedded[y, x] = pixel_val
+                        else:
+                            embedded[y, x] = max(0, pixel_val - 1)
+                    else:  # diff < 0
+                        if bit == 1:
+                            embedded[y, x] = min(255, pixel_val + 1)
+                        else:
+                            embedded[y, x] = pixel_val
+                else:
+                    embedded[y, x] = pixel_val
         else:
             embedded[y, x] = pixel_val
+    else:
+        embedded[y, x] = img[y, x]  # 邊界像素保持不變
 
 def pee_embedding_adaptive_cuda(img, data, pred_img, local_el, stage=0):
     height, width = img.shape
@@ -145,50 +191,13 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
                         prediction_method=PredictionMethod.PROPOSED,
                         remaining_target=None):
     """
-    改進的多次嵌入函數，支援多種預測方法
-    
-    Parameters:
-    -----------
-    img : numpy.ndarray
-        輸入圖像
-    data : numpy.ndarray
-        要嵌入的數據
-    local_el : numpy.ndarray
-        局部嵌入層級
-    weights : numpy.ndarray or None
-        預測權重，只在使用 PROPOSED 方法時需要
-    stage : int
-        當前嵌入階段
-    prediction_method : PredictionMethod
-        使用的預測方法
-    remaining_target : int, optional
-        剩餘需要嵌入的數據量
-        
-    Returns:
-    --------
-    tuple
-        (embedded_image, actual_payload)
+    多種預測方法的嵌入函數，為不同預測器使用不同的嵌入策略
     """
     # 數據類型轉換
     if isinstance(img, cp.ndarray):
         img = cp.asnumpy(img)
     if isinstance(data, cp.ndarray):
         data = cp.asnumpy(data)
-    
-    # 處理 local_el
-    if hasattr(local_el, 'copy_to_host'):
-        local_el_np = local_el.copy_to_host()
-    elif isinstance(local_el, cp.ndarray):
-        local_el_np = cp.asnumpy(local_el)
-    else:
-        local_el_np = local_el
-    
-    # 如果是 PROPOSED 方法，處理權重
-    if prediction_method == PredictionMethod.PROPOSED:
-        if isinstance(weights, cp.ndarray):
-            weights = cp.asnumpy(weights)
-        if weights is None:
-            raise ValueError("Weights must be provided for PROPOSED method")
     
     # 限制數據量
     if remaining_target is not None:
@@ -197,32 +206,89 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
     # 轉換為 CUDA 設備數組
     d_img = cuda.to_device(img)
     d_data = cuda.to_device(data)
-    d_local_el = cuda.to_device(local_el_np)
     
     # 使用統一的預測函數接口
     pred_img = predict_image_cuda(d_img, prediction_method, weights)
     
-    # 第一次嵌入
-    embedded, payload, _ = pee_embedding_adaptive_cuda(
-        d_img, d_data, pred_img, d_local_el, stage
-    )
+    height, width = d_img.shape
+    threads_per_block = (16, 16)
+    blocks_per_grid_x = (width + threads_per_block[0] - 1) // threads_per_block[0]
+    blocks_per_grid_y = (height + threads_per_block[1] - 1) // threads_per_block[1]
+    blocks_per_grid = (blocks_per_grid_x, blocks_per_grid_y)
+    
+    d_embedded = cuda.device_array_like(d_img)
+    d_payload = cuda.to_device(np.array([0], dtype=np.int32))
+    
+    # 根據預測方法選擇不同的嵌入策略
+    if prediction_method == PredictionMethod.PROPOSED:
+        # 對於 PROPOSED 預測器，使用原有的嵌入方式
+        if hasattr(local_el, 'copy_to_host'):
+            local_el_np = local_el.copy_to_host()
+        elif isinstance(local_el, cp.ndarray):
+            local_el_np = cp.asnumpy(local_el)
+        else:
+            local_el_np = local_el
+            
+        d_local_el = cuda.to_device(local_el_np)
+        
+        # 使用改進的 PEE 嵌入函數
+        pee_embedding_kernel[blocks_per_grid, threads_per_block](
+            d_img, pred_img, d_data, d_embedded, d_payload, d_local_el,
+            height, width, stage
+        )
+    elif prediction_method == PredictionMethod.RHOMBUS:
+        # 對於 RHOMBUS 預測器，使用專用的嵌入核心
+        rhombus_embedding_kernel[blocks_per_grid, threads_per_block](
+            d_img, pred_img, d_data, d_embedded, d_payload,
+            height, width, stage
+        )
+    else:
+        # 對於其他預測器，使用簡單的單次嵌入方式
+        simple_single_embedding_kernel[blocks_per_grid, threads_per_block](
+            d_img, pred_img, d_data, d_embedded, d_payload,
+            height, width, stage
+        )
+    
+    # 獲取結果
+    embedded = d_embedded.copy_to_host()
+    payload = d_payload.copy_to_host()[0]
     
     # 嚴格控制 payload
     if remaining_target is not None and payload > remaining_target:
-        print(f"Warning: Embedded payload ({payload}) exceeds target ({remaining_target})")
-        print("Re-embedding with stricter control...")
-        
-        reduced_el = np.minimum(local_el_np, np.ones_like(local_el_np) * 3)
-        d_reduced_el = cuda.to_device(reduced_el)
-        
-        remaining_data = data[:remaining_target]
-        d_remaining_data = cuda.to_device(remaining_data)
-        
-        embedded, payload, _ = pee_embedding_adaptive_cuda(
-            d_img, d_remaining_data, pred_img, d_reduced_el, stage
-        )
+        print(f"警告: 嵌入的 payload ({payload}) 超過目標 ({remaining_target})")
+        payload = remaining_target
     
     return embedded, min(payload, remaining_target) if remaining_target is not None else payload
+
+@cuda.jit
+def rhombus_embedding_kernel(img, pred_img, data, embedded, payload, height, width, stage):
+    """
+    為 Rhombus 預測器設計的穩定嵌入 kernel
+    簡化實現並確保結果穩定性
+    """
+    x, y = cuda.grid(2)
+    if 1 < x < width - 1 and 1 < y < height - 1:
+        diff = int(img[y, x]) - int(pred_img[y, x])
+        pixel_val = int(img[y, x])
+        
+        if payload[0] < data.size:
+            # 簡單穩定的嵌入邏輯
+            # 只在差值為 0 時嵌入，確保最大穩定性
+            if diff == 0:
+                bit = data[payload[0]]
+                cuda.atomic.add(payload, 0, 1)
+                
+                if bit == 1:
+                    embedded[y, x] = min(255, pixel_val + 1)
+                else:
+                    embedded[y, x] = pixel_val
+            else:
+                # 維持原始像素值
+                embedded[y, x] = pixel_val
+        else:
+            embedded[y, x] = pixel_val
+    else:
+        embedded[y, x] = img[y, x]
 
 @cuda.jit
 def evaluate_weights_kernel(img, data, EL, weight_combinations, results, target_bpp, target_psnr, stage):

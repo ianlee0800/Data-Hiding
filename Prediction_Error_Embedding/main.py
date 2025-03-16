@@ -79,14 +79,14 @@ def main():
     use_different_weights = False 
     
     # 測量方式
-    use_precise_measurement = False  # True: 使用精確測量模式, False: 使用近似模式
+    use_precise_measurement = True  # True: 使用精確測量模式, False: 使用近似模式
     
     # 統計分段數量
     stats_segments = 15
     
     # 預測方法選擇
     # 可選：PROPOSED, MED, GAP, RHOMBUS, ALL (ALL表示運行所有方法並生成比較)
-    prediction_method_str = "PROPOSED"
+    prediction_method_str = "ALL"
     
     # 方法選擇
     method = "split"         # 可選："rotation", "split", "quadtree"

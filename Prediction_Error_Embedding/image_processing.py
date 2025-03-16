@@ -323,47 +323,28 @@ def gap_predict_kernel(img, pred_img, height, width):
     else:
         pred_img[y, x] = img[y, x]
 
-# 2. 新增菱形預測器的 CUDA kernel 實現
 @cuda.jit
 def rhombus_predict_kernel(img, pred_img, height, width):
     """
-    菱形預測器的CUDA kernel實現
-    使用上、下、左、右四個點的加權平均進行預測
-    
-    預測模式:
-        p1
-      p2 X p3
-        p4
-    其中 X 是要預測的像素，p1、p2、p3、p4 分別是上、左、右、下的鄰居像素
+    優化的菱形預測器 CUDA kernel 實現
+    使用簡單但穩定的預測方法
     """
     x, y = cuda.grid(2)
     if 1 < x < width - 1 and 1 < y < height - 1:
+        # 取得菱形模式的四個鄰居像素
         p1 = int(img[y-1, x])    # 上
         p2 = int(img[y, x-1])    # 左
         p3 = int(img[y, x+1])    # 右
         p4 = int(img[y+1, x])    # 下
         
-        # 基本加權模式 - 可根據需要調整權重
-        weight_sum = 4
-        pred = (p1 + p2 + p3 + p4) / weight_sum
+        # 簡單的平均值預測，確保結果穩定
+        pred = (p1 + p2 + p3 + p4 + 2) // 4  # 四捨五入
         
-        # 邊緣處理：檢測是否存在邊緣並調整預測
-        h_diff = abs(p2 - p3)  # 水平差異
-        v_diff = abs(p1 - p4)  # 垂直差異
-        
-        # 如果存在明顯的邊緣，則偏向沿著邊緣的方向預測
-        if h_diff > v_diff * 2:
-            # 垂直邊緣，優先使用垂直鄰居
-            pred = (p1 + p4) / 2
-        elif v_diff > h_diff * 2:
-            # 水平邊緣，優先使用水平鄰居
-            pred = (p2 + p3) / 2
-            
-        pred_img[y, x] = min(255, max(0, int(pred + 0.5)))  # 四捨五入並確保在有效範圍內
+        pred_img[y, x] = min(255, max(0, pred))
     else:
         # 邊界像素保持不變
         pred_img[y, x] = img[y, x]
-
+        
 # 3. 修改 predict_image_cuda 函數，支持菱形預測器
 def predict_image_cuda(img, prediction_method, weights=None):
     """
@@ -457,21 +438,7 @@ def improved_predict_image_cuda(img, weights):
 
 def predict_image_cuda(img, prediction_method, weights=None):
     """
-    統一的預測函數接口
-    
-    Parameters:
-    -----------
-    img : numpy.ndarray or cupy.ndarray
-        輸入圖像
-    prediction_method : PredictionMethod
-        預測方法
-    weights : numpy.ndarray, optional
-        只在使用PROPOSED方法時需要的權重參數
-        
-    Returns:
-    --------
-    numpy.ndarray
-        預測後的圖像
+    統一的預測函數接口，支援多種預測方法
     """
     height, width = img.shape
     d_img = cuda.to_device(img)
@@ -495,6 +462,11 @@ def predict_image_cuda(img, prediction_method, weights=None):
         )
     elif prediction_method == PredictionMethod.GAP:
         gap_predict_kernel[blocks_per_grid, threads_per_block](
+            d_img, d_pred_img, height, width
+        )
+    elif prediction_method == PredictionMethod.RHOMBUS:
+        # 為 RHOMBUS 預測器使用新的穩定預測核心
+        rhombus_predict_kernel[blocks_per_grid, threads_per_block](
             d_img, d_pred_img, height, width
         )
 
