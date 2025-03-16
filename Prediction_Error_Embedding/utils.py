@@ -1,5 +1,3 @@
-# utils.py - 重新整理後的版本
-
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt

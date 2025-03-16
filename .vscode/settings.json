@@ -1,0 +1,8 @@
+{
+    "terminal.integrated.defaultProfile.windows": "Command Prompt",
+    "terminal.integrated.defaultEncoding": "utf-8",
+    "files.encoding": "utf-8",
+    "files.autoGuessEncoding": true,
+    "python.terminal.executeInFileDir": true,
+    "python.terminal.activateEnvironment": true
+}

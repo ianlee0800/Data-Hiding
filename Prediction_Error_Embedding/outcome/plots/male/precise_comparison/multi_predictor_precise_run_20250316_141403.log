@@ -1,0 +1,73 @@
+Multi-predictor precise measurement run started at 2025-03-16 14:14:03
+Image: male.png
+Method: split
+Total embeddings: 5
+EL mode: 0
+Segments: 15
+Predictor ratio settings:
+  PROPOSED: 0.5
+  MED: 1.0
+  GAP: 0.7
+  RHOMBUS: 0.9
+Split size: 2x2, block_base=False
+
+================================================================================
+
+Starting precise measurements for proposed predictor
+Using ratio_of_ones = 0.5
+
+Completed measurements for proposed predictor
+Time taken: 65.34 seconds
+
+Starting precise measurements for med predictor
+Using ratio_of_ones = 1.0
+
+Completed measurements for med predictor
+Time taken: 12.63 seconds
+
+Starting precise measurements for gap predictor
+Using ratio_of_ones = 0.7
+
+Completed measurements for gap predictor
+Time taken: 12.25 seconds
+
+Starting precise measurements for rhombus predictor
+Using ratio_of_ones = 0.9
+
+Completed measurements for rhombus predictor
+Time taken: 10.40 seconds
+
+
+Comparison completed at 2025-03-16 14:15:46
+Total processing time: 102.80 seconds
+
+
+Error generating comparison: Missing optional dependency 'Jinja2'. DataFrame.style requires jinja2. Use pip or conda to install Jinja2.
+Traceback (most recent call last):
+  File "C:\Users\Admin\Anaconda3\envs\pee_research\lib\site-packages\pandas\compat\_optional.py", line 135, in import_optional_dependency
+    module = importlib.import_module(name)
+  File "C:\Users\Admin\Anaconda3\envs\pee_research\lib\importlib\__init__.py", line 127, in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+  File "<frozen importlib._bootstrap>", line 1030, in _gcd_import
+  File "<frozen importlib._bootstrap>", line 1007, in _find_and_load
+  File "<frozen importlib._bootstrap>", line 984, in _find_and_load_unlocked
+ModuleNotFoundError: No module named 'jinja2'
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "d:\Google Drive\文件\碩班\Data-Hiding\Prediction_Error_Embedding\utils.py", line 1012, in run_multi_predictor_precise_measurements
+    create_wide_format_tables(all_results, comparison_dir)
+  File "d:\Google Drive\文件\碩班\Data-Hiding\Prediction_Error_Embedding\utils.py", line 2127, in create_wide_format_tables
+    f.write(psnr_df.to_latex(index=False, float_format="%.2f"))
+  File "C:\Users\Admin\Anaconda3\envs\pee_research\lib\site-packages\pandas\util\_decorators.py", line 333, in wrapper
+    return func(*args, **kwargs)
+  File "C:\Users\Admin\Anaconda3\envs\pee_research\lib\site-packages\pandas\core\generic.py", line 3666, in to_latex
+    return self._to_latex_via_styler(
+  File "C:\Users\Admin\Anaconda3\envs\pee_research\lib\site-packages\pandas\core\generic.py", line 3723, in _to_latex_via_styler
+    from pandas.io.formats.style import Styler
+  File "C:\Users\Admin\Anaconda3\envs\pee_research\lib\site-packages\pandas\io\formats\style.py", line 44, in <module>
+    jinja2 = import_optional_dependency("jinja2", extra="DataFrame.style requires jinja2.")
+  File "C:\Users\Admin\Anaconda3\envs\pee_research\lib\site-packages\pandas\compat\_optional.py", line 138, in import_optional_dependency
+    raise ImportError(msg)
+ImportError: Missing optional dependency 'Jinja2'. DataFrame.style requires jinja2. Use pip or conda to install Jinja2.
