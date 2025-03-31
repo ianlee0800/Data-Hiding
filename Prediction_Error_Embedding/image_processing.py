@@ -500,6 +500,7 @@ def add_grid_lines(img, block_info):
     
     # 對不同大小的區塊使用不同的格線寬度，注意使用整數作為鍵值
     line_widths = {
+        1024: 4,  # 添加 1024 的線寬
         512: 3,
         256: 3,
         128: 2,
@@ -511,7 +512,10 @@ def add_grid_lines(img, block_info):
     # 從大到小處理各個區塊
     for size_str in sorted(block_info.keys(), key=lambda x: int(x), reverse=True):
         size = int(size_str)  # 將字符串轉換為整數
-        line_width = line_widths[size]
+        
+        # 使用 get 方法提供預設值，如果找不到特定尺寸
+        line_width = line_widths.get(size, 1)  # 如果找不到對應的線寬，預設使用 1
+        
         blocks = block_info[size_str]['blocks']
         
         for block in blocks:

@@ -309,7 +309,11 @@ def visualize_embedding_heatmap(original_img, embedded_img, save_path):
     
     # 將熱圖與原圖融合以便更好地觀察
     alpha = 0.7
-    blended = cv2.addWeighted(embedded_img, 1-alpha, diff_colored, alpha, 0)
+    
+    # 將嵌入圖像轉換為3通道，以便與彩色差異圖混合
+    embedded_img_colored = cv2.cvtColor(embedded_img.astype(np.uint8), cv2.COLOR_GRAY2BGR)
+    
+    blended = cv2.addWeighted(embedded_img_colored, 1-alpha, diff_colored, alpha, 0)
     
     # 儲存融合圖
     blend_path = save_path.replace('.png', '_blend.png')
