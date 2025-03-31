@@ -12,7 +12,8 @@ from image_processing import (
     generate_histogram,
     save_histogram,
     add_grid_lines,
-    PredictionMethod
+    PredictionMethod,
+    plot_interval_statistics,
 )
 from embedding import (
     pee_process_with_rotation_cuda,
@@ -22,7 +23,6 @@ from utils import (
     create_pee_info_table,
     generate_interval_statistics,
     save_interval_statistics,
-    plot_interval_statistics,
     run_multiple_predictors,
     run_precise_measurements,
     run_multi_predictor_precise_measurements,
@@ -79,17 +79,17 @@ def main():
     use_different_weights = False 
     
     # 測量方式
-    use_precise_measurement = True  # True: 使用精確測量模式, False: 使用近似模式
+    use_precise_measurement = False  # True: 使用精確測量模式, False: 使用近似模式
     
     # 統計分段數量
-    stats_segments = 15
+    stats_segments = 20
     
     # 預測方法選擇
     # 可選：PROPOSED, MED, GAP, RHOMBUS, ALL (ALL表示運行所有方法並生成比較)
-    prediction_method_str = "ALL"
+    prediction_method_str = "PROPOSED"
     
     # 方法選擇
-    method = "split"         # 可選："rotation", "split", "quadtree"
+    method = "quadtree"         # 可選："rotation", "split", "quadtree"
     
     # 各方法共用參數
     split_size = 2              # 用於 rotation 和 split 方法
@@ -184,6 +184,7 @@ def main():
     elif method == "quadtree":
         os.makedirs(f"{image_dir}/quadtree_visualization", exist_ok=True)
         os.makedirs(f"{image_dir}/with_grid", exist_ok=True)
+        os.makedirs(f"{image_dir}/rotated_blocks", exist_ok=True)  # New directory for rotated block images
         os.makedirs(f"{plots_dir}/block_distribution", exist_ok=True)
     
     # 確保結果數據目錄存在
@@ -275,6 +276,7 @@ def main():
                     target_payload_size=-1  # 使用最大嵌入量
                 )
             elif method == "quadtree":
+                # 在 main.py 中，修改 quadtree 的呼叫
                 final_pee_img, total_payload, pee_stages = pee_process_with_quadtree_cuda(
                     origImg,
                     total_embeddings,
@@ -285,7 +287,9 @@ def main():
                     el_mode,
                     rotation_mode='random',
                     prediction_method=prediction_method,
-                    target_payload_size=-1  # 使用最大嵌入量
+                    target_payload_size=-1,
+                    imgName=imgName,  # Pass the image name
+                    output_dir="./Prediction_Error_Embedding/outcome"  # Pass the output directory
                 )
 
             # 建立並列印 PEE 資訊表格

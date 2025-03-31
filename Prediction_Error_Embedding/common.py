@@ -97,10 +97,9 @@ def calculate_ssim(img1, img2):
     ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
     return round(ssim_map.mean(), 4)
 
-# 在計算 metrics 之前添加的修正程式碼
 def calculate_metrics_with_rotation(current_img, stage_img, original_img, embedding):
     """
-    計算考慮旋轉的 metrics
+    計算考慮旋轉的 metrics，優化版本支援大型圖像
     """
     # 計算旋轉角度
     current_rotation = (embedding * 90) % 360
@@ -110,7 +109,33 @@ def calculate_metrics_with_rotation(current_img, stage_img, original_img, embedd
         # 計算需要的逆旋轉次數
         k = (4 - (current_rotation // 90)) % 4
         if isinstance(stage_img, cp.ndarray):
-            stage_img_aligned = cp.rot90(stage_img, k=k)
+            # 對於大型圖像，分塊處理旋轉以節省記憶體
+            stage_img_aligned = cp.zeros_like(stage_img)
+            block_size = 512  # 可以根據可用記憶體調整此值
+            
+            for i in range(0, stage_img.shape[0], block_size):
+                for j in range(0, stage_img.shape[1], block_size):
+                    # 確保不超出邊界
+                    end_i = min(i + block_size, stage_img.shape[0])
+                    end_j = min(j + block_size, stage_img.shape[1])
+                    
+                    # 提取區塊並旋轉
+                    block = stage_img[i:end_i, j:end_j]
+                    rotated_block = cp.rot90(block, k=k)
+                    
+                    # 計算旋轉後的放置位置
+                    if k % 2 == 0:  # 0 或 180 度
+                        stage_img_aligned[i:end_i, j:end_j] = rotated_block
+                    else:  # 90 或 270 度
+                        # 對於 90/270 度旋轉，長寬交換，需要特殊處理
+                        # 這個簡化版本僅適用於正方形區塊
+                        if block.shape[0] == block.shape[1]:
+                            stage_img_aligned[i:end_i, j:end_j] = rotated_block
+                        else:
+                            # 對於非正方形區塊，使用整體旋轉
+                            cleanup_memory()  # 先清理記憶體
+                            stage_img_aligned = cp.rot90(stage_img, k=k)
+                            break
         else:
             stage_img_aligned = np.rot90(stage_img, k=k)
     else:
@@ -157,14 +182,16 @@ def improved_predict_image_cpu(img, weight):
 @cuda.jit
 def compute_improved_adaptive_el_kernel(img, local_el, window_size, max_el, block_size):
     """
-    計算改進的自適應EL值的CUDA kernel
+    計算改進的自適應EL值的CUDA kernel，優化版本
     """
     x, y = cuda.grid(2)
     if x < img.shape[1] and y < img.shape[0]:
         # 根據區塊大小調整window_size
         actual_window_size = window_size
         if block_size > 0:  # 使用正數來判斷是否有指定block_size
-            if block_size >= 256:
+            if block_size >= 512:
+                actual_window_size = min(window_size + 3, 9)  # 更大的視窗適合1024大小的圖像
+            elif block_size >= 256:
                 actual_window_size = min(window_size + 2, 7)
             elif block_size <= 64:
                 actual_window_size = max(window_size - 1, 3)
@@ -186,10 +213,12 @@ def compute_improved_adaptive_el_kernel(img, local_el, window_size, max_el, bloc
         local_mean = local_sum / count
         local_variance = (local_sum_sq / count) - (local_mean * local_mean)
         
-        # 使用簡單的variance正規化策略
+        # 使用簡單的variance正規化策略，調整以支持更大的區塊
         max_variance = 6400  # 預設值
         if block_size > 0:
-            if block_size >= 256:
+            if block_size >= 512:
+                max_variance = 10000  # 針對更大的圖像調整此值
+            elif block_size >= 256:
                 max_variance = 8100
             elif block_size <= 64:
                 max_variance = 4900
@@ -296,6 +325,9 @@ def cleanup_memory():
         # 強制執行垃圾回收
         gc.collect()
         
+        # 確保CUDA內核完成執行
+        cp.cuda.Stream.null.synchronize()
+        
         # 顯示清理後的記憶體使用情況
         used_bytes_after = mem_pool.used_bytes()
         if used_bytes > 0:
@@ -304,3 +336,60 @@ def cleanup_memory():
     except Exception as e:
         print(f"清理 GPU 記憶體時出錯: {str(e)}")
         print("繼續執行程式...")
+
+def check_memory_status():
+    """
+    檢查系統記憶體和 GPU 記憶體使用情況
+    Returns:
+        dict: 包含記憶體使用情況的字典
+    """
+    # 系統記憶體
+    try:
+        import psutil
+        mem = psutil.virtual_memory()
+        system_info = {
+            'total': mem.total / (1024 ** 3),  # GB
+            'available': mem.available / (1024 ** 3),  # GB
+            'percent': mem.percent,
+            'used': mem.used / (1024 ** 3),  # GB
+        }
+    except:
+        system_info = {'error': 'Cannot get system memory info'}
+    
+    # GPU 記憶體
+    try:
+        import cupy as cp
+        mem_pool = cp.get_default_memory_pool()
+        gpu_info = {
+            'used': mem_pool.used_bytes() / (1024 ** 3),  # GB
+            'total': mem_pool.total_bytes() / (1024 ** 3)  # GB
+        }
+    except:
+        gpu_info = {'error': 'Cannot get GPU memory info'}
+    
+    return {
+        'system': system_info,
+        'gpu': gpu_info
+    }
+    
+def print_memory_status(label=""):
+    """
+    打印當前記憶體使用情況
+    Args:
+        label (str): 打印標籤
+    """
+    mem_status = check_memory_status()
+    
+    print(f"===== Memory Status {label} =====")
+    if 'error' not in mem_status['system']:
+        print(f"System Memory: {mem_status['system']['used']:.2f}GB / {mem_status['system']['total']:.2f}GB ({mem_status['system']['percent']}%)")
+    else:
+        print(f"System Memory: {mem_status['system']['error']}")
+    
+    if 'error' not in mem_status['gpu']:
+        print(f"GPU Memory: {mem_status['gpu']['used']:.2f}GB / {mem_status['gpu']['total']:.2f}GB")
+    else:
+        print(f"GPU Memory: {mem_status['gpu']['error']}")
+    print("===============================")
+    
+    

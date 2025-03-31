@@ -529,3 +529,139 @@ def add_grid_lines(img, block_info):
                 grid_img[y:y+block_size, x+block_size-i-1:x+block_size-i] = grid_color  # 右邊界
     
     return grid_img
+
+def plot_interval_statistics(df, imgName, method, prediction_method, output_dir=None):
+    """
+    繪製統計數據折線圖
+    
+    Parameters:
+    -----------
+    df : pandas.DataFrame
+        包含統計數據的DataFrame
+    imgName : str
+        圖像名稱
+    method : str
+        使用的方法
+    prediction_method : str
+        使用的預測方法
+    output_dir : str, optional
+        輸出目錄，默認為 "./Prediction_Error_Embedding/outcome/plots/{imgName}"
+        
+    Returns:
+    --------
+    tuple
+        (fig_psnr, fig_ssim) PSNR和SSIM圖表，如果有直方圖相關性資料則返回 (fig_psnr, fig_ssim, fig_hist)
+    """
+    # 設置默認輸出目錄
+    if output_dir is None:
+        output_dir = f"./Prediction_Error_Embedding/outcome/plots/{imgName}"
+        
+    # 將數據排序
+    df_sorted = df.sort_values('BPP')
+    
+    # 繪製BPP-PSNR折線圖
+    fig_psnr = plt.figure(figsize=(12, 8))
+    
+    plt.plot(df_sorted['BPP'], df_sorted['PSNR'], 
+             color='blue',
+             linewidth=2.5,
+             marker='o',
+             markersize=8,
+             label=f'Method: {method}, Predictor: {prediction_method}')
+    
+    # 添加數據標籤
+    for i, row in enumerate(df_sorted.itertuples()):
+        if i % 3 == 0 or i == len(df_sorted) - 1:  # 只標記部分點，避免擁擠
+            plt.annotate(f'({row.BPP:.4f}, {row.PSNR:.2f})',
+                        (row.BPP, row.PSNR), 
+                        textcoords="offset points",
+                        xytext=(0,10), 
+                        ha='center',
+                        bbox=dict(boxstyle='round,pad=0.5', 
+                                 fc='yellow', 
+                                 alpha=0.3),
+                        fontsize=8)
+    
+    plt.xlabel('Bits Per Pixel (BPP)', fontsize=14)
+    plt.ylabel('PSNR (dB)', fontsize=14)
+    plt.title(f'BPP-PSNR Curve for {imgName}\nMethod: {method}, Predictor: {prediction_method}', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/bpp_psnr_{method}_{prediction_method}.png", 
+               dpi=300, bbox_inches='tight')
+    plt.close()  # 確保關閉圖表釋放資源
+    
+    # 繪製BPP-SSIM折線圖
+    fig_ssim = plt.figure(figsize=(12, 8))
+    
+    plt.plot(df_sorted['BPP'], df_sorted['SSIM'], 
+             color='red',
+             linewidth=2.5,
+             marker='o',
+             markersize=8,
+             label=f'Method: {method}, Predictor: {prediction_method}')
+    
+    # 添加數據標籤
+    for i, row in enumerate(df_sorted.itertuples()):
+        if i % 3 == 0 or i == len(df_sorted) - 1:  # 只標記部分點，避免擁擠
+            plt.annotate(f'({row.BPP:.4f}, {row.SSIM:.4f})',
+                        (row.BPP, row.SSIM), 
+                        textcoords="offset points",
+                        xytext=(0,10), 
+                        ha='center',
+                        bbox=dict(boxstyle='round,pad=0.5', 
+                                 fc='yellow', 
+                                 alpha=0.3),
+                        fontsize=8)
+    
+    plt.xlabel('Bits Per Pixel (BPP)', fontsize=14)
+    plt.ylabel('SSIM', fontsize=14)
+    plt.title(f'BPP-SSIM Curve for {imgName}\nMethod: {method}, Predictor: {prediction_method}', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/bpp_ssim_{method}_{prediction_method}.png", 
+               dpi=300, bbox_inches='tight')
+    plt.close()  # 確保關閉圖表釋放資源
+    
+    # 如果有直方圖相關性數據，也繪製相應的折線圖
+    if 'Hist_Corr' in df_sorted.columns:
+        fig_hist = plt.figure(figsize=(12, 8))
+        
+        plt.plot(df_sorted['BPP'], df_sorted['Hist_Corr'], 
+                 color='green',
+                 linewidth=2.5,
+                 marker='o',
+                 markersize=8,
+                 label=f'Method: {method}, Predictor: {prediction_method}')
+        
+        # 添加數據標籤
+        for i, row in enumerate(df_sorted.itertuples()):
+            if i % 3 == 0 or i == len(df_sorted) - 1:  # 只標記部分點，避免擁擠
+                plt.annotate(f'({row.BPP:.4f}, {row.Hist_Corr:.4f})',
+                            (row.BPP, row.Hist_Corr), 
+                            textcoords="offset points",
+                            xytext=(0,10), 
+                            ha='center',
+                            bbox=dict(boxstyle='round,pad=0.5', 
+                                     fc='yellow', 
+                                     alpha=0.3),
+                            fontsize=8)
+        
+        plt.xlabel('Bits Per Pixel (BPP)', fontsize=14)
+        plt.ylabel('Histogram Correlation', fontsize=14)
+        plt.title(f'BPP-Histogram Correlation Curve for {imgName}\nMethod: {method}, Predictor: {prediction_method}', fontsize=16)
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.legend(fontsize=12)
+        
+        plt.tight_layout()
+        plt.savefig(f"{output_dir}/bpp_histcorr_{method}_{prediction_method}.png", 
+                   dpi=300, bbox_inches='tight')
+        plt.close()  # 確保關閉圖表釋放資源
+        
+        return fig_psnr, fig_ssim, fig_hist
+    
+    return fig_psnr, fig_ssim
