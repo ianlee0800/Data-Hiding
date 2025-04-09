@@ -287,8 +287,8 @@ def process_block(block, position, size, stage_info, embedding, variance_thresho
 
 def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, 
                                  min_block_size, variance_threshold, el_mode, 
-                                 prediction_method=PredictionMethod.PROPOSED,
                                  rotation_mode='none',
+                                 prediction_method=None,
                                  target_payload_size=-1,
                                  max_block_size=None,
                                  imgName=None,
@@ -299,7 +299,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
     Parameters:
     -----------
     img : numpy.ndarray
-        輸入圖像
+        輸入圖像 (灰階或彩色)
     total_embeddings : int
         總嵌入次數
     ratio_of_ones : float
@@ -334,6 +334,16 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
         total_payload: 總嵌入容量
         pee_stages: 包含每個階段詳細資訊的列表
     """
+    # Check if this is a color image by examining image shape
+    if len(img.shape) == 3 and img.shape[2] == 3:
+        # For color images, redirect to color image processing function
+        print("Detected color image, redirecting to color image processing...")
+        return pee_process_color_image_quadtree_cuda(
+            img, total_embeddings, ratio_of_ones, use_different_weights,
+            min_block_size, variance_threshold, el_mode, rotation_mode,
+            prediction_method, target_payload_size, max_block_size,
+            imgName, output_dir
+        )
     try:
         # 導入必要的模組
         import os
@@ -774,3 +784,171 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
     finally:
         # 確保清理所有記憶體
         cleanup_quadtree_resources()
+        
+def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, 
+                                       min_block_size, variance_threshold, el_mode, 
+                                       rotation_mode='random',
+                                       prediction_method=None,
+                                       target_payload_size=-1,
+                                       max_block_size=None,
+                                       imgName=None,
+                                       output_dir=None):
+    """
+    Process a color image using quadtree PEE method.
+    
+    This function splits a color image into its RGB channels, processes each channel
+    independently using the existing quadtree PEE method, and then recombines the
+    channels into a final color image.
+    
+    Parameters:
+    -----------
+    Same as pee_process_with_quadtree_cuda, but img is now a color image
+        
+    Returns:
+    --------
+    tuple
+        (final_color_img, total_payload, color_pee_stages)
+    """
+    import os
+    import cv2
+    import numpy as np
+    import cupy as cp
+    from color import split_color_channels, combine_color_channels
+    from common import cleanup_memory
+    
+    if prediction_method is None:
+        # Import PredictionMethod if not provided to maintain compatibility
+        from image_processing import PredictionMethod
+        prediction_method = PredictionMethod.PROPOSED
+    
+    # Split color image into channels
+    b_channel, g_channel, r_channel = split_color_channels(img)
+    
+    # Track total payload across all channels
+    total_payload = 0
+    
+    # Create directory structure for channel outputs if imgName is provided
+    if imgName and output_dir:
+        channels_dir = f"{output_dir}/image/{imgName}/quadtree/channels"
+        os.makedirs(channels_dir, exist_ok=True)
+    
+    color_pee_stages = []
+    
+    # Process each channel separately
+    print("\nProcessing blue channel...")
+    final_b_img, b_payload, b_stages = pee_process_with_quadtree_cuda(
+        b_channel, total_embeddings, ratio_of_ones, use_different_weights,
+        min_block_size, variance_threshold, el_mode, rotation_mode,
+        prediction_method=prediction_method,
+        target_payload_size=target_payload_size // 3 if target_payload_size > 0 else -1,
+        max_block_size=max_block_size,
+        imgName=f"{imgName}_blue" if imgName else None,
+        output_dir=output_dir
+    )
+    total_payload += b_payload
+    
+    # Save blue channel output if imgName is provided
+    if imgName and output_dir:
+        cv2.imwrite(f"{channels_dir}/{imgName}_blue_final.png", final_b_img)
+    
+    # Clean GPU memory between channel processing
+    cleanup_memory()
+    
+    print("\nProcessing green channel...")
+    final_g_img, g_payload, g_stages = pee_process_with_quadtree_cuda(
+        g_channel, total_embeddings, ratio_of_ones, use_different_weights,
+        min_block_size, variance_threshold, el_mode, rotation_mode,
+        prediction_method=prediction_method,
+        target_payload_size=target_payload_size // 3 if target_payload_size > 0 else -1,
+        max_block_size=max_block_size,
+        imgName=f"{imgName}_green" if imgName else None,
+        output_dir=output_dir
+    )
+    total_payload += g_payload
+    
+    # Save green channel output if imgName is provided
+    if imgName and output_dir:
+        cv2.imwrite(f"{channels_dir}/{imgName}_green_final.png", final_g_img)
+    
+    # Clean GPU memory between channel processing
+    cleanup_memory()
+    
+    print("\nProcessing red channel...")
+    final_r_img, r_payload, r_stages = pee_process_with_quadtree_cuda(
+        r_channel, total_embeddings, ratio_of_ones, use_different_weights,
+        min_block_size, variance_threshold, el_mode, rotation_mode,
+        prediction_method=prediction_method,
+        target_payload_size=target_payload_size // 3 if target_payload_size > 0 else -1,
+        max_block_size=max_block_size,
+        imgName=f"{imgName}_red" if imgName else None,
+        output_dir=output_dir
+    )
+    total_payload += r_payload
+    
+    # Save red channel output if imgName is provided
+    if imgName and output_dir:
+        cv2.imwrite(f"{channels_dir}/{imgName}_red_final.png", final_r_img)
+    
+    # Combine channels back into a color image
+    final_color_img = combine_color_channels(final_b_img, final_g_img, final_r_img)
+    
+    # Create combined stages information for all 3 channels
+    for i in range(min(len(b_stages), len(g_stages), len(r_stages))):
+        # Get stage info from each channel
+        b_stage = b_stages[i]
+        g_stage = g_stages[i]
+        r_stage = r_stages[i]
+        
+        # Initialize combined stage info
+        combined_stage = {
+            'embedding': b_stage['embedding'],  # All should be the same
+            'payload': b_stage['payload'] + g_stage['payload'] + r_stage['payload'],
+            'channel_payloads': {
+                'blue': b_stage['payload'],
+                'green': g_stage['payload'],
+                'red': r_stage['payload']
+            },
+            'bpp': (b_stage['bpp'] + g_stage['bpp'] + r_stage['bpp']) / 3,  # Average BPP
+            'channel_metrics': {
+                'blue': {'psnr': b_stage['psnr'], 'ssim': b_stage['ssim'], 'hist_corr': b_stage['hist_corr']},
+                'green': {'psnr': g_stage['psnr'], 'ssim': g_stage['ssim'], 'hist_corr': g_stage['hist_corr']},
+                'red': {'psnr': r_stage['psnr'], 'ssim': r_stage['ssim'], 'hist_corr': r_stage['hist_corr']}
+            }
+        }
+        
+        # Combine stage images if available
+        if 'stage_img' in b_stage and 'stage_img' in g_stage and 'stage_img' in r_stage:
+            b_stage_img = cp.asnumpy(b_stage['stage_img']) if isinstance(b_stage['stage_img'], cp.ndarray) else b_stage['stage_img']
+            g_stage_img = cp.asnumpy(g_stage['stage_img']) if isinstance(g_stage['stage_img'], cp.ndarray) else g_stage['stage_img']
+            r_stage_img = cp.asnumpy(r_stage['stage_img']) if isinstance(r_stage['stage_img'], cp.ndarray) else r_stage['stage_img']
+            
+            combined_stage['stage_img'] = combine_color_channels(b_stage_img, g_stage_img, r_stage_img)
+        
+        # Calculate combined metrics directly from the combined image
+        if 'stage_img' in combined_stage:
+            # For simplicity, we'll use the channel averages
+            psnr = (b_stage['psnr'] + g_stage['psnr'] + r_stage['psnr']) / 3
+            ssim = (b_stage['ssim'] + g_stage['ssim'] + r_stage['ssim']) / 3
+            hist_corr = (b_stage['hist_corr'] + g_stage['hist_corr'] + r_stage['hist_corr']) / 3
+            
+            combined_stage['psnr'] = psnr
+            combined_stage['ssim'] = ssim
+            combined_stage['hist_corr'] = hist_corr
+            
+        # Save combined block info - store each channel's block_info separately
+        combined_stage['block_info'] = {
+            'blue': b_stage['block_info'],
+            'green': g_stage['block_info'],
+            'red': r_stage['block_info']
+        }
+            
+        # Add stage to combined stages
+        color_pee_stages.append(combined_stage)
+        
+        # Save stage image if imgName is provided
+        if imgName and output_dir and 'stage_img' in combined_stage:
+            stage_dir = f"{output_dir}/image/{imgName}/quadtree"
+            os.makedirs(stage_dir, exist_ok=True)
+            cv2.imwrite(f"{stage_dir}/color_stage_{i}_result.png", combined_stage['stage_img'])
+    
+    return final_color_img, total_payload, color_pee_stages

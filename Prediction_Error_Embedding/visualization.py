@@ -474,3 +474,242 @@ def create_histogram_animation(pee_stages, original_img, save_dir, imgName, meth
     # 這裡提供命令提示
     print(f"圖像已儲存至 {animation_dir}，可使用以下命令創建動畫：")
     print(f"convert -delay 100 {animation_dir}/{imgName}_{method}_histogram_stage_*.png {animation_dir}/{imgName}_{method}_histogram_animation.gif")
+    
+    # Add these functions to visualization.py
+
+def visualize_color_histograms(img, save_path, title="Color Image Histograms"):
+    """
+    Create and save histograms for each channel of a color image.
+    
+    Parameters:
+    -----------
+    img : numpy.ndarray
+        Input color image (BGR format)
+    save_path : str
+        Path to save the histogram image
+    title : str, optional
+        Main title for the histogram plot
+    """
+    import matplotlib.pyplot as plt
+    import cv2
+    
+    # Split channels
+    b, g, r = cv2.split(img)
+    
+    # Create figure with subplots
+    plt.figure(figsize=(15, 5))
+    
+    # Blue channel histogram
+    plt.subplot(1, 3, 1)
+    plt.hist(b.flatten(), bins=256, range=[0,255], color='blue', alpha=0.7)
+    plt.title("Blue Channel")
+    plt.xlabel("Pixel Value")
+    plt.ylabel("Frequency")
+    
+    # Green channel histogram  
+    plt.subplot(1, 3, 2)
+    plt.hist(g.flatten(), bins=256, range=[0,255], color='green', alpha=0.7)
+    plt.title("Green Channel")
+    plt.xlabel("Pixel Value")
+    plt.ylabel("Frequency")
+    
+    # Red channel histogram
+    plt.subplot(1, 3, 3)
+    plt.hist(r.flatten(), bins=256, range=[0,255], color='red', alpha=0.7)
+    plt.title("Red Channel")
+    plt.xlabel("Pixel Value")
+    plt.ylabel("Frequency")
+    
+    # Add main title
+    plt.suptitle(title, fontsize=16)
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust layout for main title
+    
+    # Save figure
+    plt.savefig(save_path)
+    plt.close()
+
+def create_color_heatmap(original_img, embedded_img, save_path, intensity_scale=1.0):
+    """
+    Create a heatmap showing the differences between original and embedded color images.
+    
+    Parameters:
+    -----------
+    original_img : numpy.ndarray
+        Original color image
+    embedded_img : numpy.ndarray
+        Embedded color image
+    save_path : str
+        Path to save the heatmap
+    intensity_scale : float, optional
+        Scale factor for difference visualization (default: 1.0)
+    """
+    import numpy as np
+    import cv2
+    
+    # Calculate absolute difference for each channel
+    b_diff = np.abs(embedded_img[:,:,0].astype(np.float32) - original_img[:,:,0].astype(np.float32))
+    g_diff = np.abs(embedded_img[:,:,1].astype(np.float32) - original_img[:,:,1].astype(np.float32))
+    r_diff = np.abs(embedded_img[:,:,2].astype(np.float32) - original_img[:,:,2].astype(np.float32))
+    
+    # Enhance contrast in the visualization
+    b_diff = np.clip(b_diff * intensity_scale, 0, 255)
+    g_diff = np.clip(g_diff * intensity_scale, 0, 255)
+    r_diff = np.clip(r_diff * intensity_scale, 0, 255)
+    
+    # Create a combined RGB heatmap
+    heatmap = np.stack([r_diff, g_diff, b_diff], axis=2).astype(np.uint8)
+    
+    # Apply color map for better visualization
+    combined_diff = cv2.cvtColor(heatmap, cv2.COLOR_BGR2GRAY)
+    heatmap_colored = cv2.applyColorMap(combined_diff, cv2.COLORMAP_JET)
+    
+    # Save heatmap
+    cv2.imwrite(save_path, heatmap_colored)
+    
+    # Create a blend of original with heatmap overlay
+    alpha = 0.7
+    embedded_img_colored = embedded_img.copy()
+    blended = cv2.addWeighted(embedded_img_colored, 1-alpha, heatmap_colored, alpha, 0)
+    
+    # Save blended image
+    blend_path = save_path.replace('.png', '_blend.png')
+    cv2.imwrite(blend_path, blended)
+    
+    # Create per-channel heatmaps
+    blue_heatmap = cv2.applyColorMap(b_diff.astype(np.uint8), cv2.COLORMAP_JET)
+    green_heatmap = cv2.applyColorMap(g_diff.astype(np.uint8), cv2.COLORMAP_JET)
+    red_heatmap = cv2.applyColorMap(r_diff.astype(np.uint8), cv2.COLORMAP_JET)
+    
+    # Save channel heatmaps
+    cv2.imwrite(save_path.replace('.png', '_blue.png'), blue_heatmap)
+    cv2.imwrite(save_path.replace('.png', '_green.png'), green_heatmap)
+    cv2.imwrite(save_path.replace('.png', '_red.png'), red_heatmap)
+    
+    return heatmap_colored, blended
+
+def visualize_color_metrics_comparison(pee_stages, save_path, title="Channel Metrics Comparison"):
+    """
+    Create visualization comparing image quality metrics across different channels.
+    
+    Parameters:
+    -----------
+    pee_stages : list
+        List of stages with channel metrics
+    save_path : str
+        Path to save the visualization
+    title : str, optional
+        Title for the plot
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # Extract data
+    stages = []
+    blue_psnr = []
+    green_psnr = []
+    red_psnr = []
+    blue_ssim = []
+    green_ssim = []
+    red_ssim = []
+    
+    for i, stage in enumerate(pee_stages):
+        if 'channel_metrics' in stage:
+            stages.append(i)
+            blue_psnr.append(stage['channel_metrics']['blue']['psnr'])
+            green_psnr.append(stage['channel_metrics']['green']['psnr'])
+            red_psnr.append(stage['channel_metrics']['red']['psnr'])
+            blue_ssim.append(stage['channel_metrics']['blue']['ssim'])
+            green_ssim.append(stage['channel_metrics']['green']['ssim'])
+            red_ssim.append(stage['channel_metrics']['red']['ssim'])
+    
+    # Create figure with two subplots
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 6))
+    
+    # Plot PSNR values
+    ax1.plot(stages, blue_psnr, 'b-o', linewidth=2, label='Blue Channel')
+    ax1.plot(stages, green_psnr, 'g-o', linewidth=2, label='Green Channel')
+    ax1.plot(stages, red_psnr, 'r-o', linewidth=2, label='Red Channel')
+    ax1.set_xlabel('Stage')
+    ax1.set_ylabel('PSNR (dB)')
+    ax1.set_title('PSNR Comparison by Channel')
+    ax1.grid(True, linestyle='--', alpha=0.7)
+    ax1.legend()
+    
+    # Plot SSIM values
+    ax2.plot(stages, blue_ssim, 'b-o', linewidth=2, label='Blue Channel')
+    ax2.plot(stages, green_ssim, 'g-o', linewidth=2, label='Green Channel')
+    ax2.plot(stages, red_ssim, 'r-o', linewidth=2, label='Red Channel')
+    ax2.set_xlabel('Stage')
+    ax2.set_ylabel('SSIM')
+    ax2.set_title('SSIM Comparison by Channel')
+    ax2.grid(True, linestyle='--', alpha=0.7)
+    ax2.legend()
+    
+    # Add main title
+    plt.suptitle(title, fontsize=16)
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])  # Adjust layout for main title
+    
+    # Save figure
+    plt.savefig(save_path)
+    plt.close()
+
+def create_color_channel_comparison(original_img, embedded_img, save_path):
+    """
+    Create a visual comparison of original vs embedded for each color channel.
+    
+    Parameters:
+    -----------
+    original_img : numpy.ndarray
+        Original color image
+    embedded_img : numpy.ndarray
+        Embedded color image
+    save_path : str
+        Path to save the comparison image
+    """
+    import numpy as np
+    import cv2
+    
+    # Split channels
+    b1, g1, r1 = cv2.split(original_img)
+    b2, g2, r2 = cv2.split(embedded_img)
+    
+    # Create blank canvas for the comparison
+    h, w = original_img.shape[:2]
+    comparison = np.ones((h*3, w*2 + 10, 3), dtype=np.uint8) * 255  # White background
+    
+    # Place images in grid
+    # Blue channel
+    comparison[:h, :w, 0] = b1  # Blue channel of original in first position
+    comparison[:h, :w, 1:] = 0  # Zero out other channels
+    comparison[:h, w+10:w*2+10, 0] = b2  # Blue channel of embedded
+    comparison[:h, w+10:w*2+10, 1:] = 0
+    
+    # Green channel
+    comparison[h:h*2, :w, 1] = g1  # Green channel of original
+    comparison[h:h*2, :w, 0] = 0
+    comparison[h:h*2, :w, 2] = 0
+    comparison[h:h*2, w+10:w*2+10, 1] = g2  # Green channel of embedded
+    comparison[h:h*2, w+10:w*2+10, 0] = 0
+    comparison[h:h*2, w+10:w*2+10, 2] = 0
+    
+    # Red channel
+    comparison[h*2:h*3, :w, 2] = r1  # Red channel of original
+    comparison[h*2:h*3, :w, :2] = 0
+    comparison[h*2:h*3, w+10:w*2+10, 2] = r2  # Red channel of embedded
+    comparison[h*2:h*3, w+10:w*2+10, :2] = 0
+    
+    # Add text labels
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    cv2.putText(comparison, "Original Blue", (10, 30), font, 1, (255, 255, 255), 2)
+    cv2.putText(comparison, "Embedded Blue", (w+20, 30), font, 1, (255, 255, 255), 2)
+    
+    cv2.putText(comparison, "Original Green", (10, h+30), font, 1, (255, 255, 255), 2)
+    cv2.putText(comparison, "Embedded Green", (w+20, h+30), font, 1, (255, 255, 255), 2)
+    
+    cv2.putText(comparison, "Original Red", (10, h*2+30), font, 1, (255, 255, 255), 2)
+    cv2.putText(comparison, "Embedded Red", (w+20, h*2+30), font, 1, (255, 255, 255), 2)
+    
+    # Save comparison
+    cv2.imwrite(save_path, comparison)
+    
+    return comparison

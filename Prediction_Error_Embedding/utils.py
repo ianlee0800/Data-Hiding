@@ -30,7 +30,7 @@ def ensure_dir(file_path):
 def create_pee_info_table(pee_stages, use_different_weights, total_pixels, 
                          split_size, quad_tree=False):
     """
-    創建 PEE 資訊表格的完整函數
+    創建 PEE 資訊表格的完整函數 - 支援彩色圖像
     
     Parameters:
     -----------
@@ -50,9 +50,25 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels,
     PrettyTable
         格式化的表格，包含所有階段的詳細資訊
     """
+    from prettytable import PrettyTable
+    
     table = PrettyTable()
     
-    if quad_tree:
+    # 檢查是否為彩色圖像處理的階段資訊
+    is_color_image = False
+    if pee_stages and 'block_info' in pee_stages[0]:
+        if isinstance(pee_stages[0]['block_info'], dict):
+            # 檢查是否有通道名稱作為鍵值
+            if any(key in ['blue', 'green', 'red'] for key in pee_stages[0]['block_info'].keys()):
+                is_color_image = True
+    
+    if is_color_image:
+        # 彩色圖像的表格欄位
+        table.field_names = [
+            "Embedding", "Channel", "Block Size", "Block Count", "Payload", "BPP",
+            "PSNR", "SSIM", "Hist Corr", "Note"
+        ]
+    elif quad_tree:
         # Quad tree 模式的表格欄位
         table.field_names = [
             "Embedding", "Block Size", "Block Position", "Payload", "BPP",
@@ -71,7 +87,21 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels,
     
     for stage in pee_stages:
         # 添加整體 stage 資訊
-        if quad_tree:
+        if is_color_image:
+            # 彩色圖像的整體資訊
+            table.add_row([
+                f"{stage['embedding']} (Overall)",
+                "All",
+                "-",
+                "-",
+                stage['payload'],
+                f"{stage['bpp']:.4f}",
+                f"{stage['psnr']:.2f}",
+                f"{stage['ssim']:.4f}",
+                f"{stage['hist_corr']:.4f}",
+                "Stage Summary"
+            ])
+        elif quad_tree:
             # Quad tree 模式的整體資訊
             table.add_row([
                 f"{stage['embedding']} (Overall)",
@@ -105,10 +135,53 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels,
         # 添加分隔線
         table.add_row(["-" * 5] * len(table.field_names))
         
-        if quad_tree:
+        if is_color_image:
+            # 處理彩色圖像的通道資訊
+            for channel in ['blue', 'green', 'red']:
+                if channel in stage['block_info']:
+                    channel_info = stage['block_info'][channel]
+                    channel_metrics = stage['channel_metrics'][channel]
+                    
+                    # 首先添加通道的摘要行
+                    table.add_row([
+                        stage['embedding'],
+                        channel.capitalize(),
+                        "All Sizes",
+                        "-",
+                        stage['channel_payloads'][channel],
+                        "-",
+                        f"{channel_metrics['psnr']:.2f}",
+                        f"{channel_metrics['ssim']:.4f}",
+                        f"{channel_metrics['hist_corr']:.4f}",
+                        "Channel Summary"
+                    ])
+                    
+                    # 然後添加每個大小區塊的資訊
+                    for size_str in sorted(channel_info.keys(), key=int, reverse=True):
+                        blocks = channel_info[size_str]['blocks']
+                        block_count = len(blocks)
+                        
+                        if block_count > 0:
+                            table.add_row([
+                                "",
+                                "",
+                                f"{size_str}x{size_str}",
+                                block_count,
+                                "-",  # 沒有每個大小區塊的載荷資訊
+                                "-",
+                                "-",
+                                "-",
+                                "-",
+                                ""
+                            ])
+                    
+                    # 添加分隔線
+                    table.add_row(["-" * 5] * len(table.field_names))
+        
+        elif quad_tree:
             # 處理 quad tree 模式的區塊資訊
-            for size in sorted(stage['block_info'].keys(), key=int, reverse=True):
-                blocks = stage['block_info'][size]['blocks']
+            for size_str in sorted(stage['block_info'].keys(), key=int, reverse=True):
+                blocks = stage['block_info'][size_str]['blocks']
                 for block in blocks:
                     block_pixels = block['size'] * block['size']
                     

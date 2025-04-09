@@ -28,17 +28,21 @@ from utils import (
     run_multi_predictor_precise_measurements,
     run_simplified_precise_measurements
 )
-    # 導入視覺化模組
+# 導入視覺化模組
 from visualization import (
     visualize_split, visualize_quadtree, save_comparison_image,
     create_block_size_distribution_chart, visualize_rotation_angles,
     create_metrics_comparison_chart, visualize_embedding_heatmap,
     create_payload_distribution_chart, create_el_distribution_chart,
-    create_histogram_animation
-    )
+    create_histogram_animation, visualize_color_histograms, create_color_heatmap,
+    visualize_color_metrics_comparison, create_color_channel_comparison
+)
 
 from common import calculate_psnr, calculate_ssim, histogram_correlation, cleanup_memory
 from quadtree import pee_process_with_quadtree_cuda
+
+# Import the color detection functions
+from color import read_image_auto, calculate_color_metrics
 
 warnings.simplefilter('ignore', category=NumbaPerformanceWarning)
 
@@ -59,17 +63,18 @@ def main():
     5. 修復圖表資源管理和 DataFrame 警告
     6. 調整圖像儲存路徑至 "./Prediction_Error_Embedding/outcome/image"
     7. 按照方法類型儲存更多詳細的實驗圖像
+    8. 新增彩色圖像處理支持，自動偵測圖像類型
     """
     # ==== 參數設置（直接在代碼中調整） ====
     
     # 基本參數設置
-    imgName = "male"            # 圖像名稱
-    filetype = "png"            # 圖像檔案類型
+    imgName = "Male"         # 圖像名稱
+    filetype = "tiff"           # 圖像檔案類型
     total_embeddings = 5        # 總嵌入次數
     
     # 各預測器的ratio_of_ones設置
     predictor_ratios = {
-        "PROPOSED": 0.5,        # proposed預測器的ratio_of_ones
+        "PROPOSED": 0.3,        # proposed預測器的ratio_of_ones
         "MED": 1.0,             # MED預測器的ratio_of_ones
         "GAP": 0.7,             # GAP預測器的ratio_of_ones
         "RHOMBUS": 0.9          # RHOMBUS預測器的ratio_of_ones
@@ -186,6 +191,9 @@ def main():
         os.makedirs(f"{image_dir}/with_grid", exist_ok=True)
         os.makedirs(f"{image_dir}/rotated_blocks", exist_ok=True)  # New directory for rotated block images
         os.makedirs(f"{plots_dir}/block_distribution", exist_ok=True)
+        # 彩色圖像特有目錄
+        os.makedirs(f"{image_dir}/channels", exist_ok=True)
+        os.makedirs(f"{histogram_dir}/channels", exist_ok=True)
     
     # 確保結果數據目錄存在
     os.makedirs(f"{base_dir}/data/{imgName}", exist_ok=True)
@@ -194,24 +202,33 @@ def main():
         # 清理 GPU 記憶體
         cleanup_memory()
 
-        # 讀取原始圖像
-        origImg = cv2.imread(f"./Prediction_Error_Embedding/image/{imgName}.{filetype}", cv2.IMREAD_GRAYSCALE)
-        if origImg is None:
-            # 如果找不到圖像，嘗試舊路徑
-            origImg = cv2.imread(f"./pred_and_QR/image/{imgName}.{filetype}", cv2.IMREAD_GRAYSCALE)
-            if origImg is None:
-                raise ValueError(f"Failed to read image: {imgName}.{filetype}")
+        # 讀取圖像 - 使用新的自動檢測功能
+        img_path = f"./Prediction_Error_Embedding/image/{imgName}.{filetype}"
+        if not os.path.exists(img_path):
+            img_path = f"./pred_and_QR/image/{imgName}.{filetype}"
+            if not os.path.exists(img_path):
+                raise ValueError(f"Failed to find image: {imgName}.{filetype}")
         
-        origImg = np.array(origImg).astype(np.uint8)
-
-        # 儲存原始圖像
-        save_image(origImg, f"{image_dir}/original.png")
+        print(f"Loading image from: {img_path}")
+        # 使用新的函數自動檢測圖像類型
+        origImg, is_grayscale_img = read_image_auto(img_path)
         
-        # 儲存原始圖像直方圖
-        save_histogram(origImg, 
-                     f"{histogram_dir}/original_histogram.png", 
-                     "Original Image Histogram")
-        plt.close()  # 確保關閉圖表
+        # 根據圖像類型儲存原始圖像
+        if is_grayscale_img:
+            print(f"Processing grayscale image: {imgName}.{filetype}")
+            save_image(origImg, f"{image_dir}/original.png")
+            # 儲存原始圖像直方圖
+            save_histogram(origImg, 
+                         f"{histogram_dir}/original_histogram.png", 
+                         "Original Image Histogram")
+        else:
+            print(f"Processing color image: {imgName}.{filetype}")
+            cv2.imwrite(f"{image_dir}/original.png", origImg)
+            
+            # 為彩色圖像創建三通道直方圖
+            visualize_color_histograms(origImg, 
+                                     f"{histogram_dir}/original_color_histogram.png", 
+                                     f"Original Color Image Histogram - {imgName}")
         
         # 如果使用精確測量模式，執行精確測量後返回
         if use_precise_measurement:
@@ -251,7 +268,7 @@ def main():
             # 判斷是否為 proposed 預測器
             is_proposed = prediction_method == PredictionMethod.PROPOSED
                 
-            # 執行選定的方法
+            # 執行選定的方法 - 這部分代碼已經設計為同時支持灰階和彩色圖像
             if method == "rotation":
                 final_pee_img, total_payload, pee_stages = pee_process_with_rotation_cuda(
                     origImg,
@@ -276,7 +293,6 @@ def main():
                     target_payload_size=-1  # 使用最大嵌入量
                 )
             elif method == "quadtree":
-                # 在 main.py 中，修改 quadtree 的呼叫
                 final_pee_img, total_payload, pee_stages = pee_process_with_quadtree_cuda(
                     origImg,
                     total_embeddings,
@@ -345,39 +361,75 @@ def main():
                     f"Metrics Comparison Across Stages for {imgName}"
                 )
                 
-                # 創建直方圖動畫
-                create_histogram_animation(
-                    pee_stages, origImg, plots_dir, imgName, method
-                )
+                # 為彩色圖像創建通道比較圖表
+                if not is_grayscale_img and 'channel_metrics' in pee_stages[0]:
+                    visualize_color_metrics_comparison(
+                        pee_stages, f"{plots_dir}/channel_metrics_comparison.png",
+                        f"Channel Metrics Comparison for {imgName}"
+                    )
+                
+                if is_grayscale_img:
+                    # 創建直方圖動畫 (僅適用於灰階圖像)
+                    create_histogram_animation(
+                        pee_stages, origImg, plots_dir, imgName, method
+                    )
 
             # 儲存每個階段的圖像和相關資訊
             for i, stage in enumerate(pee_stages):
-                # 確保數據類型一致
-                stage_img = cp.asnumpy(stage['stage_img'])
-                
-                # 共通項目：儲存階段結果圖像
-                stage_img_path = f"{image_dir}/stage_{i}_result.png"
-                save_image(stage_img, stage_img_path)
+                # 處理圖像格式 (針對彩色或灰階)
+                if is_grayscale_img:
+                    # 確保數據類型一致 (灰階)
+                    stage_img = cp.asnumpy(stage['stage_img']) if isinstance(stage['stage_img'], cp.ndarray) else stage['stage_img']
+                    
+                    # 共通項目：儲存階段結果圖像
+                    stage_img_path = f"{image_dir}/stage_{i}_result.png"
+                    save_image(stage_img, stage_img_path)
+                else:
+                    # 彩色圖像處理
+                    if isinstance(stage['stage_img'], cp.ndarray):
+                        stage_img = cp.asnumpy(stage['stage_img'])
+                    else:
+                        stage_img = stage['stage_img']
+                    
+                    # 儲存階段結果圖像
+                    stage_img_path = f"{image_dir}/stage_{i}_result.png"
+                    cv2.imwrite(stage_img_path, stage_img)
                 
                 # 僅對 proposed 預測器儲存更多詳細資訊
                 if is_proposed:
-                    # 儲存階段直方圖
-                    hist_path = f"{histogram_dir}/stage_{i}_histogram.png"
-                    plt.figure(figsize=(10, 6))
-                    plt.bar(range(256), generate_histogram(stage_img), alpha=0.7)
-                    plt.title(f"Histogram after PEE Stage {i}")
-                    plt.xlabel("Pixel Value")
-                    plt.ylabel("Frequency")
-                    plt.savefig(hist_path)
-                    plt.close()
+                    if is_grayscale_img:
+                        # 灰階圖像的直方圖處理
+                        hist_path = f"{histogram_dir}/stage_{i}_histogram.png"
+                        plt.figure(figsize=(10, 6))
+                        plt.bar(range(256), generate_histogram(stage_img), alpha=0.7)
+                        plt.title(f"Histogram after PEE Stage {i}")
+                        plt.xlabel("Pixel Value")
+                        plt.ylabel("Frequency")
+                        plt.savefig(hist_path)
+                        plt.close()
+                    else:
+                        # 彩色圖像的直方圖處理
+                        visualize_color_histograms(
+                            stage_img, 
+                            f"{histogram_dir}/stage_{i}_color_histogram.png",
+                            f"Color Histogram after PEE Stage {i}"
+                        )
                     
-                    # 創建嵌入熱圖
-                    heatmap_path = f"{image_dir}/stage_{i}_heatmap.png"
-                    visualize_embedding_heatmap(origImg, stage_img, heatmap_path)
+                    # 創建嵌入熱圖 (對彩色和灰階都適用，但使用不同的函數)
+                    if is_grayscale_img:
+                        heatmap_path = f"{image_dir}/stage_{i}_heatmap.png"
+                        visualize_embedding_heatmap(origImg, stage_img, heatmap_path)
+                    else:
+                        heatmap_path = f"{image_dir}/stage_{i}_color_heatmap.png"
+                        create_color_heatmap(origImg, stage_img, heatmap_path)
+                        
+                        # 創建通道對比圖
+                        channel_path = f"{image_dir}/stage_{i}_channel_comparison.png"
+                        create_color_channel_comparison(origImg, stage_img, channel_path)
                     
                     # 根據方法類型處理特定圖像儲存
-                    if method == "rotation":
-                        # Rotation 方法特有項目
+                    if method == "rotation" and is_grayscale_img:
+                        # Rotation 方法特有項目 (僅適用於灰階)
                         if 'rotated_stage_img' in stage:
                             rotated_img = cp.asnumpy(stage['rotated_stage_img'])
                             # 儲存旋轉後的圖像
@@ -393,8 +445,8 @@ def main():
                                     sub_path = f"{image_dir}/subimages/stage_{i}_subimage_{j}.png"
                                     save_image(sub_img, sub_path)
                                     
-                    elif method == "split":
-                        # Split 方法特有項目
+                    elif method == "split" and is_grayscale_img:
+                        # Split 方法特有項目 (僅適用於灰階)
                         # 創建分割示意圖
                         if i == 0:  # 僅第一階段需要
                             split_viz = visualize_split(origImg, split_size, block_base)
@@ -412,34 +464,81 @@ def main():
                                                         labels=("Original", "Embedded"))
                                     
                     elif method == "quadtree":
-                        # Quadtree 方法特有項目
+                        # Quadtree 方法特有項目 (彩色和灰階都可)
                         # 創建帶格線的結果圖像
                         if 'block_info' in stage:
-                            grid_image = add_grid_lines(stage_img.copy(), stage['block_info'])
-                            grid_path = f"{image_dir}/with_grid/stage_{i}_result_with_grid.png"
-                            save_image(grid_image, grid_path)
+                            if is_grayscale_img:
+                                # 灰階圖像的網格處理
+                                grid_image = add_grid_lines(stage_img.copy(), stage['block_info'])
+                                grid_path = f"{image_dir}/with_grid/stage_{i}_result_with_grid.png"
+                                save_image(grid_image, grid_path)
+                            else:
+                                # 彩色圖像需要為每個通道單獨處理網格
+                                # 為藍色通道單獨繪製網格
+                                if 'channel_metrics' in stage and 'block_info' in stage:
+                                    b, g, r = cv2.split(stage_img)
+                                    if 'blue' in stage['block_info']:
+                                        try:
+                                            grid_b = add_grid_lines(b.copy(), stage['block_info']['blue'])
+                                            grid_path = f"{image_dir}/with_grid/stage_{i}_blue_channel_grid.png"
+                                            save_image(grid_b, grid_path)
+                                        except Exception as e:
+                                            print(f"Warning: Could not create grid for blue channel: {e}")
                             
                         # 創建 Quadtree 分割視覺化
                         if 'block_info' in stage:
-                            quadtree_viz = visualize_quadtree(stage['block_info'], origImg.shape)
-                            viz_path = f"{image_dir}/quadtree_visualization/stage_{i}_quadtree.png"
-                            save_image(quadtree_viz, viz_path)
+                            if is_grayscale_img:
+                                try:
+                                    quadtree_viz = visualize_quadtree(stage['block_info'], origImg.shape)
+                                    viz_path = f"{image_dir}/quadtree_visualization/stage_{i}_quadtree.png"
+                                    save_image(quadtree_viz, viz_path)
+                                except Exception as e:
+                                    print(f"Warning: Could not create quadtree visualization: {e}")
+                            else:
+                                # 彩色圖像的quadtree分割視覺化 - 為每個通道創建單獨的視覺化
+                                if 'blue' in stage['block_info']:
+                                    try:
+                                        b, g, r = cv2.split(origImg)
+                                        blue_viz = visualize_quadtree(stage['block_info']['blue'], b.shape)
+                                        viz_path = f"{image_dir}/quadtree_visualization/stage_{i}_blue_quadtree.png"
+                                        save_image(blue_viz, viz_path)
+                                    except Exception as e:
+                                        print(f"Warning: Could not create blue channel quadtree visualization: {e}")
                             
                         # 創建區塊大小分布統計
                         if 'block_info' in stage:
-                            create_block_size_distribution_chart(
-                                stage['block_info'], 
-                                f"{plots_dir}/block_distribution/stage_{i}_block_distribution.png",
-                                i
-                            )
+                            if is_grayscale_img:
+                                try:
+                                    create_block_size_distribution_chart(
+                                        stage['block_info'], 
+                                        f"{plots_dir}/block_distribution/stage_{i}_block_distribution.png",
+                                        i
+                                    )
+                                except Exception as e:
+                                    print(f"Warning: Could not create block size distribution chart: {e}")
+                            else:
+                                # 彩色圖像 - 僅為藍色通道創建統計
+                                if 'blue' in stage['block_info']:
+                                    try:
+                                        create_block_size_distribution_chart(
+                                            stage['block_info']['blue'], 
+                                            f"{plots_dir}/block_distribution/stage_{i}_blue_distribution.png",
+                                            i
+                                        )
+                                    except Exception as e:
+                                        print(f"Warning: Could not create blue channel block distribution chart: {e}")
                             
                         # 創建旋轉角度視覺化（如果有）
                         if 'block_rotations' in stage:
-                            visualize_rotation_angles(
-                                stage['block_rotations'],
-                                origImg.shape,
-                                f"{image_dir}/quadtree_visualization/stage_{i}_rotation_angles.png"
-                            )
+                            if is_grayscale_img:
+                                try:
+                                    visualize_rotation_angles(
+                                        stage['block_rotations'],
+                                        origImg.shape,
+                                        f"{image_dir}/quadtree_visualization/stage_{i}_rotation_angles.png"
+                                    )
+                                except Exception as e:
+                                    print(f"Warning: Could not create rotation angles visualization: {e}")
                                 
                 # 打印階段統計資訊
                 print(f"\nStage {i} metrics:")
@@ -447,36 +546,96 @@ def main():
                 print(f"  BPP: {stage['bpp']:.4f}")
                 print(f"  PSNR: {stage['psnr']:.2f}")
                 print(f"  SSIM: {stage['ssim']:.4f}")
+                print(f"  Hist Correlation: {stage['hist_corr']:.4f}")
+                
+                # 彩色圖像時，額外顯示每個通道的指標
+                if not is_grayscale_img and 'channel_metrics' in stage:
+                    print("\n  Channel metrics:")
+                    for channel, metrics in stage['channel_metrics'].items():
+                        print(f"    {channel.capitalize()}: PSNR={metrics['psnr']:.2f}, SSIM={metrics['ssim']:.4f}, Hist_Corr={metrics['hist_corr']:.4f}")
                 
                 # Quadtree 方法特有的統計輸出
                 if method == "quadtree" and 'block_info' in stage:
-                    print(f"\nBlock statistics for Stage {i}:")
-                    for size in sorted([int(s) for s in stage['block_info'].keys()], reverse=True):
-                        block_count = len(stage['block_info'][str(size)]['blocks'])
-                        if block_count > 0:
-                            rotation = stage['block_rotations'][size] if 'block_rotations' in stage else 0
-                            print(f"  {size}x{size} blocks: {block_count}, Rotation: {rotation}°")
-                    print("")
+                    if is_grayscale_img:
+                        print(f"\nBlock statistics for Stage {i}:")
+                        for size in sorted([int(s) for s in stage['block_info'].keys()], reverse=True):
+                            block_count = len(stage['block_info'][str(size)]['blocks'])
+                            if block_count > 0:
+                                rotation = stage['block_rotations'][size] if 'block_rotations' in stage else 0
+                                print(f"  {size}x{size} blocks: {block_count}, Rotation: {rotation}°")
+                        print("")
+                    else:
+                        # 彩色圖像時的區塊統計
+                        if 'blue' in stage['block_info']:
+                            try:
+                                print(f"\nBlue channel block statistics for Stage {i}:")
+                                for size in sorted([int(s) for s in stage['block_info']['blue'].keys()], reverse=True):
+                                    block_count = len(stage['block_info']['blue'][str(size)]['blocks'])
+                                    if block_count > 0:
+                                        print(f"  {size}x{size} blocks: {block_count}")
+                                print("")
+                            except:
+                                print("Warning: Cannot display blue channel block statistics.")
 
             # 儲存最終嵌入結果圖像
             final_img_path = f"{image_dir}/final_result.png"
-            save_image(final_pee_img, final_img_path)
+            if is_grayscale_img:
+                save_image(final_pee_img, final_img_path)
+            else:
+                cv2.imwrite(final_img_path, final_pee_img)
             
             # 原始與最終結果對比圖
             if is_proposed:
                 compare_path = f"{image_dir}/original_vs_final.png"
-                save_comparison_image(origImg, final_pee_img, compare_path, 
-                                    labels=("Original", "Embedded"))
+                if is_grayscale_img:
+                    save_comparison_image(origImg, final_pee_img, compare_path, 
+                                        labels=("Original", "Embedded"))
+                else:
+                    # 彩色圖像的比較需要特殊處理
+                    # 將兩張彩色圖像水平拼接
+                    h1, w1 = origImg.shape[:2]
+                    h2, w2 = final_pee_img.shape[:2]
+                    
+                    max_h = max(h1, h2)
+                    combined = np.zeros((max_h, w1 + w2 + 5, 3), dtype=np.uint8)
+                    
+                    combined[:h1, :w1] = origImg
+                    combined[:h2, w1+5:w1+5+w2] = final_pee_img
+                    
+                    # 添加標籤
+                    font = cv2.FONT_HERSHEY_SIMPLEX
+                    cv2.putText(combined, "Original", (10, 30), font, 0.8, (0, 0, 255), 2)
+                    cv2.putText(combined, "Embedded", (w1 + 15, 30), font, 0.8, (0, 0, 255), 2)
+                    
+                    cv2.imwrite(compare_path, combined)
                 
                 # 創建最終嵌入熱圖
-                heatmap_path = f"{image_dir}/final_heatmap.png"
-                visualize_embedding_heatmap(origImg, final_pee_img, heatmap_path)
+                if is_grayscale_img:
+                    heatmap_path = f"{image_dir}/final_heatmap.png"
+                    visualize_embedding_heatmap(origImg, final_pee_img, heatmap_path)
+                else:
+                    heatmap_path = f"{image_dir}/final_color_heatmap.png"
+                    create_color_heatmap(origImg, final_pee_img, heatmap_path)
+                    
+                    # 儲存最終通道對比
+                    create_color_channel_comparison(origImg, final_pee_img, f"{image_dir}/final_channel_comparison.png")
             
             # Quadtree 方法特有：儲存最終帶格線圖像
             if method == "quadtree" and 'block_info' in pee_stages[-1]:
-                final_grid_path = f"{image_dir}/with_grid/final_result_with_grid.png"
-                final_grid_image = add_grid_lines(final_pee_img.copy(), pee_stages[-1]['block_info'])
-                save_image(final_grid_image, final_grid_path)
+                if is_grayscale_img:
+                    final_grid_path = f"{image_dir}/with_grid/final_result_with_grid.png"
+                    final_grid_image = add_grid_lines(final_pee_img.copy(), pee_stages[-1]['block_info'])
+                    save_image(final_grid_image, final_grid_path)
+                else:
+                    # 彩色圖像 - 展示藍色通道的網格
+                    if 'blue' in pee_stages[-1]['block_info']:
+                        try:
+                            b, g, r = cv2.split(final_pee_img)
+                            final_grid_path = f"{image_dir}/with_grid/final_blue_channel_grid.png"
+                            final_blue_grid = add_grid_lines(b.copy(), pee_stages[-1]['block_info']['blue'])
+                            save_image(final_blue_grid, final_grid_path)
+                        except Exception as e:
+                            print(f"Warning: Could not create final blue channel grid: {e}")
 
             # 計算並儲存 BPP-PSNR 數據
             bpp_psnr_data = []
@@ -547,13 +706,19 @@ def main():
 
             # 計算並輸出最終結果
             final_bpp = total_payload / total_pixels
-            final_psnr = calculate_psnr(origImg, final_pee_img)
-            final_ssim = calculate_ssim(origImg, final_pee_img)
-            hist_orig = generate_histogram(origImg)
-            hist_final = generate_histogram(final_pee_img)
-            final_hist_corr = histogram_correlation(hist_orig, hist_final)
+            
+            # 根據圖像類型計算最終品質指標
+            if is_grayscale_img:
+                final_psnr = calculate_psnr(origImg, final_pee_img)
+                final_ssim = calculate_ssim(origImg, final_pee_img)
+                hist_orig = generate_histogram(origImg)
+                hist_final = generate_histogram(final_pee_img)
+                final_hist_corr = histogram_correlation(hist_orig, hist_final)
+            else:
+                final_psnr, final_ssim, final_hist_corr = calculate_color_metrics(origImg, final_pee_img)
 
             print("\nFinal Results:")
+            print(f"Image Type: {'Grayscale' if is_grayscale_img else 'Color'}")
             print(f"Method: {method}")
             print(f"Prediction Method: {prediction_method.value}")
             print(f"Ratio of Ones: {ratio_of_ones}")
@@ -562,9 +727,16 @@ def main():
             print(f"Final PSNR: {final_psnr:.2f}")
             print(f"Final SSIM: {final_ssim:.4f}")
             print(f"Final Histogram Correlation: {final_hist_corr:.4f}")
+            
+            # 彩色圖像時，顯示每個通道的指標
+            if not is_grayscale_img and 'channel_metrics' in pee_stages[-1]:
+                print("\nFinal Channel Metrics:")
+                for channel, metrics in pee_stages[-1]['channel_metrics'].items():
+                    print(f"  {channel.capitalize()}: PSNR={metrics['psnr']:.2f}, SSIM={metrics['ssim']:.4f}, Hist_Corr={metrics['hist_corr']:.4f}")
 
             # 更新最終結果儲存
             final_results = {
+                'image_type': 'grayscale' if is_grayscale_img else 'color',
                 'method': method,
                 'prediction_method': prediction_method.value,
                 'ratio_of_ones': ratio_of_ones,
