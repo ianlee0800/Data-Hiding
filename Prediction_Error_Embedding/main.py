@@ -68,7 +68,7 @@ def main():
     # ==== 參數設置（直接在代碼中調整） ====
     
     # 基本參數設置
-    imgName = "Male"         # 圖像名稱
+    imgName = "F16"         # 圖像名稱
     filetype = "tiff"           # 圖像檔案類型
     total_embeddings = 5        # 總嵌入次數
     
@@ -94,7 +94,7 @@ def main():
     prediction_method_str = "PROPOSED"
     
     # 方法選擇
-    method = "quadtree"         # 可選："rotation", "split", "quadtree"
+    method = "split"         # 可選："rotation", "split", "quadtree"
     
     # 各方法共用參數
     split_size = 2              # 用於 rotation 和 split 方法

@@ -103,30 +103,31 @@ def histogram_data_hiding(img, pee_info_bits, ratio_of_ones=1):
     return markedImg, total_payload, payloads, rounds
 
 def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, 
-                                 split_size, el_mode, prediction_method=PredictionMethod.PROPOSED,
+                                 split_size, el_mode, prediction_method=None,
                                  target_payload_size=-1):
     """
-    使用旋轉的 PEE 處理函數，支援多種預測方法
+    Using rotation PEE method with support for both grayscale and color images
     
     Parameters:
     -----------
     img : numpy.ndarray
-        輸入圖像
-    total_embeddings : int 
-        總嵌入次數
-    ratio_of_ones : float
-        嵌入數據中1的比例
-    use_different_weights : bool
-        是否對每個子圖像使用不同的權重 (僅用於 PROPOSED 方法)
-    split_size : int
-        分割大小
-    el_mode : int
-        EL模式 (0:無限制, 1:漸增, 2:漸減)
-    prediction_method : PredictionMethod
-        預測方法選擇 (PROPOSED, MED, GAP)
-    target_payload_size : int
-        目標總payload大小，設為-1時使用最大容量
+        Input image (grayscale or color)
+    (other parameters remain the same)
+        
+    Returns:
+    --------
+    tuple
+        (final_pee_img, total_payload, pee_stages)
     """
+    # Check if this is a color image by examining image shape
+    if len(img.shape) == 3 and img.shape[2] == 3:
+        # For color images, redirect to color image processing function
+        print("Detected color image, redirecting to color image processing...")
+        return pee_process_color_image_rotation_cuda(
+            img, total_embeddings, ratio_of_ones, use_different_weights,
+            split_size, el_mode, prediction_method, target_payload_size
+        )
+
     # 初始化處理
     original_img = cp.asarray(img)
     height, width = img.shape
@@ -335,34 +336,207 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
     final_pee_img = cp.asnumpy(current_img)
     return final_pee_img, int(total_payload), pee_stages
 
+def pee_process_color_image_rotation_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, 
+                                       split_size, el_mode, prediction_method=None,
+                                       target_payload_size=-1):
+    """
+    Process a color image using rotation PEE method.
+    
+    This function splits a color image into its RGB channels, processes each channel
+    independently using the existing rotation PEE method, and then recombines the
+    channels into a final color image.
+    
+    Parameters:
+    -----------
+    Same as pee_process_with_rotation_cuda, but img is now a color image
+        
+    Returns:
+    --------
+    tuple
+        (final_color_img, total_payload, color_pee_stages)
+    """
+    import os
+    import cv2
+    import numpy as np
+    import cupy as cp
+    from color import split_color_channels, combine_color_channels
+    from common import cleanup_memory
+    
+    if prediction_method is None:
+        # Import PredictionMethod if not provided to maintain compatibility
+        from image_processing import PredictionMethod
+        prediction_method = PredictionMethod.PROPOSED
+    
+    # Split color image into channels
+    b_channel, g_channel, r_channel = split_color_channels(img)
+    
+    # Track total payload across all channels
+    total_payload = 0
+    
+    color_pee_stages = []
+    
+    # Process each channel separately
+    print("\nProcessing blue channel...")
+    final_b_img, b_payload, b_stages = pee_process_with_rotation_cuda(
+        b_channel, total_embeddings, ratio_of_ones, use_different_weights,
+        split_size, el_mode, prediction_method=prediction_method,
+        target_payload_size=target_payload_size // 3 if target_payload_size > 0 else -1
+    )
+    total_payload += b_payload
+    
+    # Clean GPU memory between channel processing
+    cleanup_memory()
+    
+    print("\nProcessing green channel...")
+    final_g_img, g_payload, g_stages = pee_process_with_rotation_cuda(
+        g_channel, total_embeddings, ratio_of_ones, use_different_weights,
+        split_size, el_mode, prediction_method=prediction_method,
+        target_payload_size=target_payload_size // 3 if target_payload_size > 0 else -1
+    )
+    total_payload += g_payload
+    
+    # Clean GPU memory between channel processing
+    cleanup_memory()
+    
+    print("\nProcessing red channel...")
+    final_r_img, r_payload, r_stages = pee_process_with_rotation_cuda(
+        r_channel, total_embeddings, ratio_of_ones, use_different_weights,
+        split_size, el_mode, prediction_method=prediction_method,
+        target_payload_size=target_payload_size // 3 if target_payload_size > 0 else -1
+    )
+    total_payload += r_payload
+    
+    # Combine channels back into a color image
+    final_color_img = combine_color_channels(final_b_img, final_g_img, final_r_img)
+    
+    # Create combined stages information for all 3 channels
+    for i in range(min(len(b_stages), len(g_stages), len(r_stages))):
+        # Get stage info from each channel
+        b_stage = b_stages[i]
+        g_stage = g_stages[i]
+        r_stage = r_stages[i]
+        
+        # Initialize combined stage info
+        combined_stage = {
+            'embedding': b_stage['embedding'],  # All should be the same
+            'payload': b_stage['payload'] + g_stage['payload'] + r_stage['payload'],
+            'channel_payloads': {
+                'blue': b_stage['payload'],
+                'green': g_stage['payload'],
+                'red': r_stage['payload']
+            },
+            'bpp': (b_stage['bpp'] + g_stage['bpp'] + r_stage['bpp']) / 3,  # Average BPP
+            'channel_metrics': {
+                'blue': {'psnr': b_stage['psnr'], 'ssim': b_stage['ssim'], 'hist_corr': b_stage['hist_corr']},
+                'green': {'psnr': g_stage['psnr'], 'ssim': g_stage['ssim'], 'hist_corr': g_stage['hist_corr']},
+                'red': {'psnr': r_stage['psnr'], 'ssim': r_stage['ssim'], 'hist_corr': r_stage['hist_corr']}
+            }
+        }
+        
+        # Combine stage images if available
+        if 'stage_img' in b_stage and 'stage_img' in g_stage and 'stage_img' in r_stage:
+            b_stage_img = cp.asnumpy(b_stage['stage_img']) if isinstance(b_stage['stage_img'], cp.ndarray) else b_stage['stage_img']
+            g_stage_img = cp.asnumpy(g_stage['stage_img']) if isinstance(g_stage['stage_img'], cp.ndarray) else g_stage['stage_img']
+            r_stage_img = cp.asnumpy(r_stage['stage_img']) if isinstance(r_stage['stage_img'], cp.ndarray) else r_stage['stage_img']
+            
+            combined_stage['stage_img'] = combine_color_channels(b_stage_img, g_stage_img, r_stage_img)
+        
+        # Combine rotated stage images if available
+        if 'rotated_stage_img' in b_stage and 'rotated_stage_img' in g_stage and 'rotated_stage_img' in r_stage:
+            b_rotated_img = cp.asnumpy(b_stage['rotated_stage_img']) if isinstance(b_stage['rotated_stage_img'], cp.ndarray) else b_stage['rotated_stage_img']
+            g_rotated_img = cp.asnumpy(g_stage['rotated_stage_img']) if isinstance(g_stage['rotated_stage_img'], cp.ndarray) else g_stage['rotated_stage_img']
+            r_rotated_img = cp.asnumpy(r_stage['rotated_stage_img']) if isinstance(r_stage['rotated_stage_img'], cp.ndarray) else r_stage['rotated_stage_img']
+            
+            combined_stage['rotated_stage_img'] = combine_color_channels(b_rotated_img, g_rotated_img, r_rotated_img)
+            combined_stage['rotation'] = b_stage.get('rotation', i * 90)  # All channels should have the same rotation
+        
+        # Calculate combined metrics
+        psnr = (b_stage['psnr'] + g_stage['psnr'] + r_stage['psnr']) / 3
+        ssim = (b_stage['ssim'] + g_stage['ssim'] + r_stage['ssim']) / 3
+        hist_corr = (b_stage['hist_corr'] + g_stage['hist_corr'] + r_stage['hist_corr']) / 3
+        
+        combined_stage['psnr'] = psnr
+        combined_stage['ssim'] = ssim
+        combined_stage['hist_corr'] = hist_corr
+        
+        # Add sub_images information if available (nested by channel)
+        if 'sub_images' in b_stage and 'sub_images' in g_stage and 'sub_images' in r_stage:
+            combined_stage['sub_images'] = {
+                'blue': b_stage['sub_images'],
+                'green': g_stage['sub_images'],
+                'red': r_stage['sub_images']
+            }
+            
+        # Block params need special handling to ensure compatibility with create_pee_info_table
+        if 'block_params' in b_stage and 'block_params' in g_stage and 'block_params' in r_stage:
+            combined_stage['block_params'] = []
+            
+            # We'll take as many block params as available in all three channels
+            for j in range(min(len(b_stage['block_params']), len(g_stage['block_params']), len(r_stage['block_params']))):
+                # Get block parameters from each channel
+                b_block = b_stage['block_params'][j]
+                g_block = g_stage['block_params'][j]
+                r_block = r_stage['block_params'][j]
+                
+                # Create a combined block that has both the nested channel data and
+                # flattened keys that create_pee_info_table expects
+                combined_block = {
+                    'channel_params': {
+                        'blue': b_block,
+                        'green': g_block,
+                        'red': r_block
+                    },
+                    # Include the keys that create_pee_info_table expects at the top level
+                    'weights': b_block.get('weights', 'N/A'),  # Take weights from blue channel
+                    'EL': b_block.get('EL', 0),                # Take EL from blue channel
+                    'payload': (b_block.get('payload', 0) + 
+                               g_block.get('payload', 0) + 
+                               r_block.get('payload', 0)),
+                    'psnr': (b_block.get('psnr', 0) + 
+                            g_block.get('psnr', 0) + 
+                            r_block.get('psnr', 0)) / 3,
+                    'ssim': (b_block.get('ssim', 0) + 
+                            g_block.get('ssim', 0) + 
+                            r_block.get('ssim', 0)) / 3,
+                    'hist_corr': (b_block.get('hist_corr', 0) + 
+                                 g_block.get('hist_corr', 0) + 
+                                 r_block.get('hist_corr', 0)) / 3,
+                    'rotation': b_block.get('rotation', 0)      # All channels have same rotation
+                }
+                combined_stage['block_params'].append(combined_block)
+            
+        # Add stage to combined stages
+        color_pee_stages.append(combined_stage)
+    
+    return final_color_img, total_payload, color_pee_stages
+
 def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, 
                               split_size, el_mode, block_base, 
-                              prediction_method=PredictionMethod.PROPOSED,
+                              prediction_method=None,
                               target_payload_size=-1):
     """
-    使用彈性分割的 PEE 處理函數，支援多種預測方法和精確的 payload 控制
+    Using split PEE method with support for both grayscale and color images
     
     Parameters:
     -----------
     img : numpy.ndarray
-        輸入圖像
-    total_embeddings : int
-        總嵌入次數
-    ratio_of_ones : float
-        嵌入數據中1的比例
-    use_different_weights : bool
-        是否對每個子圖像使用不同的權重 (僅用於 PROPOSED 方法)
-    split_size : int
-        分割大小
-    el_mode : int
-        EL模式 (0:無限制, 1:漸增, 2:漸減)
-    block_base : bool
-        True: 使用 block-based 分割, False: 使用 quarter-based 分割
-    prediction_method : PredictionMethod
-        預測方法選擇 (PROPOSED, MED, GAP)
-    target_payload_size : int
-        目標總payload大小，設為-1時使用最大容量
+        Input image (grayscale or color)
+    (other parameters remain the same)
+        
+    Returns:
+    --------
+    tuple
+        (final_pee_img, total_payload, pee_stages)
     """
+    # Check if this is a color image by examining image shape
+    if len(img.shape) == 3 and img.shape[2] == 3:
+        # For color images, redirect to color image processing function
+        print("Detected color image, redirecting to color image processing...")
+        return pee_process_color_image_split_cuda(
+            img, total_embeddings, ratio_of_ones, use_different_weights,
+            split_size, el_mode, block_base, prediction_method, target_payload_size
+        )
+
     # 將輸入圖像轉換為 CUDA 陣列
     original_img = cp.asarray(img)
     height, width = original_img.shape
@@ -567,3 +741,169 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
     # 返回最終結果
     final_pee_img = cp.asnumpy(current_img)
     return final_pee_img, int(total_payload), pee_stages
+
+def pee_process_color_image_split_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, 
+                                     split_size, el_mode, block_base, 
+                                     prediction_method=None,
+                                     target_payload_size=-1):
+    """
+    Process a color image using split PEE method.
+    
+    This function splits a color image into its RGB channels, processes each channel
+    independently using the existing split PEE method, and then recombines the
+    channels into a final color image.
+    
+    Parameters:
+    -----------
+    Same as pee_process_with_split_cuda, but img is now a color image
+        
+    Returns:
+    --------
+    tuple
+        (final_color_img, total_payload, color_pee_stages)
+    """
+    import os
+    import cv2
+    import numpy as np
+    import cupy as cp
+    from color import split_color_channels, combine_color_channels
+    from common import cleanup_memory
+    
+    if prediction_method is None:
+        # Import PredictionMethod if not provided to maintain compatibility
+        from image_processing import PredictionMethod
+        prediction_method = PredictionMethod.PROPOSED
+    
+    # Split color image into channels
+    b_channel, g_channel, r_channel = split_color_channels(img)
+    
+    # Track total payload across all channels
+    total_payload = 0
+    
+    color_pee_stages = []
+    
+    # Process each channel separately
+    print("\nProcessing blue channel...")
+    final_b_img, b_payload, b_stages = pee_process_with_split_cuda(
+        b_channel, total_embeddings, ratio_of_ones, use_different_weights,
+        split_size, el_mode, block_base, prediction_method=prediction_method,
+        target_payload_size=target_payload_size // 3 if target_payload_size > 0 else -1
+    )
+    total_payload += b_payload
+    
+    # Clean GPU memory between channel processing
+    cleanup_memory()
+    
+    print("\nProcessing green channel...")
+    final_g_img, g_payload, g_stages = pee_process_with_split_cuda(
+        g_channel, total_embeddings, ratio_of_ones, use_different_weights,
+        split_size, el_mode, block_base, prediction_method=prediction_method,
+        target_payload_size=target_payload_size // 3 if target_payload_size > 0 else -1
+    )
+    total_payload += g_payload
+    
+    # Clean GPU memory between channel processing
+    cleanup_memory()
+    
+    print("\nProcessing red channel...")
+    final_r_img, r_payload, r_stages = pee_process_with_split_cuda(
+        r_channel, total_embeddings, ratio_of_ones, use_different_weights,
+        split_size, el_mode, block_base, prediction_method=prediction_method,
+        target_payload_size=target_payload_size // 3 if target_payload_size > 0 else -1
+    )
+    total_payload += r_payload
+    
+    # Combine channels back into a color image
+    final_color_img = combine_color_channels(final_b_img, final_g_img, final_r_img)
+    
+    # Create combined stages information for all 3 channels
+    for i in range(min(len(b_stages), len(g_stages), len(r_stages))):
+        # Get stage info from each channel
+        b_stage = b_stages[i]
+        g_stage = g_stages[i]
+        r_stage = r_stages[i]
+        
+        # Initialize combined stage info
+        combined_stage = {
+            'embedding': b_stage['embedding'],  # All should be the same
+            'payload': b_stage['payload'] + g_stage['payload'] + r_stage['payload'],
+            'channel_payloads': {
+                'blue': b_stage['payload'],
+                'green': g_stage['payload'],
+                'red': r_stage['payload']
+            },
+            'bpp': (b_stage['bpp'] + g_stage['bpp'] + r_stage['bpp']) / 3,  # Average BPP
+            'channel_metrics': {
+                'blue': {'psnr': b_stage['psnr'], 'ssim': b_stage['ssim'], 'hist_corr': b_stage['hist_corr']},
+                'green': {'psnr': g_stage['psnr'], 'ssim': g_stage['ssim'], 'hist_corr': g_stage['hist_corr']},
+                'red': {'psnr': r_stage['psnr'], 'ssim': r_stage['ssim'], 'hist_corr': r_stage['hist_corr']}
+            }
+        }
+        
+        # Combine stage images if available
+        if 'stage_img' in b_stage and 'stage_img' in g_stage and 'stage_img' in r_stage:
+            b_stage_img = cp.asnumpy(b_stage['stage_img']) if isinstance(b_stage['stage_img'], cp.ndarray) else b_stage['stage_img']
+            g_stage_img = cp.asnumpy(g_stage['stage_img']) if isinstance(g_stage['stage_img'], cp.ndarray) else g_stage['stage_img']
+            r_stage_img = cp.asnumpy(r_stage['stage_img']) if isinstance(r_stage['stage_img'], cp.ndarray) else r_stage['stage_img']
+            
+            combined_stage['stage_img'] = combine_color_channels(b_stage_img, g_stage_img, r_stage_img)
+        
+        # Calculate combined metrics
+        psnr = (b_stage['psnr'] + g_stage['psnr'] + r_stage['psnr']) / 3
+        ssim = (b_stage['ssim'] + g_stage['ssim'] + r_stage['ssim']) / 3
+        hist_corr = (b_stage['hist_corr'] + g_stage['hist_corr'] + r_stage['hist_corr']) / 3
+        
+        combined_stage['psnr'] = psnr
+        combined_stage['ssim'] = ssim
+        combined_stage['hist_corr'] = hist_corr
+        
+        # Add sub_images information
+        if 'sub_images' in b_stage and 'sub_images' in g_stage and 'sub_images' in r_stage:
+            combined_stage['sub_images'] = {
+                'blue': b_stage['sub_images'],
+                'green': g_stage['sub_images'],
+                'red': r_stage['sub_images']
+            }
+            
+        # Block params need special handling to ensure compatibility with create_pee_info_table
+        if 'block_params' in b_stage and 'block_params' in g_stage and 'block_params' in r_stage:
+            combined_stage['block_params'] = []
+            
+            # We'll take as many block params as available in all three channels
+            for j in range(min(len(b_stage['block_params']), len(g_stage['block_params']), len(r_stage['block_params']))):
+                # Get block parameters from each channel
+                b_block = b_stage['block_params'][j]
+                g_block = g_stage['block_params'][j]
+                r_block = r_stage['block_params'][j]
+                
+                # Create a combined block that has both the nested channel data and
+                # flattened keys that create_pee_info_table expects
+                combined_block = {
+                    'channel_params': {
+                        'blue': b_block,
+                        'green': g_block,
+                        'red': r_block
+                    },
+                    # Include the keys that create_pee_info_table expects at the top level
+                    'weights': b_block.get('weights', 'N/A'),  # Take weights from blue channel
+                    'EL': b_block.get('EL', 0),                # Take EL from blue channel
+                    'payload': (b_block.get('payload', 0) + 
+                            g_block.get('payload', 0) + 
+                            r_block.get('payload', 0)),
+                    'psnr': (b_block.get('psnr', 0) + 
+                            g_block.get('psnr', 0) + 
+                            r_block.get('psnr', 0)) / 3,
+                    'ssim': (b_block.get('ssim', 0) + 
+                            g_block.get('ssim', 0) + 
+                            r_block.get('ssim', 0)) / 3,
+                    'hist_corr': (b_block.get('hist_corr', 0) + 
+                                g_block.get('hist_corr', 0) + 
+                                r_block.get('hist_corr', 0)) / 3,
+                    'rotation': b_block.get('rotation', 0)      # All channels have same rotation
+                }
+                combined_stage['block_params'].append(combined_block)
+            
+        # Add stage to combined stages
+        color_pee_stages.append(combined_stage)
+    
+    return final_color_img, total_payload, color_pee_stages

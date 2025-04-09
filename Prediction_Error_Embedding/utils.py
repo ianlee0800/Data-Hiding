@@ -205,30 +205,43 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels,
                         block.get('EL', '-'),
                         "Different weights" if use_different_weights else ""
                     ])
+        # When handling block_params for non-quadtree methods:
         else:
-            # 處理標準模式的區塊資訊
+            # Process standard mode block information
             total_blocks = split_size * split_size
             sub_image_pixels = total_pixels // total_blocks
             
             for i, block in enumerate(stage['block_params']):
-                # 處理權重顯示，考慮不同預測方法的情況
-                weights_display = (
-                    "N/A" if block['weights'] == "N/A"
-                    else ", ".join([f"{w:.2f}" for w in block['weights']]) if block['weights']
-                    else "-"
-                )
+                # Process weights display with better error handling
+                weights_display = "-"
+                if 'weights' in block:
+                    if block['weights'] == "N/A":
+                        weights_display = "N/A"
+                    elif block['weights']:
+                        try:
+                            weights_display = ", ".join([f"{w:.2f}" for w in block['weights']])
+                        except:
+                            weights_display = str(block['weights'])
+                
+                # Get other fields with defaults if missing
+                payload = block.get('payload', 0)
+                psnr = block.get('psnr', 0)
+                ssim = block.get('ssim', 0)
+                hist_corr = block.get('hist_corr', 0)
+                el = block.get('EL', '-')
+                rotation = block.get('rotation', 0)
                 
                 table.add_row([
                     stage['embedding'] if i == 0 else "",
                     i,
-                    block['payload'],
-                    f"{block['payload'] / sub_image_pixels:.4f}",
-                    f"{block['psnr']:.2f}",
-                    f"{block['ssim']:.4f}",
-                    f"{block['hist_corr']:.4f}",
+                    payload,
+                    f"{payload / sub_image_pixels:.4f}",
+                    f"{psnr:.2f}",
+                    f"{ssim:.4f}",
+                    f"{hist_corr:.4f}",
                     weights_display,
-                    block['EL'],
-                    f"{block['rotation']}°",
+                    el,
+                    f"{rotation}°",
                     "Different weights" if use_different_weights else ""
                 ])
         
