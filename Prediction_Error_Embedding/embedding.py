@@ -104,7 +104,7 @@ def histogram_data_hiding(img, pee_info_bits, ratio_of_ones=1):
 
 def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, 
                                  split_size, el_mode, prediction_method=None,
-                                 target_payload_size=-1):
+                                 target_payload_size=-1, imgName=None, output_dir=None):
     """
     Using rotation PEE method with support for both grayscale and color images
     
@@ -112,21 +112,68 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
     -----------
     img : numpy.ndarray
         Input image (grayscale or color)
-    (other parameters remain the same)
+    total_embeddings : int
+        Total number of embedding stages
+    ratio_of_ones : float
+        Ratio of ones in embedding data
+    use_different_weights : bool
+        Whether to use different weights for sub-images
+    split_size : int
+        Split size
+    el_mode : int
+        Embedding level mode
+    prediction_method : PredictionMethod, optional
+        Prediction method to use
+    target_payload_size : int, optional
+        Target payload size, set to -1 for maximum capacity
+    imgName : str, optional
+        Image name for saving results
+    output_dir : str, optional
+        Output directory for saving results
         
     Returns:
     --------
     tuple
         (final_pee_img, total_payload, pee_stages)
     """
+    # 確保導入所需函數
+    import os
+    import cv2
+    import numpy as np
+    import cupy as cp
+    from image_processing import save_image, save_histogram
+    from visualization import visualize_embedding_heatmap, save_comparison_image
+    
     # Check if this is a color image by examining image shape
     if len(img.shape) == 3 and img.shape[2] == 3:
         # For color images, redirect to color image processing function
         print("Detected color image, redirecting to color image processing...")
         return pee_process_color_image_rotation_cuda(
             img, total_embeddings, ratio_of_ones, use_different_weights,
-            split_size, el_mode, prediction_method, target_payload_size
+            split_size, el_mode, prediction_method, target_payload_size,
+            imgName, output_dir
         )
+
+    # 檢查並建立輸出目錄
+    if imgName is not None and output_dir is not None:
+        try:
+            # 創建所有必要的目錄
+            image_dir = os.path.join(output_dir, "image", imgName, "rotation")
+            os.makedirs(image_dir, exist_ok=True)
+            os.makedirs(os.path.join(image_dir, "rotated"), exist_ok=True)
+            os.makedirs(os.path.join(image_dir, "subimages"), exist_ok=True)
+            hist_dir = os.path.join(output_dir, "histogram", imgName, "rotation")
+            os.makedirs(hist_dir, exist_ok=True)
+            
+            # 儲存原始圖像
+            orig_img_np = img
+            if isinstance(img, cp.ndarray):
+                orig_img_np = cp.asnumpy(img)
+            cv2.imwrite(os.path.join(image_dir, "original.png"), orig_img_np)
+            print(f"已儲存原始圖像到 {os.path.join(image_dir, 'original.png')}")
+        except Exception as e:
+            print(f"創建輸出目錄或儲存原始圖像時出錯: {str(e)}")
+            # 繼續執行，不讓錯誤中斷處理流程
 
     # 初始化處理
     original_img = cp.asarray(img)
@@ -198,6 +245,21 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
             rotated_img = cp.rot90(current_img, k=stage_rotation // 90)
         else:
             rotated_img = current_img
+            
+        # 儲存旋轉後的圖像
+        if imgName is not None and output_dir is not None:
+            try:
+                rotated_img_np = cp.asnumpy(rotated_img)
+                rotated_path = os.path.join(image_dir, "rotated", f"stage_{embedding}_rotated_{stage_rotation}.png")
+                cv2.imwrite(rotated_path, rotated_img_np)
+                print(f"已儲存旋轉圖像: {rotated_path}")
+                
+                # 儲存旋轉階段的直方圖
+                hist_path = os.path.join(hist_dir, f"stage_{embedding}_rotated_histogram.png")
+                save_histogram(rotated_img_np, hist_path, f"Stage {embedding} Rotated Histogram")
+                print(f"已儲存旋轉直方圖: {hist_path}")
+            except Exception as e:
+                print(f"儲存旋轉圖像時出錯: {str(e)}")
         
         # 分割圖像
         sub_images = split_image_flexible(rotated_img, split_size, block_base=True)
@@ -261,6 +323,30 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
             embedded_sub_images.append(embedded_sub)
             stage_payload += payload
             
+            # 儲存部分子圖像樣本
+            if imgName is not None and output_dir is not None and i < 4 and embedding == 0:
+                try:
+                    # 儲存原始和嵌入後的子圖像
+                    sub_img_np = cp.asnumpy(sub_img)
+                    embedded_sub_np = cp.asnumpy(embedded_sub)
+                    
+                    # 儲存原始子圖像
+                    sub_path = os.path.join(image_dir, "subimages", f"stage_{embedding}_subimage_{i}_original.png")
+                    cv2.imwrite(sub_path, sub_img_np)
+                    
+                    # 儲存嵌入後子圖像
+                    emb_sub_path = os.path.join(image_dir, "subimages", f"stage_{embedding}_subimage_{i}_embedded.png")
+                    cv2.imwrite(emb_sub_path, embedded_sub_np)
+                    
+                    # 儲存對比圖
+                    comp_path = os.path.join(image_dir, "subimages", f"stage_{embedding}_subimage_{i}_comparison.png")
+                    save_comparison_image(sub_img_np, embedded_sub_np, comp_path, 
+                                        labels=("Original", "Embedded"))
+                    
+                    print(f"已儲存子圖像 {i} 的樣本到 {os.path.dirname(sub_path)}")
+                except Exception as e:
+                    print(f"儲存子圖像 {i} 時出錯: {str(e)}")
+            
             # 計算品質指標
             sub_img_np = cp.asnumpy(sub_img)
             embedded_sub_np = cp.asnumpy(embedded_sub)
@@ -294,7 +380,40 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
         if stage_rotation != 0:
             stage_img = cp.rot90(stage_img, k=-stage_rotation // 90)
         
+        # 儲存階段結果圖像
+        if imgName is not None and output_dir is not None:
+            try:
+                # 轉換為NumPy陣列
+                stage_img_np = cp.asnumpy(stage_img)
+                original_img_np = cp.asnumpy(original_img)
+                
+                # 儲存階段結果圖像
+                stage_path = os.path.join(image_dir, f"stage_{embedding}_result.png")
+                cv2.imwrite(stage_path, stage_img_np)
+                print(f"已儲存階段結果圖像: {stage_path}")
+                
+                # 儲存階段直方圖
+                hist_path = os.path.join(hist_dir, f"stage_{embedding}_histogram.png")
+                save_histogram(stage_img_np, hist_path, f"Stage {embedding} Result Histogram")
+                print(f"已儲存階段直方圖: {hist_path}")
+                
+                # 創建嵌入熱圖
+                heatmap_path = os.path.join(image_dir, f"stage_{embedding}_heatmap.png")
+                visualize_embedding_heatmap(original_img_np, stage_img_np, heatmap_path)
+                print(f"已儲存嵌入熱圖: {heatmap_path}")
+                
+                # 創建與前一階段的對比圖
+                current_img_np = cp.asnumpy(current_img)
+                comp_path = os.path.join(image_dir, f"stage_{embedding}_comparison.png")
+                save_comparison_image(current_img_np, stage_img_np, comp_path, 
+                                    labels=(f"Before Stage {embedding}", f"After Stage {embedding}"))
+                print(f"已儲存階段對比圖: {comp_path}")
+            except Exception as e:
+                print(f"儲存階段 {embedding} 的圖像時出錯: {str(e)}")
+        
         stage_info['stage_img'] = stage_img
+        stage_info['rotated_stage_img'] = rotated_img  # 保存旋轉後的圖像
+        stage_info['rotation'] = stage_rotation  # 記錄旋轉角度
         
         # 計算階段整體品質指標
         stage_img_np = cp.asnumpy(stage_img)
@@ -331,6 +450,36 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
         if remaining_target is not None and remaining_target <= 0:
             print(f"Reached target payload ({target_payload_size} bits) at stage {embedding}")
             break
+
+    # 儲存最終結果圖像
+    if imgName is not None and output_dir is not None:
+        try:
+            # 轉換為NumPy陣列
+            final_img_np = cp.asnumpy(current_img)
+            original_img_np = cp.asnumpy(original_img)
+            
+            # 儲存最終結果圖像
+            final_path = os.path.join(image_dir, "final_result.png")
+            cv2.imwrite(final_path, final_img_np)
+            print(f"已儲存最終結果圖像: {final_path}")
+            
+            # 儲存最終直方圖
+            hist_path = os.path.join(hist_dir, "final_histogram.png")
+            save_histogram(final_img_np, hist_path, "Final Result Histogram")
+            print(f"已儲存最終直方圖: {hist_path}")
+            
+            # 創建最終熱圖
+            heatmap_path = os.path.join(image_dir, "final_heatmap.png")
+            visualize_embedding_heatmap(original_img_np, final_img_np, heatmap_path)
+            print(f"已儲存最終熱圖: {heatmap_path}")
+            
+            # 創建原始vs最終的對比圖
+            comp_path = os.path.join(image_dir, "original_vs_final.png")
+            save_comparison_image(original_img_np, final_img_np, comp_path, 
+                                labels=("Original", "Final"))
+            print(f"已儲存最終對比圖: {comp_path}")
+        except Exception as e:
+            print(f"儲存最終圖像時出錯: {str(e)}")
 
     # 返回最終結果
     final_pee_img = cp.asnumpy(current_img)
@@ -513,7 +662,7 @@ def pee_process_color_image_rotation_cuda(img, total_embeddings, ratio_of_ones, 
 def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, 
                               split_size, el_mode, block_base, 
                               prediction_method=None,
-                              target_payload_size=-1):
+                              target_payload_size=-1, imgName=None, output_dir=None):
     """
     Using split PEE method with support for both grayscale and color images
     
@@ -521,7 +670,26 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
     -----------
     img : numpy.ndarray
         Input image (grayscale or color)
-    (other parameters remain the same)
+    total_embeddings : int
+        Total number of embedding stages
+    ratio_of_ones : float
+        Ratio of ones in embedding data
+    use_different_weights : bool
+        Whether to use different weights for sub-images
+    split_size : int
+        Split size
+    el_mode : int
+        Embedding level mode
+    block_base : bool
+        Whether to use block-based splitting
+    prediction_method : PredictionMethod, optional
+        Prediction method to use
+    target_payload_size : int, optional
+        Target payload size, set to -1 for maximum capacity
+    imgName : str, optional
+        Image name for saving results
+    output_dir : str, optional
+        Output directory for saving results
         
     Returns:
     --------
@@ -534,8 +702,30 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         print("Detected color image, redirecting to color image processing...")
         return pee_process_color_image_split_cuda(
             img, total_embeddings, ratio_of_ones, use_different_weights,
-            split_size, el_mode, block_base, prediction_method, target_payload_size
+            split_size, el_mode, block_base, prediction_method, target_payload_size,
+            imgName, output_dir
         )
+
+    # 檢查和設置輸出目錄 (新增)
+    if imgName and output_dir:
+        import os
+        import cv2
+        image_dir = f"{output_dir}/image/{imgName}/split"
+        os.makedirs(image_dir, exist_ok=True)
+        os.makedirs(f"{image_dir}/split_visualization", exist_ok=True)
+        os.makedirs(f"{image_dir}/subimages", exist_ok=True)
+        os.makedirs(f"{output_dir}/histogram/{imgName}/split", exist_ok=True)
+        
+        # 儲存原始圖像
+        original_img_np = np.array(img) if not isinstance(img, np.ndarray) else img
+        cv2.imwrite(f"{image_dir}/original.png", original_img_np)
+        
+        # 創建分割示意圖
+        from visualization import visualize_split
+        split_viz = visualize_split(original_img_np, split_size, block_base)
+        viz_path = f"{image_dir}/split_visualization/split_visualization.png"
+        cv2.imwrite(viz_path, split_viz)
+        print(f"Saved split visualization to {viz_path}")
 
     # 將輸入圖像轉換為 CUDA 陣列
     original_img = cp.asarray(img)
@@ -678,6 +868,35 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
             embedded_sub_images.append(rotated_back_sub)
             stage_payload += payload
             
+            # 儲存部分子圖像樣本 (新增)
+            if imgName and output_dir and i < 4 and embedding == 0:  # 只儲存第一階段的前4個子圖像
+                sub_img_np = cp.asnumpy(sub_img) if isinstance(sub_img, cp.ndarray) else sub_img
+                rotated_sub_np = cp.asnumpy(rotated_sub_img) if isinstance(rotated_sub_img, cp.ndarray) else rotated_sub_img
+                embedded_sub_np = cp.asnumpy(embedded_sub) if isinstance(embedded_sub, cp.ndarray) else embedded_sub
+                rotated_back_np = cp.asnumpy(rotated_back_sub) if isinstance(rotated_back_sub, cp.ndarray) else rotated_back_sub
+                
+                # 儲存原始子圖像
+                sub_path = f"{image_dir}/subimages/stage_{embedding}_subimage_{i}_original.png"
+                cv2.imwrite(sub_path, sub_img_np)
+                
+                # 儲存旋轉後子圖像
+                rot_sub_path = f"{image_dir}/subimages/stage_{embedding}_subimage_{i}_rotated.png"
+                cv2.imwrite(rot_sub_path, rotated_sub_np)
+                
+                # 儲存嵌入後但未旋轉回來的子圖像
+                emb_sub_path = f"{image_dir}/subimages/stage_{embedding}_subimage_{i}_embedded.png"
+                cv2.imwrite(emb_sub_path, embedded_sub_np)
+                
+                # 儲存最終旋轉回來的子圖像
+                final_sub_path = f"{image_dir}/subimages/stage_{embedding}_subimage_{i}_final.png"
+                cv2.imwrite(final_sub_path, rotated_back_np)
+                
+                # 創建對比圖
+                from visualization import save_comparison_image
+                comp_path = f"{image_dir}/subimages/stage_{embedding}_subimage_{i}_comparison.png"
+                save_comparison_image(sub_img_np, rotated_back_np, comp_path, 
+                                   labels=("Original", "Embedded"))
+            
             # 計算品質指標
             sub_img_np = cp.asnumpy(sub_img)
             rotated_back_sub_np = cp.asnumpy(rotated_back_sub)
@@ -699,7 +918,9 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
                 'ssim': float(sub_ssim),
                 'rotation': rotation,
                 'hist_corr': float(sub_hist_corr),
-                'prediction_method': prediction_method.value
+                'prediction_method': prediction_method.value,
+                'original_sub_img': sub_img,  # 儲存原始子圖像
+                'embedded_sub_img': rotated_back_sub  # 儲存嵌入後的子圖像
             }
             stage_info['sub_images'].append(block_info)
             stage_info['block_params'].append(block_info)
@@ -707,6 +928,70 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         # 合併處理後的子圖像
         stage_img = merge_image_flexible(embedded_sub_images, split_size, block_base)
         stage_info['stage_img'] = stage_img
+        
+        # 儲存階段結果圖像 (新增)
+        if imgName and output_dir:
+            stage_img_np = cp.asnumpy(stage_img) if isinstance(stage_img, cp.ndarray) else stage_img
+            stage_path = f"{image_dir}/stage_{embedding}_result.png"
+            cv2.imwrite(stage_path, stage_img_np)
+            print(f"Saved stage {embedding} result to {stage_path}")
+            
+            # 創建和儲存嵌入熱圖
+            from visualization import visualize_embedding_heatmap
+            orig_img_np = cp.asnumpy(original_img) if isinstance(original_img, cp.ndarray) else original_img
+            heatmap_path = f"{image_dir}/stage_{embedding}_heatmap.png"
+            visualize_embedding_heatmap(orig_img_np, stage_img_np, heatmap_path)
+            
+            # 儲存階段直方圖
+            if output_dir:
+                from visualization import save_histogram
+                hist_dir = f"{output_dir}/histogram/{imgName}/split"
+                save_histogram(stage_img_np, 
+                               f"{hist_dir}/stage_{embedding}_histogram.png", 
+                               f"Stage {embedding} Result Histogram")
+                
+            # 創建旋轉角度視覺化圖
+            rotation_viz = np.ones((height, width, 3), dtype=np.uint8) * 255  # 白色背景
+            # 定義旋轉角度對應的顏色
+            rotation_colors = {
+                0: (200, 200, 200),      # 灰色
+                90: (100, 100, 200),     # 藍色
+                180: (100, 200, 100),    # 綠色
+                270: (200, 100, 100),    # 紅色
+                -90: (200, 200, 100),    # 黃色
+                -180: (200, 100, 200),   # 紫色
+                -270: (100, 200, 200)    # 青色
+            }
+            
+            # 將旋轉角度資訊視覺化
+            sub_height = height // split_size
+            sub_width = width // split_size
+            
+            for i in range(len(stage_rotations)):
+                row = i // split_size
+                col = i % split_size
+                y_start = row * sub_height
+                x_start = col * sub_width
+                
+                rotation = int(stage_rotations[i])
+                color = rotation_colors.get(rotation, (150, 150, 150))
+                
+                # 在區塊中央寫上旋轉角度
+                text_x = x_start + sub_width // 2 - 20
+                text_y = y_start + sub_height // 2 + 10
+                cv2.putText(rotation_viz, f"{rotation}°", (text_x, text_y), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.8, color, 2)
+                
+                # 繪製區塊邊框
+                cv2.rectangle(rotation_viz, 
+                             (x_start, y_start), 
+                             (x_start + sub_width, y_start + sub_height), 
+                             color, 2)
+            
+            # 儲存旋轉角度視覺化圖
+            rot_viz_path = f"{image_dir}/split_visualization/stage_{embedding}_rotation_visualization.png"
+            cv2.imwrite(rot_viz_path, rotation_viz)
+            print(f"Saved rotation visualization for stage {embedding} to {rot_viz_path}")
         
         # 計算階段整體品質指標
         stage_img_np = cp.asnumpy(stage_img)
@@ -720,6 +1005,7 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         stage_info['payload'] = stage_payload
         stage_info['bpp'] = float(stage_info['payload'] / total_pixels)
         stage_info['prediction_method'] = prediction_method.value
+        stage_info['rotations'] = stage_rotations.tolist()  # 記錄旋轉角度
         
         # 更新資訊
         pee_stages.append(stage_info)
@@ -737,6 +1023,40 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         print(f"Hist Corr: {stage_info['hist_corr']:.4f}")
         
         current_img = stage_img
+        
+        # 檢查是否已達到總目標
+        if remaining_target is not None and remaining_target <= 0:
+            print(f"Reached target payload ({target_payload_size} bits) at stage {embedding}")
+            break
+
+    # 儲存最終結果圖像 (新增)
+    if imgName and output_dir:
+        final_img_np = cp.asnumpy(current_img) if isinstance(current_img, cp.ndarray) else current_img
+        final_path = f"{image_dir}/final_result.png"
+        cv2.imwrite(final_path, final_img_np)
+        print(f"Saved final result to {final_path}")
+        
+        # 創建原始圖像與結果對比圖
+        orig_img_np = cp.asnumpy(original_img) if isinstance(original_img, cp.ndarray) else original_img
+        from visualization import save_comparison_image
+        compare_path = f"{image_dir}/original_vs_final.png"
+        save_comparison_image(orig_img_np, final_img_np, compare_path, 
+                            labels=("Original", "Embedded"))
+        
+        # 創建最終嵌入熱圖
+        from visualization import visualize_embedding_heatmap
+        heatmap_path = f"{image_dir}/final_heatmap.png"
+        visualize_embedding_heatmap(orig_img_np, final_img_np, heatmap_path)
+        
+        # 儲存最終直方圖
+        if output_dir:
+            from visualization import save_histogram
+            hist_dir = f"{output_dir}/histogram/{imgName}/split"
+            save_histogram(final_img_np, 
+                          f"{hist_dir}/final_histogram.png", 
+                          f"Final Result Histogram")
+                         
+        print(f"Saved comparison image to {compare_path}")
 
     # 返回最終結果
     final_pee_img = cp.asnumpy(current_img)

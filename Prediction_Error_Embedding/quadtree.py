@@ -28,6 +28,7 @@ def cleanup_quadtree_resources():
     except Exception as e:
         print(f"Error cleaning up quadtree resources: {str(e)}")
         
+
 def process_current_block(block, position, size, stage_info, embedding, ratio_of_ones,
                          target_bpp, target_psnr, el_mode, prediction_method=PredictionMethod.PROPOSED,
                          remaining_target=None, verbose=False):
@@ -41,7 +42,15 @@ def process_current_block(block, position, size, stage_info, embedding, ratio_of
         
         # 計算區塊大小和目標容量
         block_size = block.size
+        
+        # 如果有剩餘目標限制，確保不超過
         if remaining_target is not None:
+            if remaining_target <= 0:
+                # 如果目標已達成，直接返回原始區塊，不進行嵌入
+                if verbose:
+                    print(f"  Target reached. Skipping embedding for block at {position}")
+                return [(block, position, size)]
+            # 限制數據量不超過剩餘目標
             block_size = min(block_size, remaining_target)
         
         # 首先根據 el_mode 決定初始 max_el 值
@@ -146,6 +155,10 @@ def process_current_block(block, position, size, stage_info, embedding, ratio_of
         stage_info['block_info'][str(size)]['blocks'].append(block_info)
         stage_info['payload'] += payload
         
+        # 更新剩餘目標
+        if remaining_target is not None and 'remaining_target' in stage_info:
+            stage_info['remaining_target'] -= payload
+        
         if verbose:
             print(f"  Block processed at size {size}x{size}")
             print(f"  Prediction method: {prediction_method.value}")
@@ -200,6 +213,17 @@ def process_block(block, position, size, stage_info, embedding, variance_thresho
         最大區塊大小，默認為1024
     """
     try:
+        # 檢查是否已達到目標
+        if remaining_target is not None:
+            current_remaining = stage_info.get('remaining_target', remaining_target)
+            if current_remaining <= 0:
+                # 如果目標已達成，直接返回原始區塊，不進行嵌入
+                if verbose:
+                    print(f"  Target reached. Skipping block at {position}")
+                return [(block, position, size)]
+        else:
+            current_remaining = None
+            
         if size < 16:  # 最小區塊大小限制
             return []
         
@@ -252,6 +276,14 @@ def process_block(block, position, size, stage_info, embedding, variance_thresho
                     sub_block = block[i*half_size:(i+1)*half_size, 
                                     j*half_size:(j+1)*half_size]
                     
+                    # 在遞迴調用前檢查剩餘目標
+                    if remaining_target is not None:
+                        current_remaining = stage_info.get('remaining_target', 0)
+                        if current_remaining <= 0:
+                            # 如果目標已達成，直接添加原始子區塊
+                            sub_blocks.append((sub_block, (y_start, x_start), half_size))
+                            continue
+                    
                     # 遞迴處理子區塊，傳遞所有必要參數
                     sub_blocks.extend(process_block(
                         sub_block, (y_start, x_start), half_size,
@@ -260,7 +292,7 @@ def process_block(block, position, size, stage_info, embedding, variance_thresho
                         verbose=verbose,
                         rotation_mode=rotation_mode,
                         prediction_method=prediction_method,
-                        remaining_target=remaining_target,
+                        remaining_target=current_remaining,
                         max_block_size=max_block_size
                     ))
             return sub_blocks
@@ -277,7 +309,7 @@ def process_block(block, position, size, stage_info, embedding, variance_thresho
                 block, position, size, stage_info, embedding,
                 ratio_of_ones, target_bpp, target_psnr, el_mode,
                 prediction_method=prediction_method,
-                remaining_target=remaining_target,
+                remaining_target=current_remaining,
                 verbose=verbose
             )
             
@@ -480,7 +512,8 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                     'rotation_mode': rotation_mode,
                     'prediction_method': prediction_method.value,
                     'use_different_weights': use_different_weights,
-                    'block_size_weights': {}  # 儲存每種大小區塊的統一權重
+                    'block_size_weights': {},  # 儲存每種大小區塊的統一權重
+                    'remaining_target': remaining_target  # 添加剩餘目標追蹤
                 }
 
                 # 旋轉模式設置
@@ -505,10 +538,20 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                 if rotation_mode == 'random':
                     rotated_stage_img = cp.zeros_like(current_img)
                     
-                # 逐塊處理圖像
+                # 逐塊處理圖像 - 新增剩餘目標檢查
                 processed_blocks = []
                 for i in range(num_blocks_vertical):
                     for j in range(num_blocks_horizontal):
+                        # 檢查是否已達到目標
+                        current_remaining = stage_info.get('remaining_target', float('inf'))
+                        if remaining_target is not None and current_remaining <= 0:
+                            # 如果目標已達成，直接複製原圖區塊
+                            y_start = i * max_block_size
+                            x_start = j * max_block_size
+                            current_block = current_img[y_start:y_start+max_block_size, x_start:x_start+max_block_size]
+                            processed_blocks.append((current_block, (y_start, x_start), max_block_size))
+                            continue
+                            
                         # 提取當前塊
                         y_start = i * max_block_size
                         x_start = j * max_block_size
@@ -521,7 +564,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                             verbose=False, 
                             rotation_mode=rotation_mode,
                             prediction_method=prediction_method,
-                            remaining_target=remaining_target,
+                            remaining_target=current_remaining,
                             max_block_size=max_block_size
                         )
                         
@@ -547,8 +590,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                     # 將區塊放回最終圖像
                     stage_img[pos[0]:pos[0]+size, pos[1]:pos[1]+size] = block
 
-                # 創建可視化 - 這段應該在原函數中約在第320行左右的位置
-                # 保存圖像狀態
+                # 創建可視化
                 if rotation_mode == 'random':
                     stage_info['rotated_stage_img'] = rotated_stage_img
                     
@@ -595,7 +637,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                             rotated_block_visualization[y:y+size, x:x+border_width] = block_colors[size]  # 左邊框
                             rotated_block_visualization[y:y+size, x+size-border_width:x+size] = block_colors[size]  # 右邊框
                     
-                    # 更新視覺化保存路徑，使用新參數
+                    # 更新視覺化保存路徑
                     rotated_viz_path = f"{image_dir}/rotated_blocks/stage_{embedding}_blocks.png"
                     ensure_dir(rotated_viz_path)
                     save_image(rotated_block_visualization, rotated_viz_path)
@@ -649,7 +691,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                             rotated_block_visualization_color[y:y+size, x:x+border_width, :] = color  # 左側
                             rotated_block_visualization_color[y:y+size, x+size-border_width:x+size, :] = color  # 右側
                     
-                    # 更新彩色可視化保存路徑，使用新參數
+                    # 更新彩色可視化保存路徑
                     color_viz_path = f"{image_dir}/rotated_blocks/stage_{embedding}_color.png"
                     ensure_dir(color_viz_path)
                     cv2.imwrite(color_viz_path, rotated_block_visualization_color)
@@ -707,6 +749,18 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                 stage_info['hist_corr'] = float(hist_corr)
                 stage_info['bpp'] = float(stage_info['payload'] / total_pixels)
 
+                # 更新剩餘目標 - 非常重要，確保嚴格按照目標執行
+                if remaining_target is not None:
+                    # 確保不超過目標，如果超過則裁剪
+                    if stage_info['payload'] > remaining_target:
+                        print(f"Warning: Embedded payload ({stage_info['payload']}) exceeds target ({remaining_target})")
+                        print(f"Truncating payload to target value")
+                        stage_info['payload'] = remaining_target
+                    
+                    # 更新剩餘目標
+                    remaining_target -= stage_info['payload']
+                    print(f"Updated remaining target: {remaining_target}")
+
                 # 計算並顯示區塊大小分布
                 block_counts = {}
                 for size_str in stage_info['block_info']:
@@ -737,10 +791,6 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                 previous_psnr = stage_info['psnr']
                 previous_ssim = stage_info['ssim']
                 previous_payload = stage_info['payload']
-                
-                # 更新剩餘目標payload
-                if remaining_target is not None:
-                    remaining_target -= stage_info['payload']
 
                 # 輸出階段摘要
                 print(f"\nEmbedding {embedding} summary:")
@@ -762,6 +812,11 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                 # 清理當前階段的記憶體
                 mem_pool.free_all_blocks()
                 print(f"Memory usage after embedding {embedding}: {mem_pool.used_bytes()/1024/1024:.2f} MB")
+
+                # 檢查是否達到總目標
+                if remaining_target is not None and remaining_target <= 0:
+                    print(f"Reached target payload ({target_payload_size} bits) at stage {embedding}")
+                    break
 
             # 如果圖像之前進行了墊充，現在需要裁剪回原始大小
             final_pee_img = cp.asnumpy(current_img)

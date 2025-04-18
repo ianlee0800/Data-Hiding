@@ -26,7 +26,8 @@ from utils import (
     run_multiple_predictors,
     run_precise_measurements,
     run_multi_predictor_precise_measurements,
-    run_simplified_precise_measurements
+    run_simplified_precise_measurements,
+    run_multi_method_precise_measurements
 )
 # 導入視覺化模組
 from visualization import (
@@ -64,17 +65,19 @@ def main():
     6. 調整圖像儲存路徑至 "./Prediction_Error_Embedding/outcome/image"
     7. 按照方法類型儲存更多詳細的實驗圖像
     8. 新增彩色圖像處理支持，自動偵測圖像類型
+    9. 新增固定 payload 步長測量功能
+    10. 新增不同處理方法比較功能
     """
     # ==== 參數設置（直接在代碼中調整） ====
     
     # 基本參數設置
-    imgName = "F16"         # 圖像名稱
+    imgName = "Male"         # 圖像名稱
     filetype = "tiff"           # 圖像檔案類型
     total_embeddings = 5        # 總嵌入次數
     
     # 各預測器的ratio_of_ones設置
     predictor_ratios = {
-        "PROPOSED": 0.3,        # proposed預測器的ratio_of_ones
+        "PROPOSED": 0.5,        # proposed預測器的ratio_of_ones
         "MED": 1.0,             # MED預測器的ratio_of_ones
         "GAP": 0.7,             # GAP預測器的ratio_of_ones
         "RHOMBUS": 0.9          # RHOMBUS預測器的ratio_of_ones
@@ -84,20 +87,25 @@ def main():
     use_different_weights = False 
     
     # 測量方式
-    use_precise_measurement = False  # True: 使用精確測量模式, False: 使用近似模式
+    use_precise_measurement = True  # True: 使用精確測量模式, False: 使用近似模式
     
-    # 統計分段數量
-    stats_segments = 20
+    # 精確測量參數
+    stats_segments = 10          # 統計分段數量（當payload_step為None時使用）
+    payload_step = 10000         # 固定payload步長，單位為bits，如果設為None則使用segments
     
     # 預測方法選擇
     # 可選：PROPOSED, MED, GAP, RHOMBUS, ALL (ALL表示運行所有方法並生成比較)
     prediction_method_str = "PROPOSED"
     
     # 方法選擇
-    method = "split"         # 可選："rotation", "split", "quadtree"
+    method = "rotation"         # 可選："rotation", "split", "quadtree"
+    
+    # 比較模式
+    comparison_mode = "methods"      # None: 不使用比較, "predictors": 比較預測器, "methods": 比較處理方法
+    methods_to_compare = ["rotation", "quadtree"]  # 要比較的處理方法列表
     
     # 各方法共用參數
-    split_size = 2              # 用於 rotation 和 split 方法
+    split_size = 1              # 用於 rotation 和 split 方法
     block_base = False          # 用於 split 方法
     
     # quad tree 特定參數
@@ -116,6 +124,35 @@ def main():
         "RHOMBUS": PredictionMethod.RHOMBUS
     }
     
+    # 處理比較模式 - 方法比較
+    if comparison_mode == "methods":
+        print(f"Running method comparison with {prediction_method_str} predictor...")
+        
+        prediction_method = prediction_method_map.get(prediction_method_str.upper())
+        if prediction_method is None:
+            print(f"Error: Unknown prediction method: {prediction_method_str}")
+            print(f"Available options: PROPOSED, MED, GAP, RHOMBUS")
+            return
+        
+        ratio_of_ones = predictor_ratios.get(prediction_method_str.upper(), 0.5)
+        
+        run_multi_method_precise_measurements(
+            imgName=imgName,
+            filetype=filetype,
+            prediction_method=prediction_method,
+            methods=methods_to_compare,
+            payload_step=payload_step if payload_step else 10000,  # 預設為10000
+            ratio_of_ones=ratio_of_ones,
+            total_embeddings=total_embeddings,
+            el_mode=el_mode,
+            use_different_weights=use_different_weights,
+            split_size=split_size,
+            block_base=block_base,
+            quad_tree_params=quad_tree_params
+        )
+        
+        return
+    
     # 如果選擇 ALL，則執行所有預測方法並生成比較
     if prediction_method_str.upper() == "ALL":
         print("Running all prediction methods and generating comparison...")
@@ -132,6 +169,7 @@ def main():
                 total_embeddings=total_embeddings,
                 el_mode=el_mode,
                 segments=stats_segments,
+                payload_step=payload_step,  # 添加新的固定步長參數
                 use_different_weights=use_different_weights,
                 split_size=split_size,
                 block_base=block_base,
@@ -240,20 +278,21 @@ def main():
             if is_proposed:
                 # 為 proposed 執行完整測量，包括圖像和圖表
                 run_precise_measurements(
-                    origImg, imgName, method, prediction_method, ratio_of_ones, 
-                    total_embeddings, el_mode, stats_segments, use_different_weights,
+                    origImg, imgName, method, prediction_method, 
+                    ratio_of_ones, total_embeddings, 
+                    el_mode, stats_segments, payload_step, use_different_weights,
                     split_size, block_base, quad_tree_params
                 )
             else:
                 # 為其他預測器執行簡化測量，僅儲存數據
                 run_simplified_precise_measurements(
-                    origImg, imgName, method, prediction_method, ratio_of_ones, 
-                    total_embeddings, el_mode, stats_segments, use_different_weights,
+                    origImg, imgName, method, prediction_method, 
+                    ratio_of_ones, total_embeddings, 
+                    el_mode, stats_segments, payload_step, use_different_weights,
                     split_size, block_base, quad_tree_params
                 )
             
             return
-
         print(f"Starting encoding process... ({'CUDA' if cp.cuda.is_available() else 'CPU'} mode)")
         print(f"Using method: {method}")
         print(f"Prediction method: {prediction_method.value}")
@@ -278,7 +317,9 @@ def main():
                     split_size,
                     el_mode,
                     prediction_method=prediction_method,
-                    target_payload_size=-1  # 使用最大嵌入量
+                    target_payload_size=-1,  # 使用最大嵌入量
+                    imgName=imgName,         # 添加圖像名稱
+                    output_dir=base_dir      # 使用基本輸出目錄
                 )
             elif method == "split":
                 final_pee_img, total_payload, pee_stages = pee_process_with_split_cuda(
@@ -290,7 +331,9 @@ def main():
                     el_mode,
                     block_base,
                     prediction_method=prediction_method,
-                    target_payload_size=-1  # 使用最大嵌入量
+                    target_payload_size=-1,  # 使用最大嵌入量
+                    imgName=imgName,         # 添加圖像名稱
+                    output_dir=base_dir      # 使用基本輸出目錄
                 )
             elif method == "quadtree":
                 final_pee_img, total_payload, pee_stages = pee_process_with_quadtree_cuda(
@@ -303,9 +346,9 @@ def main():
                     el_mode,
                     rotation_mode='random',
                     prediction_method=prediction_method,
-                    target_payload_size=-1,
-                    imgName=imgName,  # Pass the image name
-                    output_dir="./Prediction_Error_Embedding/outcome"  # Pass the output directory
+                    target_payload_size=-1,  # 使用最大嵌入量
+                    imgName=imgName,         # 添加圖像名稱
+                    output_dir=base_dir      # 使用基本輸出目錄
                 )
 
             # 建立並列印 PEE 資訊表格
@@ -381,9 +424,10 @@ def main():
                     # 確保數據類型一致 (灰階)
                     stage_img = cp.asnumpy(stage['stage_img']) if isinstance(stage['stage_img'], cp.ndarray) else stage['stage_img']
                     
-                    # 共通項目：儲存階段結果圖像
+                    # 檢查圖像是否已經存在（避免重複儲存）
                     stage_img_path = f"{image_dir}/stage_{i}_result.png"
-                    save_image(stage_img, stage_img_path)
+                    if not os.path.exists(stage_img_path) or method != "rotation":  # 特別處理 rotation 方法
+                        save_image(stage_img, stage_img_path)
                 else:
                     # 彩色圖像處理
                     if isinstance(stage['stage_img'], cp.ndarray):
