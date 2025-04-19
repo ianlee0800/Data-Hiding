@@ -73,11 +73,11 @@ def main():
     # 基本參數設置
     imgName = "Male"         # 圖像名稱
     filetype = "tiff"           # 圖像檔案類型
-    total_embeddings = 5        # 總嵌入次數
+    total_embeddings = 1        # 總嵌入次數
     
     # 各預測器的ratio_of_ones設置
     predictor_ratios = {
-        "PROPOSED": 0.5,        # proposed預測器的ratio_of_ones
+        "PROPOSED": 1,        # proposed預測器的ratio_of_ones
         "MED": 1.0,             # MED預測器的ratio_of_ones
         "GAP": 0.7,             # GAP預測器的ratio_of_ones
         "RHOMBUS": 0.9          # RHOMBUS預測器的ratio_of_ones
@@ -91,7 +91,7 @@ def main():
     
     # 精確測量參數
     stats_segments = 10          # 統計分段數量（當payload_step為None時使用）
-    payload_step = 10000         # 固定payload步長，單位為bits，如果設為None則使用segments
+    payload_step = 200000         # 固定payload步長，單位為bits，如果設為None則使用segments
     
     # 預測方法選擇
     # 可選：PROPOSED, MED, GAP, RHOMBUS, ALL (ALL表示運行所有方法並生成比較)

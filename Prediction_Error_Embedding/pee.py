@@ -277,9 +277,13 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
     if isinstance(data, cp.ndarray):
         data = cp.asnumpy(data)
     
-    # 限制數據量
+    # 限制數據量 - 為避免超額嵌入，實際目標設為略小於要求值
     if remaining_target is not None:
-        data = data[:min(len(data), remaining_target)]
+        safety_margin = 0.95  # 設置安全邊界為95%
+        adjusted_target = int(remaining_target * safety_margin)
+        data = data[:min(len(data), adjusted_target)]
+        # 記錄調整
+        print(f"嵌入控制：目標 {remaining_target} 調整為 {adjusted_target} (安全邊界: {safety_margin})")
     
     # 轉換為 CUDA 設備數組
     d_img = cuda.to_device(img)
@@ -372,12 +376,12 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
         embedded = d_embedded.copy_to_host()
         payload = d_payload.copy_to_host()[0]
     
-    # 嚴格控制 payload
+    # 在嵌入後嚴格檢查是否超出
     if remaining_target is not None and payload > remaining_target:
-        print(f"警告: 嵌入的 payload ({payload}) 超過目標 ({remaining_target})")
+        print(f"注意: 內部調整後仍超額嵌入 ({payload} > {remaining_target})，強制截斷")
         payload = remaining_target
     
-    return embedded, min(payload, remaining_target) if remaining_target is not None else payload
+    return embedded, payload
 
 @cuda.jit
 def rhombus_embedding_kernel(img, pred_img, data, embedded, payload, height, width, stage):

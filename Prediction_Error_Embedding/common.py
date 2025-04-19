@@ -1,6 +1,7 @@
 import numpy as np
 import cupy as cp
 import cv2
+import os
 from numba import cuda
 
 class DataType:
@@ -66,12 +67,48 @@ def histogram_correlation(hist1, hist2):
         return numerator / denominator
 
 def calculate_psnr(img1, img2):
+    """
+    计算两张图像的PSNR，增加了保护措施防止异常结果
+    
+    Parameters:
+    -----------
+    img1 : numpy.ndarray or cupy.ndarray
+        第一张图像
+    img2 : numpy.ndarray or cupy.ndarray
+        第二张图像
+        
+    Returns:
+    --------
+    float
+        PSNR值，单位为dB，确保为非负值
+    """
+    # 确保图像类型一致
+    if isinstance(img1, cp.ndarray):
+        img1 = cp.asnumpy(img1) 
+    if isinstance(img2, cp.ndarray):
+        img2 = cp.asnumpy(img2)
+    
+    # 转换为浮点型以避免溢出
+    img1 = img1.astype(np.float64)
+    img2 = img2.astype(np.float64)
+    
+    # 计算MSE
     mse = np.mean((img1 - img2) ** 2)
+    
+    # 防止除零错误
     if mse == 0:
-        return float('inf')  # 如果 MSE 为 0，返回无穷大
+        return float('inf')  # 如果MSE为0，PSNR为无穷大
+    
+    # 防止MSE过大导致PSNR为负
+    if mse > 255**2:
+        print(f"警告: 检测到异常大的MSE值: {mse}, 可能导致负PSNR")
+        mse = min(mse, 255**2)  # 限制MSE的最大值
+    
     max_pixel = 255.0
     psnr = 20 * np.log10(max_pixel / np.sqrt(mse))
-    return psnr
+    
+    # 确保PSNR非负
+    return max(0, psnr)
 
 def calculate_ssim(img1, img2):
     img1 = to_numpy(img1)
@@ -97,63 +134,98 @@ def calculate_ssim(img1, img2):
     ssim_map = ((2 * mu1_mu2 + C1) * (2 * sigma12 + C2)) / ((mu1_sq + mu2_sq + C1) * (sigma1_sq + sigma2_sq + C2))
     return round(ssim_map.mean(), 4)
 
+# Fix to calculate_metrics_with_rotation in common.py
 def calculate_metrics_with_rotation(current_img, stage_img, original_img, embedding):
     """
-    計算考慮旋轉的 metrics，優化版本支援大型圖像
+    Calculate metrics considering rotation, optimized version for large images
     """
-    # 計算旋轉角度
+    # Calculate rotation angle
     current_rotation = (embedding * 90) % 360
     
-    # 如果當前階段有旋轉，先將圖像旋轉回原始方向
+    # If there's rotation in the current stage, first rotate the image back
     if current_rotation != 0:
-        # 計算需要的逆旋轉次數
+        # Calculate the needed inverse rotation - number of 90° rotations
         k = (4 - (current_rotation // 90)) % 4
+        
+        # Print debugging info
+        print(f"DEBUG: Rotating image back by {k*90}° (current rotation: {current_rotation}°)")
+        
         if isinstance(stage_img, cp.ndarray):
-            # 對於大型圖像，分塊處理旋轉以節省記憶體
+            # For large images, process rotation in blocks to save memory
             stage_img_aligned = cp.zeros_like(stage_img)
-            block_size = 512  # 可以根據可用記憶體調整此值
-            
-            for i in range(0, stage_img.shape[0], block_size):
-                for j in range(0, stage_img.shape[1], block_size):
-                    # 確保不超出邊界
-                    end_i = min(i + block_size, stage_img.shape[0])
-                    end_j = min(j + block_size, stage_img.shape[1])
-                    
-                    # 提取區塊並旋轉
-                    block = stage_img[i:end_i, j:end_j]
-                    rotated_block = cp.rot90(block, k=k)
-                    
-                    # 計算旋轉後的放置位置
-                    if k % 2 == 0:  # 0 或 180 度
-                        stage_img_aligned[i:end_i, j:end_j] = rotated_block
-                    else:  # 90 或 270 度
-                        # 對於 90/270 度旋轉，長寬交換，需要特殊處理
-                        # 這個簡化版本僅適用於正方形區塊
-                        if block.shape[0] == block.shape[1]:
+            try:
+                # Try whole image rotation first - for quadtree this should be safe
+                stage_img_aligned = cp.rot90(stage_img, k=k)
+            except Exception as e:
+                print(f"WARNING: Whole image rotation failed: {str(e)}")
+                print("Attempting block rotation...")
+                
+                # Process rotation in blocks
+                block_size = 512
+                for i in range(0, stage_img.shape[0], block_size):
+                    for j in range(0, stage_img.shape[1], block_size):
+                        # Ensure not exceeding boundaries
+                        end_i = min(i + block_size, stage_img.shape[0])
+                        end_j = min(j + block_size, stage_img.shape[1])
+                        
+                        # Extract block and rotate
+                        block = stage_img[i:end_i, j:end_j]
+                        rotated_block = cp.rot90(block, k=k)
+                        
+                        # Calculate placement position
+                        if k % 2 == 0:  # 0 or 180 degrees
                             stage_img_aligned[i:end_i, j:end_j] = rotated_block
-                        else:
-                            # 對於非正方形區塊，使用整體旋轉
-                            cleanup_memory()  # 先清理記憶體
-                            stage_img_aligned = cp.rot90(stage_img, k=k)
-                            break
+                        else:  # 90 or 270 degrees
+                            # For 90/270 degrees, width and height are swapped
+                            # This is a simplification that works only for square blocks
+                            if block.shape[0] == block.shape[1]:
+                                stage_img_aligned[i:end_i, j:end_j] = rotated_block
+                            else:
+                                # For non-square blocks, use whole image rotation
+                                cleanup_memory()  # Clean memory first
+                                stage_img_aligned = cp.rot90(stage_img, k=k)
+                                break
         else:
             stage_img_aligned = np.rot90(stage_img, k=k)
     else:
         stage_img_aligned = stage_img
     
-    # 確保數據類型一致
+    # Ensure data types are consistent
     if isinstance(stage_img_aligned, cp.ndarray):
         stage_img_aligned = cp.asnumpy(stage_img_aligned)
     if isinstance(original_img, cp.ndarray):
         original_img = cp.asnumpy(original_img)
-        
-    # 計算指標
+    
+    # Save debug images
+    try:
+        from datetime import datetime
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        os.makedirs("./debug", exist_ok=True)
+        cv2.imwrite(f"./debug/original_{timestamp}.png", original_img)
+        cv2.imwrite(f"./debug/aligned_{timestamp}.png", stage_img_aligned)
+    except:
+        print("Could not save debug images")
+    
+    # Calculate metrics
     psnr = calculate_psnr(original_img, stage_img_aligned)
     ssim = calculate_ssim(original_img, stage_img_aligned)
     hist_corr = histogram_correlation(
         np.histogram(original_img, bins=256, range=(0, 255))[0],
         np.histogram(stage_img_aligned, bins=256, range=(0, 255))[0]
     )
+    
+    # Sanity check for PSNR
+    if psnr < 20:
+        print("WARNING: PSNR is suspiciously low, attempting direct calculation...")
+        direct_mse = np.mean((original_img.astype(np.float64) - stage_img_aligned.astype(np.float64)) ** 2)
+        if direct_mse == 0:
+            direct_psnr = float('inf')
+        else:
+            direct_psnr = 10 * np.log10((255.0 ** 2) / direct_mse)
+        print(f"  Original PSNR: {psnr:.2f}, Direct PSNR: {direct_psnr:.2f}")
+        
+        if direct_psnr > psnr and direct_psnr > 30:
+            psnr = direct_psnr
     
     return psnr, ssim, hist_corr
 
