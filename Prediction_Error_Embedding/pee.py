@@ -270,6 +270,28 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
                         remaining_target=None):
     """
     多種預測方法的嵌入函數，為不同預測器使用不同的嵌入策略
+    
+    Parameters:
+    -----------
+    img : numpy.ndarray or cupy.ndarray
+        輸入圖像
+    data : numpy.ndarray or cupy.ndarray
+        要嵌入的數據
+    local_el : numpy.ndarray
+        局部嵌入層級
+    weights : numpy.ndarray or None
+        權重向量 (如果適用)
+    stage : int
+        當前嵌入階段
+    prediction_method : PredictionMethod
+        預測方法
+    remaining_target : list or None
+        剩餘需要嵌入的數據量的可變容器 [target_value]
+        
+    Returns:
+    --------
+    tuple
+        (embedded_img, payload)
     """
     # 數據類型轉換
     if isinstance(img, cp.ndarray):
@@ -277,9 +299,33 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
     if isinstance(data, cp.ndarray):
         data = cp.asnumpy(data)
     
-    # 限制數據量
+    # 精確容量控制 - 如果剩餘目標容量小於數據量的10%，使用精確嵌入
+    precise_embedding = False
     if remaining_target is not None:
-        data = data[:min(len(data), remaining_target)]
+        # 如果剩餘容量非常小
+        if remaining_target[0] <= len(data) * 0.1 and remaining_target[0] > 0:
+            precise_embedding = True
+            print(f"Using precise embedding for last {remaining_target[0]} bits")
+    
+    # 限制數據量 - 使用可變容器中的值
+    current_target = None
+    if remaining_target is not None:
+        # 檢查是否還有剩餘容量
+        if remaining_target[0] <= 0:
+            # 已達到目標，直接返回原圖並且payload為0
+            return img, 0
+        
+        # 根據精確模式的不同策略設置目標
+        if precise_embedding:
+            # 精確模式：嘗試嵌入恰好所需的位元
+            current_target = remaining_target[0]
+        else:
+            # 普通模式：取較小值
+            current_target = min(len(data), remaining_target[0])
+            
+        # 限制數據長度
+        if current_target < len(data):
+            data = data[:current_target]
     
     # 轉換為 CUDA 設備數組
     d_img = cuda.to_device(img)
@@ -297,6 +343,47 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
     d_embedded = cuda.device_array_like(d_img)
     d_payload = cuda.to_device(np.array([0], dtype=np.int32))
     
+    # 精確嵌入模式特殊處理
+    if precise_embedding:
+        # 針對精確嵌入的優化策略
+        # 1. 減少嵌入通道，只使用一次通過，避免過度嵌入
+        # 2. 優先使用差值小的像素進行嵌入
+        pass_idx = 0  # 只使用單次通過
+        
+        if prediction_method == PredictionMethod.PROPOSED:
+            if hasattr(local_el, 'copy_to_host'):
+                local_el_np = local_el.copy_to_host()
+            elif isinstance(local_el, cp.ndarray):
+                local_el_np = cp.asnumpy(local_el)
+            else:
+                local_el_np = local_el
+                
+            d_local_el = cuda.to_device(local_el_np)
+            
+            # 使用特殊參數的嵌入核心
+            pee_embedding_kernel[blocks_per_grid, threads_per_block](
+                d_img, pred_img, d_data, d_embedded, d_payload, d_local_el,
+                height, width, pass_idx
+            )
+        else:
+            # 對於其他預測器，同樣使用單次通過
+            simple_single_embedding_kernel[blocks_per_grid, threads_per_block](
+                d_img, pred_img, d_data, d_embedded, d_payload,
+                height, width, pass_idx
+            )
+        
+        # 獲取結果
+        embedded = d_embedded.copy_to_host()
+        payload = d_payload.copy_to_host()[0]
+        
+        # 更新剩餘目標容量
+        if remaining_target is not None:
+            actual_payload = min(payload, remaining_target[0])
+            remaining_target[0] -= actual_payload
+            payload = actual_payload
+            
+        return embedded, payload
+    
     # 對於Stage 0，使用多次嵌入來增加容量
     if stage == 0:
         # 針對 Stage 0 的增強型多次嵌入
@@ -304,6 +391,10 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
         total_payload = 0
         
         for pass_idx in range(passes):
+            # 檢查是否已達到目標
+            if remaining_target is not None and remaining_target[0] <= 0:
+                break
+                
             if prediction_method == PredictionMethod.PROPOSED:
                 if hasattr(local_el, 'copy_to_host'):
                     local_el_np = local_el.copy_to_host()
@@ -332,6 +423,17 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
                 break  # 如果沒有嵌入任何數據，則停止
                 
             total_payload += current_payload
+            
+            # 更新剩餘目標容量
+            if remaining_target is not None:
+                # 確保不會超過目標
+                actual_payload = min(current_payload, remaining_target[0])
+                remaining_target[0] -= actual_payload
+                
+                # 如果已達到目標，停止處理
+                if remaining_target[0] <= 0:
+                    break
+            
             d_payload = cuda.to_device(np.array([0], dtype=np.int32))
             
             # 保存當前結果供下次嵌入使用 - 修正使用正確的方法
@@ -344,6 +446,11 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
         
         embedded = d_embedded.copy_to_host()
         payload = total_payload
+        
+        # 確保不會超過目標
+        if remaining_target is not None:
+            # 更新最終payload為實際使用的量
+            payload = min(payload, current_target)
     else:
         # 原有的嵌入邏輯
         if prediction_method == PredictionMethod.PROPOSED:
@@ -371,13 +478,19 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
         # 獲取結果
         embedded = d_embedded.copy_to_host()
         payload = d_payload.copy_to_host()[0]
+        
+        # 更新剩餘目標容量
+        if remaining_target is not None:
+            # 確保不會超過目標
+            actual_payload = min(payload, remaining_target[0])
+            remaining_target[0] -= actual_payload
+            payload = actual_payload  # 更新實際嵌入的量
     
-    # 嚴格控制 payload
-    if remaining_target is not None and payload > remaining_target:
-        print(f"警告: 嵌入的 payload ({payload}) 超過目標 ({remaining_target})")
-        payload = remaining_target
+    # 確保不會返回超過目標的payload值
+    if current_target is not None:
+        payload = min(payload, current_target)
     
-    return embedded, min(payload, remaining_target) if remaining_target is not None else payload
+    return embedded, payload
 
 @cuda.jit
 def rhombus_embedding_kernel(img, pred_img, data, embedded, payload, height, width, stage):

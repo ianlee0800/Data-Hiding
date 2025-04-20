@@ -68,13 +68,13 @@ def main():
     # ==== 參數設置（直接在代碼中調整） ====
     
     # 基本參數設置
-    imgName = "F16"         # 圖像名稱
+    imgName = "Male"         # 圖像名稱
     filetype = "tiff"           # 圖像檔案類型
-    total_embeddings = 5        # 總嵌入次數
+    total_embeddings = 1        # 總嵌入次數
     
     # 各預測器的ratio_of_ones設置
     predictor_ratios = {
-        "PROPOSED": 0.3,        # proposed預測器的ratio_of_ones
+        "PROPOSED": 0.5,        # proposed預測器的ratio_of_ones
         "MED": 1.0,             # MED預測器的ratio_of_ones
         "GAP": 0.7,             # GAP預測器的ratio_of_ones
         "RHOMBUS": 0.9          # RHOMBUS預測器的ratio_of_ones
@@ -94,7 +94,7 @@ def main():
     prediction_method_str = "PROPOSED"
     
     # 方法選擇
-    method = "split"         # 可選："rotation", "split", "quadtree"
+    method = "quadtree"         # 可選："rotation", "split", "quadtree"
     
     # 各方法共用參數
     split_size = 2              # 用於 rotation 和 split 方法

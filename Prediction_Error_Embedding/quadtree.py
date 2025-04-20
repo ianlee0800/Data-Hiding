@@ -33,16 +33,60 @@ def process_current_block(block, position, size, stage_info, embedding, ratio_of
                          remaining_target=None, verbose=False):
     """
     處理當前區塊的 PEE 嵌入，支援多種預測方法和統一權重
+    
+    Parameters:
+    -----------
+    block : numpy.ndarray or cupy.ndarray
+        輸入區塊
+    position : tuple
+        區塊在原圖中的位置 (y, x)
+    size : int
+        區塊大小
+    stage_info : dict
+        當前階段的資訊
+    embedding : int
+        當前嵌入階段
+    ratio_of_ones : float
+        嵌入數據中 1 的比例
+    target_bpp : float
+        目標 BPP
+    target_psnr : float
+        目標 PSNR
+    el_mode : int
+        EL模式
+    prediction_method : PredictionMethod
+        預測方法
+    remaining_target : list or None
+        剩餘需要嵌入的數據量的可變容器 [target_value]
+    verbose : bool
+        是否輸出詳細資訊
+        
+    Returns:
+    --------
+    list
+        [embedded_block, position, size, block_was_rotated]
     """
     try:
         # 確保 block 是 CuPy 數組
         if not isinstance(block, cp.ndarray):
             block = cp.asarray(block)
         
+        # 檢查是否已達到目標容量
+        if remaining_target is not None and remaining_target[0] <= 0:
+            # 已達到目標，直接返回原圖
+            if verbose:
+                print(f"  Target reached. Skipping block at {position} (size: {size}x{size})")
+            return [(block, position, size, False)]
+        
         # 計算區塊大小和目標容量
         block_size = block.size
+        current_target = None
         if remaining_target is not None:
-            block_size = min(block_size, remaining_target)
+            # 如果剩餘目標小於區塊大小，可能不應該跳過這個區塊
+            # 而是嘗試精確嵌入所需的位元數
+            current_target = min(block_size, remaining_target[0])
+            if verbose:
+                print(f"  Block at {position} allocated {current_target} bits (of {remaining_target[0]} remaining)")
         
         # 首先根據 el_mode 決定初始 max_el 值
         if el_mode == 1:  # Increasing
@@ -70,8 +114,33 @@ def process_current_block(block, position, size, stage_info, embedding, ratio_of
         )
         
         # 生成嵌入數據
-        data_to_embed = generate_random_binary_array(block_size, ratio_of_ones)
+        # 如果是接近目標值的最後一個區塊，優先考慮生成恰好數量的數據
+        if remaining_target is not None and remaining_target[0] <= block_size:
+            # 生成剛好所需數量的數據
+            data_size = remaining_target[0]
+            if verbose:
+                print(f"  Generating exactly {data_size} bits to match target")
+        else:
+            data_size = block_size
+            
+        data_to_embed = generate_random_binary_array(data_size, ratio_of_ones)
         data_to_embed = cp.asarray(data_to_embed, dtype=cp.uint8)
+        
+        # 標記是否區塊有旋轉
+        block_was_rotated = False
+        original_block = block.copy()  # 儲存原始區塊用於計算指標
+        
+        # 應用旋轉 (如果 rotation_mode 為 'random')
+        rotation = 0
+        if 'rotation_mode' in stage_info and stage_info['rotation_mode'] == 'random' and 'block_rotations' in stage_info:
+            if size in stage_info['block_rotations']:
+                rotation = stage_info['block_rotations'][size]
+                if rotation != 0:
+                    k = rotation // 90
+                    block = cp.rot90(block, k=k)
+                    block_was_rotated = True
+                    if verbose:
+                        print(f"  Applied rotation of {rotation}° to block at {position}")
         
         # 根據預測方法進行不同的處理
         if prediction_method == PredictionMethod.PROPOSED:
@@ -117,12 +186,23 @@ def process_current_block(block, position, size, stage_info, embedding, ratio_of
             weights,
             embedding,
             prediction_method=prediction_method,
-            remaining_target=remaining_target
+            remaining_target=remaining_target  # 傳遞可變容器
         )
         
         # 確保結果是 CuPy 數組
         if not isinstance(embedded_block, cp.ndarray):
             embedded_block = cp.asarray(embedded_block)
+        
+        # 如果區塊被旋轉過，計算指標時使用未旋轉的原始區塊做比較
+        compare_block = original_block
+        
+        # 將旋轉後的嵌入區塊旋轉回原始方向
+        if block_was_rotated:
+            # 計算逆旋轉角度
+            k = (-rotation // 90) % 4
+            embedded_block = cp.rot90(embedded_block, k=k)
+            if verbose:
+                print(f"  Rotated embedded block back by {-rotation}° to original orientation")
         
         # 計算並記錄區塊資訊
         block_info = {
@@ -132,14 +212,15 @@ def process_current_block(block, position, size, stage_info, embedding, ratio_of
                        else "N/A" if prediction_method in [PredictionMethod.MED, PredictionMethod.GAP] 
                        else None),
             'payload': int(payload),
-            'psnr': float(calculate_psnr(cp.asnumpy(block), cp.asnumpy(embedded_block))),
-            'ssim': float(calculate_ssim(cp.asnumpy(block), cp.asnumpy(embedded_block))),
+            'psnr': float(calculate_psnr(cp.asnumpy(compare_block), cp.asnumpy(embedded_block))),
+            'ssim': float(calculate_ssim(cp.asnumpy(compare_block), cp.asnumpy(embedded_block))),
             'hist_corr': float(histogram_correlation(
-                np.histogram(cp.asnumpy(block), bins=256, range=(0, 255))[0],
+                np.histogram(cp.asnumpy(compare_block), bins=256, range=(0, 255))[0],
                 np.histogram(cp.asnumpy(embedded_block), bins=256, range=(0, 255))[0]
             )),
             'EL': int(to_numpy(local_el).max()),
-            'prediction_method': prediction_method.value
+            'prediction_method': prediction_method.value,
+            'rotation': rotation
         }
         
         # 更新階段資訊
@@ -151,8 +232,11 @@ def process_current_block(block, position, size, stage_info, embedding, ratio_of
             print(f"  Prediction method: {prediction_method.value}")
             print(f"  Payload: {payload}")
             print(f"  PSNR: {block_info['psnr']:.2f}")
+            if remaining_target is not None:
+                print(f"  Remaining target: {remaining_target[0]} bits")
         
-        return [(embedded_block, position, size)]
+        # 返回處理後的區塊，並標記其是否曾經被旋轉過
+        return [(embedded_block, position, size, block_was_rotated)]
             
     except Exception as e:
         print(f"Error in block processing: {str(e)}")
@@ -194,12 +278,33 @@ def process_block(block, position, size, stage_info, embedding, variance_thresho
         'random': 使用隨機旋轉的新方法
     prediction_method : PredictionMethod
         預測方法選擇 (PROPOSED, MED, GAP)
-    remaining_target : int, optional
-        剩餘需要嵌入的數據量
+    remaining_target : list or None
+        剩餘需要嵌入的數據量的可變容器 [target_value]
     max_block_size : int
         最大區塊大小，默認為1024
     """
     try:
+        # 精確控制 - 如果剩餘容量很小，優先處理小區塊而不分割大區塊
+        if remaining_target is not None:
+            # 如果剩餘容量已經不足：
+            if remaining_target[0] <= 0:
+                # 如果已達到目標容量，直接返回原始區塊，不進行嵌入
+                if verbose:
+                    print(f"Target reached. Skipping block at {position} (size: {size}x{size})")
+                return [(block, position, size, False)]
+            
+            # 如果剩餘容量很小，小於區塊大小的20%，且區塊比較大，考慮直接處理
+            if remaining_target[0] < (size * size * 0.2) and size >= 64:
+                if verbose:
+                    print(f"Small remaining target ({remaining_target[0]} bits) - processing block directly")
+                return process_current_block(
+                    block, position, size, stage_info, embedding,
+                    ratio_of_ones, target_bpp, target_psnr, el_mode,
+                    prediction_method=prediction_method,
+                    remaining_target=remaining_target,
+                    verbose=verbose
+                )
+        
         if size < 16:  # 最小區塊大小限制
             return []
         
@@ -238,6 +343,8 @@ def process_block(block, position, size, stage_info, embedding, variance_thresho
             print(f"  Variance: {variance:.2f}")
             print(f"  Edge strength: {edge_strength:.2f}")
             print(f"  Adjusted threshold: {adjusted_threshold:.2f}")
+            if remaining_target is not None:
+                print(f"  Remaining target: {remaining_target[0]} bits")
         
         # 根據變異度決定是否分割
         if size > 16 and variance > adjusted_threshold:
@@ -245,34 +352,71 @@ def process_block(block, position, size, stage_info, embedding, variance_thresho
             half_size = size // 2
             sub_blocks = []
             
+            # 剩餘容量精確控制 - 為子區塊分配合理的目標容量
+            sub_block_targets = None
+            if remaining_target is not None and remaining_target[0] > 0:
+                # 根據區塊大小分配容量
+                sub_block_size = half_size * half_size
+                total_size = size * size
+                sub_block_targets = [
+                    [int(remaining_target[0] * sub_block_size / total_size)],
+                    [int(remaining_target[0] * sub_block_size / total_size)],
+                    [int(remaining_target[0] * sub_block_size / total_size)],
+                    [int(remaining_target[0] * sub_block_size / total_size)]
+                ]
+                # 確保分配的總和不超過剩餘目標
+                total_allocated = sum(target[0] for target in sub_block_targets)
+                if total_allocated > remaining_target[0]:
+                    # 調整最後一個區塊的分配
+                    sub_block_targets[3][0] -= (total_allocated - remaining_target[0])
+                
+                if verbose:
+                    print(f"  Allocated targets for sub-blocks: {[target[0] for target in sub_block_targets]}")
+            
             for i in range(2):
                 for j in range(2):
+                    # 獲取當前子區塊的索引和目標容量
+                    sub_idx = i * 2 + j
+                    current_target = sub_block_targets[sub_idx] if sub_block_targets else remaining_target
+                    
+                    # 如果子區塊的目標容量已經為0，跳過處理
+                    if current_target is not None and current_target[0] <= 0:
+                        # 直接添加未處理的子區塊
+                        y_start = position[0] + i * half_size
+                        x_start = position[1] + j * half_size
+                        sub_block = block[i*half_size:(i+1)*half_size, j*half_size:(j+1)*half_size]
+                        sub_blocks.append((sub_block, (y_start, x_start), half_size, False))
+                        continue
+                        
                     y_start = position[0] + i * half_size
                     x_start = position[1] + j * half_size
-                    sub_block = block[i*half_size:(i+1)*half_size, 
-                                    j*half_size:(j+1)*half_size]
+                    sub_block = block[i*half_size:(i+1)*half_size, j*half_size:(j+1)*half_size]
                     
-                    # 遞迴處理子區塊，傳遞所有必要參數
-                    sub_blocks.extend(process_block(
+                    # 遞迴處理子區塊，傳遞所有必要參數，使用分配的目標容量
+                    sub_results = process_block(
                         sub_block, (y_start, x_start), half_size,
                         stage_info, embedding, variance_threshold,
                         ratio_of_ones, target_bpp, target_psnr, el_mode,
                         verbose=verbose,
                         rotation_mode=rotation_mode,
                         prediction_method=prediction_method,
-                        remaining_target=remaining_target,
+                        remaining_target=current_target,  # 使用分配給這個子區塊的目標
                         max_block_size=max_block_size
-                    ))
+                    )
+                    
+                    # 更新主要的剩餘目標容量
+                    if remaining_target is not None and current_target is not None:
+                        # 計算實際使用的容量（分配前減去分配後）
+                        used_capacity = sub_block_targets[sub_idx][0] - current_target[0]
+                        remaining_target[0] -= used_capacity
+                        if verbose and used_capacity > 0:
+                            print(f"  Sub-block {sub_idx} used {used_capacity} bits, main remaining: {remaining_target[0]}")
+                    
+                    sub_blocks.extend(sub_results)
+            
             return sub_blocks
         else:
             # 處理當前區塊
-            if rotation_mode == 'random' and 'block_rotations' in stage_info:
-                rotation = stage_info['block_rotations'][size]
-                if rotation != 0:
-                    k = rotation // 90
-                    block = cp.rot90(block, k=k)
-            
-            # 使用process_current_block處理當前區塊
             return process_current_block(
                 block, position, size, stage_info, embedding,
                 ratio_of_ones, target_bpp, target_psnr, el_mode,
@@ -419,7 +563,13 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
         if prediction_method in [PredictionMethod.MED, PredictionMethod.GAP]:
             use_different_weights = False
             print(f"Note: Weight optimization disabled for {prediction_method.value} prediction method")
-
+        
+        # 處理旋轉模式設置
+        # 警告：當使用精確的目標payload時，不建議使用random旋轉模式
+        if rotation_mode == 'random' and target_payload_size > 0:
+            print("WARNING: Using random rotation mode with a specific target payload may cause image quality issues.")
+            print("For better image quality with target payload, consider using rotation_mode='none'.")
+        
         # 初始化基本變數
         original_img = cp.asarray(img)
         height, width = original_img.shape
@@ -433,11 +583,24 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
         previous_ssim = 1.0
         previous_payload = float('inf')
         
-        # Payload 控制設置
-        remaining_target = target_payload_size if target_payload_size > 0 else None
+        # 使用可變容器來追蹤剩餘目標payload
+        # 這是關鍵修改點：使用list作為可變容器而不是int
+        if target_payload_size > 0:
+            remaining_target = [target_payload_size]  # 使用list作為可變容器
+            print(f"Target payload set: {target_payload_size} bits")
+            # 目標容量的填充率（目標佔圖片容量的比例）
+            fill_rate = target_payload_size / total_pixels
+            print(f"Target fill rate: {fill_rate:.4f} bits per pixel")
+        else:
+            remaining_target = None
+            print("Using maximum embedding capacity")
         
         # 儲存每種大小區塊的權重
         block_size_weights = {}
+        
+        # 設置精確控制的額外參數
+        # 如果設置了目標payload，啟用精確控制模式
+        precise_control = target_payload_size > 0
         
         # GPU 記憶體管理
         mem_pool = cp.get_default_memory_pool()
@@ -446,7 +609,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
             # 逐階段處理
             for embedding in range(total_embeddings):
                 # 檢查是否達到目標 payload
-                if remaining_target is not None and remaining_target <= 0:
+                if remaining_target is not None and remaining_target[0] <= 0:
                     print(f"Reached target payload ({target_payload_size} bits) at stage {embedding}")
                     break
                     
@@ -454,7 +617,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                 print(f"\nStarting embedding {embedding}")
                 print(f"Memory usage before embedding {embedding}: {mem_pool.used_bytes()/1024/1024:.2f} MB")
                 if remaining_target is not None:
-                    print(f"Remaining target payload: {remaining_target}")
+                    print(f"Remaining target payload: {remaining_target[0]} bits")
 
                 # 設定目標品質參數
                 if embedding == 0:
@@ -490,6 +653,12 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                         size: np.random.choice([-270, -180, -90, 0, 90, 180, 270])
                         for size in all_block_sizes
                     }
+                    # 如果使用精確容量控制，考慮減少旋轉
+                    if precise_control:
+                        # 減少旋轉以提高圖像質量
+                        for size in [1024, 512, 256]:
+                            block_rotations[size] = 0  # 大區塊不旋轉
+                            
                     stage_info['block_rotations'] = block_rotations
                     print("\nBlock rotation angles for this stage:")
                     for size, angle in sorted(block_rotations.items(), reverse=True):
@@ -509,19 +678,27 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                 processed_blocks = []
                 for i in range(num_blocks_vertical):
                     for j in range(num_blocks_horizontal):
+                        # 檢查是否已達到目標payload
+                        if remaining_target is not None and remaining_target[0] <= 0:
+                            # 如果已達到目標，不處理剩餘區塊直接複製
+                            y_start = i * max_block_size
+                            x_start = j * max_block_size
+                            stage_img[y_start:y_start+max_block_size, x_start:x_start+max_block_size] = current_img[y_start:y_start+max_block_size, x_start:x_start+max_block_size]
+                            continue
+                            
                         # 提取當前塊
                         y_start = i * max_block_size
                         x_start = j * max_block_size
                         current_block = current_img[y_start:y_start+max_block_size, x_start:x_start+max_block_size]
                         
-                        # 處理當前塊
+                        # 處理當前塊，傳遞可變容器
                         block_results = process_block(
                             current_block, (y_start, x_start), max_block_size, stage_info, embedding,
                             variance_threshold, ratio_of_ones, target_bpp, target_psnr, el_mode,
                             verbose=False, 
                             rotation_mode=rotation_mode,
                             prediction_method=prediction_method,
-                            remaining_target=remaining_target,
+                            remaining_target=remaining_target,  # 傳遞可變容器
                             max_block_size=max_block_size
                         )
                         
@@ -531,29 +708,31 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                         if (i * num_blocks_horizontal + j + 1) % 4 == 0:
                             mem_pool.free_all_blocks()
 
-                # 重建圖像
-                for block, pos, size in processed_blocks:
+                # 重建圖像 - 關鍵修改：確保正確處理旋轉
+                for block, pos, size, was_rotated in processed_blocks:
                     block = cp.asarray(block)
                     
-                    if rotation_mode == 'random':
-                        # 保存旋轉狀態的圖像
-                        rotated_stage_img[pos[0]:pos[0]+size, pos[1]:pos[1]+size] = block
-                        # 將區塊旋轉回原始方向
-                        rotation = stage_info['block_rotations'][size]
-                        if rotation != 0:
-                            k = (-rotation // 90) % 4
-                            block = cp.rot90(block, k=k)
-                    
-                    # 將區塊放回最終圖像
+                    # 將區塊放回最終圖像 - 直接使用已經正確旋轉的區塊
                     stage_img[pos[0]:pos[0]+size, pos[1]:pos[1]+size] = block
+                    
+                    # 僅在需要旋轉視覺化時保存旋轉狀態
+                    if rotation_mode == 'random':
+                        rotation = stage_info['block_rotations'].get(size, 0)
+                        # 如果需要保存旋轉狀態，使用原始的旋轉版本
+                        if rotation != 0 and not was_rotated:
+                            # 區塊需要先旋轉，才能放入rotated_stage_img
+                            k = rotation // 90
+                            rotated_block = cp.rot90(block, k=k)
+                            rotated_stage_img[pos[0]:pos[0]+size, pos[1]:pos[1]+size] = rotated_block
+                        else:
+                            # 使用已旋轉的區塊
+                            rotated_stage_img[pos[0]:pos[0]+size, pos[1]:pos[1]+size] = block
 
-                # 創建可視化 - 這段應該在原函數中約在第320行左右的位置
-                # 保存圖像狀態
+                # 保存rotated_stage_img供視覺化使用
                 if rotation_mode == 'random':
                     stage_info['rotated_stage_img'] = rotated_stage_img
                     
-                    # Create a visualization of the rotated blocks structure
-                    # 初始化一個圖像以顯示旋轉後的區塊結構
+                    # 建立旋轉後的區塊視覺化
                     rotated_block_visualization = np.zeros_like(cp.asnumpy(original_img))
                     
                     # 定義每種區塊大小的顏色
@@ -595,7 +774,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                             rotated_block_visualization[y:y+size, x:x+border_width] = block_colors[size]  # 左邊框
                             rotated_block_visualization[y:y+size, x+size-border_width:x+size] = block_colors[size]  # 右邊框
                     
-                    # 更新視覺化保存路徑，使用新參數
+                    # 保存旋轉區塊視覺化
                     rotated_viz_path = f"{image_dir}/rotated_blocks/stage_{embedding}_blocks.png"
                     ensure_dir(rotated_viz_path)
                     save_image(rotated_block_visualization, rotated_viz_path)
@@ -605,7 +784,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                     
                     print(f"Saved rotated block visualization to {rotated_viz_path}")
                     
-                    # 創建帶顏色編碼的可視化以顯示旋轉角度
+                    # 創建旋轉角度視覺化
                     rotation_colors = {
                         0: [200, 200, 200],      # 灰色表示無旋轉
                         90: [200, 100, 100],     # 紅色調表示90°
@@ -649,12 +828,12 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                             rotated_block_visualization_color[y:y+size, x:x+border_width, :] = color  # 左側
                             rotated_block_visualization_color[y:y+size, x+size-border_width:x+size, :] = color  # 右側
                     
-                    # 更新彩色可視化保存路徑，使用新參數
+                    # 保存彩色可視化
                     color_viz_path = f"{image_dir}/rotated_blocks/stage_{embedding}_color.png"
                     ensure_dir(color_viz_path)
                     cv2.imwrite(color_viz_path, rotated_block_visualization_color)
                     
-                    # 添加旋轉角度圖例
+                    # 添加圖例
                     legend_img = np.ones((200, 400, 3), dtype=np.uint8) * 255  # 白色背景
                     legend_title = "Rotation Angles Legend"
                     cv2.putText(legend_img, legend_title, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 0), 2)
@@ -681,25 +860,15 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                 
                 stage_info['stage_img'] = stage_img
 
-                # 計算品質指標
-                if rotation_mode == 'random':
-                    # 使用轉回0度的圖像計算指標
-                    stage_img_np = cp.asnumpy(stage_img)
-                    reference_img_np = cp.asnumpy(original_img)
-                    psnr = calculate_psnr(reference_img_np, stage_img_np)
-                    ssim = calculate_ssim(reference_img_np, stage_img_np)
-                    hist_corr = histogram_correlation(
-                        np.histogram(reference_img_np, bins=256, range=(0, 255))[0],
-                        np.histogram(stage_img_np, bins=256, range=(0, 255))[0]
-                    )
-                else:
-                    # 使用原始旋轉狀態計算指標
-                    psnr, ssim, hist_corr = calculate_metrics_with_rotation(
-                        current_img,
-                        stage_img,
-                        original_img,
-                        embedding
-                    )
+                # 計算品質指標 - 這裡使用未旋轉的stage_img
+                stage_img_np = cp.asnumpy(stage_img)
+                reference_img_np = cp.asnumpy(original_img)
+                psnr = calculate_psnr(reference_img_np, stage_img_np)
+                ssim = calculate_ssim(reference_img_np, stage_img_np)
+                hist_corr = histogram_correlation(
+                    np.histogram(reference_img_np, bins=256, range=(0, 255))[0],
+                    np.histogram(stage_img_np, bins=256, range=(0, 255))[0]
+                )
 
                 # 更新階段品質指標
                 stage_info['psnr'] = float(psnr)
@@ -720,6 +889,9 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                 # 品質檢查和警告
                 if psnr < 28 or ssim < 0.8:
                     print("Warning: Metrics seem unusually low")
+                    # 如果使用的是random旋轉模式，提示可能是旋轉造成的
+                    if rotation_mode == 'random':
+                        print("This may be caused by the random rotation mode. Consider using rotation_mode='none'")
 
                 # 與前一階段比較
                 if embedding > 0:
@@ -737,10 +909,6 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                 previous_psnr = stage_info['psnr']
                 previous_ssim = stage_info['ssim']
                 previous_payload = stage_info['payload']
-                
-                # 更新剩餘目標payload
-                if remaining_target is not None:
-                    remaining_target -= stage_info['payload']
 
                 # 輸出階段摘要
                 print(f"\nEmbedding {embedding} summary:")
@@ -755,7 +923,28 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                 print("\nBlock size distribution:")
                 for size_str in sorted(block_counts.keys(), key=int, reverse=True):
                     print(f"  {size_str}x{size_str}: {block_counts[size_str]} blocks")
-
+                
+                # 輸出目標payload資訊
+                if remaining_target is not None:
+                    if remaining_target[0] <= 0:
+                        print(f"\nTarget payload of {target_payload_size} bits reached")
+                        # 如果設置了精確控制目標，檢查實際嵌入量與目標的差距
+                        if precise_control:
+                            difference = total_payload - target_payload_size
+                            if difference != 0:
+                                print(f"Actual payload ({total_payload}) differs from target ({target_payload_size}) by {difference} bits")
+                                print(f"Accuracy: {total_payload/target_payload_size*100:.2f}%")
+                    else:
+                        print(f"\nRemaining target payload: {remaining_target[0]} bits")
+                
+                # 精確控制：嘗試達到確切的目標payload
+                if precise_control and target_payload_size > total_payload:
+                    # 如果少於目標值且差距不大，嘗試填充差距
+                    shortfall = target_payload_size - total_payload
+                    if 0 < shortfall <= 1000:  # 小於1000位的差距可以嘗試填充
+                        print(f"Attempting to fill missing {shortfall} bits to match exact target")
+                        # 可以在這裡實現bit stuffing邏輯
+                
                 # 準備下一階段
                 current_img = stage_img.copy()
 
