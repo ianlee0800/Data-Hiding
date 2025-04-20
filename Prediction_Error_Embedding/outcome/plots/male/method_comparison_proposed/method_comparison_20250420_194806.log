@@ -1,0 +1,32 @@
+Method comparison started at 2025-04-20 19:48:06
+Image: Male.tiff
+Predictor: proposed
+Methods to compare: ['rotation', 'quadtree']
+Total embeddings: 1
+EL mode: 0
+Step size: 100000 bits
+
+================================================================================
+
+Error processing rotation: 'int' object is not subscriptable
+Traceback (most recent call last):
+  File "d:\Google Drive\ゅン\河痁\Data-Hiding\Prediction_Error_Embedding\utils.py", line 1284, in run_method_comparison
+    results_df = run_precise_measurements(
+  File "d:\Google Drive\ゅン\河痁\Data-Hiding\Prediction_Error_Embedding\utils.py", line 659, in run_precise_measurements
+    final_img, actual_payload, stages = run_embedding_with_target(
+  File "d:\Google Drive\ゅン\河痁\Data-Hiding\Prediction_Error_Embedding\utils.py", line 383, in run_embedding_with_target
+    final_img, actual_payload, stages = pee_process_with_rotation_cuda(
+  File "d:\Google Drive\ゅン\河痁\Data-Hiding\Prediction_Error_Embedding\embedding.py", line 245, in pee_process_with_rotation_cuda
+    embedded_sub, payload = multi_pass_embedding(
+  File "d:\Google Drive\ゅン\河痁\Data-Hiding\Prediction_Error_Embedding\pee.py", line 306, in multi_pass_embedding
+    if remaining_target[0] <= len(data) * 0.1 and remaining_target[0] > 0:
+TypeError: 'int' object is not subscriptable
+
+
+Error processing quadtree: run_precise_measurements() got an unexpected keyword argument 'min_block_size'
+Traceback (most recent call last):
+  File "d:\Google Drive\ゅン\河痁\Data-Hiding\Prediction_Error_Embedding\utils.py", line 1284, in run_method_comparison
+    results_df = run_precise_measurements(
+TypeError: run_precise_measurements() got an unexpected keyword argument 'min_block_size'
+
+

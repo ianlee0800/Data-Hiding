@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import cv2
 import matplotlib.pyplot as plt
 import os
 import time
@@ -455,11 +456,47 @@ def ensure_bpp_psnr_consistency(results_df):
     return df.sort_values('Target_Percentage')
 
 def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_of_ones, 
-                            total_embeddings=5, el_mode=0, segments=15, use_different_weights=False,
+                            total_embeddings=5, el_mode=0, segments=15, step_size=None, use_different_weights=False,
                             split_size=2, block_base=False, quad_tree_params=None):
     """
     運行精確的數據點測量，為均勻分布的payload目標單獨執行嵌入算法
     增加對 Rhombus 預測器的特殊處理，確保 BPP-PSNR 曲線的一致性
+    新增支援基於步長的測量點生成
+
+    Parameters:
+    -----------
+    origImg : numpy.ndarray
+        原始圖像
+    imgName : str
+        圖像名稱 (用於保存結果)
+    method : str
+        使用的方法
+    prediction_method : PredictionMethod
+        預測方法
+    ratio_of_ones : float
+        嵌入數據中1的比例
+    total_embeddings : int
+        總嵌入次數
+    el_mode : int
+        EL模式
+    segments : int
+        要測量的數據點數量 (如果提供了step_size則忽略此參數)
+    step_size : int, optional
+        測量點之間的步長 (以位元為單位，例如10000)
+        如果提供，則覆蓋segments參數
+    use_different_weights : bool
+        是否使用不同權重
+    split_size : int
+        分割大小
+    block_base : bool
+        是否使用block base方式
+    quad_tree_params : dict
+        四叉樹參數
+        
+    Returns:
+    --------
+    pandas.DataFrame
+        包含所有測量結果的DataFrame
     """
     # 總運行開始時間
     total_start_time = time.time()
@@ -483,7 +520,10 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
         f.write(f"Ratio of ones: {ratio_of_ones}\n")
         f.write(f"Total embeddings: {total_embeddings}\n")
         f.write(f"EL mode: {el_mode}\n")
-        f.write(f"Segments: {segments}\n")
+        if step_size:
+            f.write(f"Step size: {step_size} bits\n")
+        else:
+            f.write(f"Segments: {segments}\n")
         f.write(f"Use different weights: {use_different_weights}\n")
         f.write("\n" + "="*80 + "\n\n")
     
@@ -516,16 +556,31 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
         f.write(f"Max BPP: {max_payload/total_pixels:.6f}\n")
         f.write(f"Time taken: {max_run_time:.2f} seconds\n\n")
     
-    # 步驟2: 計算均勻分布的payload點
+    # 步驟2: 計算測量點
     print(f"\n{'='*80}")
-    print(f"Step 2: Calculating {segments} evenly distributed payload points")
+    if step_size and step_size > 0:
+        print(f"Step 2: Calculating measurement points with {step_size} bit steps")
+    else:
+        print(f"Step 2: Calculating {segments} evenly distributed payload points")
     print(f"{'='*80}")
     
     with open(log_file, 'a') as f:
-        f.write(f"Step 2: Calculating {segments} evenly distributed payload points\n")
+        if step_size and step_size > 0:
+            f.write(f"Step 2: Calculating measurement points with {step_size} bit steps\n")
+        else:
+            f.write(f"Step 2: Calculating {segments} evenly distributed payload points\n")
     
-    # 計算每個級距的目標嵌入量 (從10%到100%)
-    payload_points = [int(max_payload * (i+1) / segments) for i in range(segments)]
+    # 根據參數生成測量點
+    if step_size and step_size > 0:
+        # 使用固定步長生成測量點
+        # 從step_size開始，每次增加step_size，直到接近max_payload
+        payload_points = list(range(step_size, max_payload, step_size))
+        # 確保包含最大嵌入量
+        if max_payload not in payload_points:
+            payload_points.append(max_payload)
+    else:
+        # 原本的均分段落方式
+        payload_points = [int(max_payload * (i+1) / segments) for i in range(segments)]
     
     print("Target payload points:")
     for i, target in enumerate(payload_points):
@@ -581,11 +636,20 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
         f.write(f"  Hist_Corr: {hist_corr_max:.4f}\n")
         f.write(f"  Time: {max_run_time:.2f} seconds\n\n")
     
-    # 運行其餘級距的測量 (1到segments-1，跳過最後一個因為已經有了max結果)
-    for i, target in enumerate(payload_points[:-1]):
-        percentage = (i+1) / segments * 100
+    # 使用 tqdm 添加進度條
+    from tqdm import tqdm
+    
+    # 運行除了最大容量外的所有測量點
+    # 因為最大容量已經測量過了，所以跳過列表中的最後一個點（如果它等於max_payload）
+    measurement_points = payload_points
+    if measurement_points and measurement_points[-1] == max_payload:
+        measurement_points = measurement_points[:-1]
+    
+    for i, target in enumerate(tqdm(measurement_points, desc="處理測量點")):
+        # 計算百分比，用於命名和日誌
+        percentage = target / max_payload * 100
         
-        print(f"\nRunning point {i+1}/{segments}: {target} bits ({percentage:.1f}% of max)")
+        print(f"\nRunning point {i+1}/{len(measurement_points)}: {target} bits ({percentage:.1f}% of max)")
         
         with open(log_file, 'a') as f:
             f.write(f"{percentage:.1f}% target:\n")
@@ -610,7 +674,7 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
             np.histogram(final_img, bins=256, range=(0, 255))[0]
         )
         
-        # 檢查 PSNR 是否異常（對 Rhombus 預測器特別關注）
+        # 檢查 PSNR 是否異常
         is_psnr_suspicious = False
         if len(results) > 0:
             last_result = results[-1]
@@ -651,6 +715,9 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
             f.write(f"  SSIM: {ssim:.4f}\n")
             f.write(f"  Hist_Corr: {hist_corr:.4f}\n")
             f.write(f"  Time: {run_time:.2f} seconds\n\n")
+        
+        # 清理記憶體
+        cleanup_memory()
     
     # 按照正確順序排序結果
     results.sort(key=lambda x: x['Target_Percentage'])
@@ -695,13 +762,13 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
     total_time = time.time() - total_start_time
     
     print(f"Total processing time: {total_time:.2f} seconds")
-    print(f"Average time per point: {total_time/segments:.2f} seconds")
+    print(f"Average time per point: {total_time/len(results):.2f} seconds")
     print(f"Results saved to {result_dir}")
     
     with open(log_file, 'a') as f:
         f.write(f"Results summary:\n")
         f.write(f"Total processing time: {total_time:.2f} seconds\n")
-        f.write(f"Average time per point: {total_time/segments:.2f} seconds\n")
+        f.write(f"Average time per point: {total_time/len(results):.2f} seconds\n")
         f.write(f"Results saved to {result_dir}\n\n")
         
         f.write("Data table:\n")
@@ -1108,6 +1175,148 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
     
     return all_results
 
+def run_method_comparison(imgName, filetype="png", predictor="proposed", 
+                        ratio_of_ones=0.5, methods=None, method_params=None,
+                        total_embeddings=5, el_mode=0, segments=15, step_size=None):
+    """
+    比較使用相同預測器的不同嵌入方法的性能
+    
+    Parameters:
+    -----------
+    imgName : str
+        圖像名稱
+    filetype : str
+        圖像檔案類型
+    predictor : str
+        所有比較使用的預測方法 ("proposed", "med", "gap", "rhombus")
+    ratio_of_ones : float
+        嵌入數據中1的比例
+    methods : list of str
+        要比較的方法 (例如 ["rotation", "split", "quadtree"])
+    method_params : dict of dict
+        每個方法的特定參數，例如 
+        {"rotation": {"split_size": 2}, "quadtree": {"min_block_size": 16}}
+    total_embeddings : int
+        總嵌入次數
+    el_mode : int
+        EL模式
+    segments : int
+        測量分段數量 (如果提供了step_size則忽略)
+    step_size : int, optional
+        測量點之間的步長 (位元)
+    
+    Returns:
+    --------
+    dict
+        包含每個方法結果的字典 {方法名稱: DataFrame}
+    """
+    import os
+    import cv2
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import time
+    from datetime import datetime
+    from tqdm import tqdm
+    
+    from image_processing import PredictionMethod
+    from common import cleanup_memory
+    
+    # 讀取原始圖像
+    origImg = cv2.imread(f"./Prediction_Error_Embedding/image/{imgName}.{filetype}", cv2.IMREAD_GRAYSCALE)
+    if origImg is None:
+        raise ValueError(f"Failed to read image: ./Prediction_Error_Embedding/image/{imgName}.{filetype}")
+    
+    # 如果未提供方法，使用默認方法
+    if methods is None:
+        methods = ["rotation", "split", "quadtree"]
+    
+    # 如果未提供方法參數，使用默認參數
+    if method_params is None:
+        method_params = {
+            "rotation": {"split_size": 2, "use_different_weights": False},
+            "split": {"split_size": 2, "block_base": False, "use_different_weights": False},
+            "quadtree": {"min_block_size": 16, "variance_threshold": 300, "use_different_weights": False}
+        }
+    
+    # 將預測器字符串映射到 PredictionMethod
+    pred_map = {
+        "proposed": PredictionMethod.PROPOSED,
+        "med": PredictionMethod.MED,
+        "gap": PredictionMethod.GAP,
+        "rhombus": PredictionMethod.RHOMBUS
+    }
+    prediction_method = pred_map.get(predictor.lower(), PredictionMethod.PROPOSED)
+    
+    # 創建比較輸出目錄
+    comparison_dir = f"./Prediction_Error_Embedding/outcome/plots/{imgName}/method_comparison_{predictor}"
+    os.makedirs(comparison_dir, exist_ok=True)
+    
+    # 比較的日誌文件
+    log_file = f"{comparison_dir}/method_comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+    with open(log_file, 'w') as f:
+        f.write(f"Method comparison started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Image: {imgName}.{filetype}\n")
+        f.write(f"Predictor: {predictor}\n")
+        f.write(f"Methods to compare: {methods}\n")
+        f.write(f"Total embeddings: {total_embeddings}\n")
+        f.write(f"EL mode: {el_mode}\n")
+        if step_size:
+            f.write(f"Step size: {step_size} bits\n")
+        else:
+            f.write(f"Segments: {segments}\n")
+        f.write("\n" + "="*80 + "\n\n")
+    
+    # 儲存每個方法的結果
+    all_results = {}
+    
+    # 處理每個方法
+    for method_name in methods:
+        print(f"\n{'='*80}")
+        print(f"Running precise measurements for {method_name} method")
+        print(f"{'='*80}")
+        
+        try:
+            # 獲取此方法的參數
+            params = method_params.get(method_name, {})
+            
+            # 運行精確測量
+            results_df = run_precise_measurements(
+                origImg, imgName, method_name, prediction_method, ratio_of_ones,
+                total_embeddings, el_mode, segments, step_size,
+                **params  # 展開方法特定參數
+            )
+            
+            # 儲存結果
+            all_results[method_name] = results_df
+            
+            # 保存為CSV
+            results_df.to_csv(f"{comparison_dir}/{method_name}_{predictor}_precise.csv", index=False)
+            
+            # 記錄完成
+            with open(log_file, 'a') as f:
+                f.write(f"Completed measurements for {method_name} method\n")
+                f.write(f"Results saved to {comparison_dir}/{method_name}_{predictor}_precise.csv\n\n")
+            
+        except Exception as e:
+            print(f"Error processing {method_name}: {str(e)}")
+            with open(log_file, 'a') as f:
+                f.write(f"Error processing {method_name}: {str(e)}\n")
+                import traceback
+                f.write(traceback.format_exc())
+                f.write("\n\n")
+            
+            # 確保清理記憶體
+            cleanup_memory()
+    
+    # 如果有結果，創建比較圖表
+    if all_results:
+        plot_method_comparison(all_results, imgName, predictor, comparison_dir)
+        create_comparative_table(all_results, f"{comparison_dir}/method_comparison_table.csv")
+        print(f"Comparison plots saved to {comparison_dir}")
+    
+    return all_results
+
 def plot_predictor_comparison(all_results, imgName, method, output_dir):
     """
     繪製多預測器精確測量結果的比較圖表，並修復 DataFrame 警告
@@ -1300,6 +1509,386 @@ def plot_predictor_comparison(all_results, imgName, method, output_dir):
     plt.tight_layout()
     plt.savefig(f"{output_dir}/comparison_max_payload.png", dpi=300)
     plt.close()  # 關閉圖表
+
+def plot_method_comparison(all_results, imgName, predictor, output_dir):
+    """
+    為使用相同預測器的不同方法創建比較圖表
+    
+    Parameters:
+    -----------
+    all_results : dict
+        包含每個方法結果的字典 {方法名稱: DataFrame}
+    imgName : str
+        圖像名稱
+    predictor : str
+        所有方法使用的預測器
+    output_dir : str
+        輸出目錄
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # 為不同方法設置顏色和標記
+    colors = {
+        'rotation': 'blue',
+        'split': 'green',
+        'quadtree': 'red',
+        'custom': 'purple'  # 用於其他方法
+    }
+    
+    markers = {
+        'rotation': 'o',
+        'split': 's',
+        'quadtree': '^',
+        'custom': 'D'  # 用於其他方法
+    }
+    
+    # 創建 BPP-PSNR 比較圖
+    plt.figure(figsize=(12, 8))
+    
+    for method, df in all_results.items():
+        color = colors.get(method, 'black')
+        marker = markers.get(method, 'x')
+        
+        plt.plot(df['BPP'], df['PSNR'], 
+                 color=color,
+                 linewidth=2.5,
+                 marker=marker,
+                 markersize=8,
+                 label=f'Method: {method}')
+    
+    plt.xlabel('Bits Per Pixel (BPP)', fontsize=14)
+    plt.ylabel('PSNR (dB)', fontsize=14)
+    plt.title(f'Method Comparison with {predictor.capitalize()} Predictor\n'
+              f'Image: {imgName}', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/method_comparison_bpp_psnr.png", dpi=300)
+    plt.close()
+    
+    # 創建 BPP-SSIM 比較圖
+    plt.figure(figsize=(12, 8))
+    
+    for method, df in all_results.items():
+        color = colors.get(method, 'black')
+        marker = markers.get(method, 'x')
+        
+        plt.plot(df['BPP'], df['SSIM'], 
+                 color=color,
+                 linewidth=2.5,
+                 marker=marker,
+                 markersize=8,
+                 label=f'Method: {method}')
+    
+    plt.xlabel('Bits Per Pixel (BPP)', fontsize=14)
+    plt.ylabel('SSIM', fontsize=14)
+    plt.title(f'Method Comparison with {predictor.capitalize()} Predictor\n'
+              f'Image: {imgName}', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/method_comparison_bpp_ssim.png", dpi=300)
+    plt.close()
+    
+    # 如果有直方圖相關性數據，創建 BPP-Hist_Corr 比較圖
+    if 'Hist_Corr' in next(iter(all_results.values())):
+        plt.figure(figsize=(12, 8))
+        
+        for method, df in all_results.items():
+            color = colors.get(method, 'black')
+            marker = markers.get(method, 'x')
+            
+            plt.plot(df['BPP'], df['Hist_Corr'], 
+                    color=color,
+                    linewidth=2.5,
+                    marker=marker,
+                    markersize=8,
+                    label=f'Method: {method}')
+        
+        plt.xlabel('Bits Per Pixel (BPP)', fontsize=14)
+        plt.ylabel('Histogram Correlation', fontsize=14)
+        plt.title(f'Histogram Correlation Comparison with {predictor.capitalize()} Predictor\n'
+                f'Image: {imgName}', fontsize=16)
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.legend(fontsize=12)
+        
+        plt.tight_layout()
+        plt.savefig(f"{output_dir}/method_comparison_bpp_histcorr.png", dpi=300)
+        plt.close()
+    
+    # 創建 PSNR-Payload 比較圖（額外的視角）
+    plt.figure(figsize=(12, 8))
+    
+    for method, df in all_results.items():
+        color = colors.get(method, 'black')
+        marker = markers.get(method, 'x')
+        
+        plt.plot(df['Actual_Payload'], df['PSNR'], 
+                 color=color,
+                 linewidth=2.5,
+                 marker=marker,
+                 markersize=8,
+                 label=f'Method: {method}')
+    
+    plt.xlabel('Payload (bits)', fontsize=14)
+    plt.ylabel('PSNR (dB)', fontsize=14)
+    plt.title(f'Payload-PSNR Comparison with {predictor.capitalize()} Predictor\n'
+              f'Image: {imgName}', fontsize=16)
+    plt.grid(True, linestyle='--', alpha=0.7)
+    plt.legend(fontsize=12)
+    
+    plt.tight_layout()
+    plt.savefig(f"{output_dir}/method_comparison_payload_psnr.png", dpi=300)
+    plt.close()
+    
+    # 創建綜合雷達圖（僅在有多個方法時才有意義）
+    if len(all_results) >= 2:
+        create_radar_chart(all_results, predictor, imgName, output_dir)
+
+def create_comparative_table(all_results, output_path):
+    """
+    創建所有方法在相似 BPP 值下的比較表
+    
+    Parameters:
+    -----------
+    all_results : dict
+        包含每個方法結果的字典 {方法名稱: DataFrame}
+    output_path : str
+        保存比較表的路徑
+    
+    Returns:
+    --------
+    pandas.DataFrame
+        比較表
+    """
+    import pandas as pd
+    import numpy as np
+    
+    # 首先，識別共同的 BPP 範圍
+    all_bpp_values = []
+    for method, df in all_results.items():
+        all_bpp_values.extend(df['BPP'].tolist())
+    
+    # 排序並去除重複
+    all_bpp_values = sorted(list(set([round(bpp, 4) for bpp in all_bpp_values])))
+    
+    # 創建固定間隔的參考 BPP 值
+    min_bpp = min(all_bpp_values)
+    max_bpp = max(all_bpp_values)
+    step = (max_bpp - min_bpp) / 20  # 20 個參考點
+    reference_bpps = [round(min_bpp + i * step, 4) for i in range(21)]  # 包括終點
+    
+    # 創建具有共同 BPP 值的 DataFrame
+    comp_data = {'BPP': reference_bpps}
+    
+    # 為每個方法找到最接近的 PSNR 和 SSIM 值
+    for method, df in all_results.items():
+        psnr_values = []
+        ssim_values = []
+        hist_corr_values = []
+        
+        for bpp in reference_bpps:
+            # 在此方法的結果中找到最接近的 BPP
+            closest_idx = (df['BPP'] - bpp).abs().idxmin()
+            psnr_values.append(df.loc[closest_idx, 'PSNR'])
+            ssim_values.append(df.loc[closest_idx, 'SSIM'])
+            if 'Hist_Corr' in df.columns:
+                hist_corr_values.append(df.loc[closest_idx, 'Hist_Corr'])
+        
+        comp_data[f'{method}_PSNR'] = psnr_values
+        comp_data[f'{method}_SSIM'] = ssim_values
+        if hist_corr_values:
+            comp_data[f'{method}_Hist_Corr'] = hist_corr_values
+    
+    # 添加方法之間的性能差異
+    if len(all_results) > 1:
+        methods = list(all_results.keys())
+        
+        # 獲取第一個方法作為基準
+        base_method = methods[0]
+        
+        # 計算其他方法與基準方法之間的 PSNR 差異
+        for method in methods[1:]:
+            psnr_diff = [comp_data[f'{method}_PSNR'][i] - comp_data[f'{base_method}_PSNR'][i] 
+                         for i in range(len(reference_bpps))]
+            comp_data[f'{method}_vs_{base_method}_PSNR_diff'] = psnr_diff
+    
+    # 創建並保存 DataFrame
+    comp_df = pd.DataFrame(comp_data)
+    comp_df.to_csv(output_path, index=False)
+    
+    # 創建 LaTeX 格式表格
+    latex_path = output_path.replace('.csv', '.tex')
+    try:
+        with open(latex_path, 'w') as f:
+            # 只選擇部分行和列以獲得簡潔的 LaTeX 表格
+            # 取 5 個均勻分佈的點
+            indices = [0, 5, 10, 15, 20]  # 位於 0%, 25%, 50%, 75%, 100%
+            
+            # 為每個方法選擇 PSNR 列
+            columns = ['BPP'] + [f'{method}_PSNR' for method in all_results.keys()]
+            
+            # 創建子表
+            sub_df = comp_df.iloc[indices][columns]
+            
+            # 重命名列以便更好地顯示
+            column_mapping = {f'{method}_PSNR': method.capitalize() for method in all_results.keys()}
+            column_mapping['BPP'] = 'BPP'
+            sub_df = sub_df.rename(columns=column_mapping)
+            
+            # 生成 LaTeX 表格
+            latex_table = sub_df.to_latex(index=False, float_format="%.2f")
+            
+            # 添加表格標題和標籤
+            latex_header = "\\begin{table}[h]\n\\centering\n\\caption{PSNR Comparison at Different BPP Levels}\n\\label{tab:psnr_comparison}\n"
+            latex_footer = "\\end{table}"
+            
+            # 寫入完整表格
+            f.write(latex_header + latex_table + latex_footer)
+    except Exception as e:
+        print(f"Could not generate LaTeX table: {e}")
+    
+    return comp_df
+
+def create_radar_chart(all_results, predictor, imgName, output_dir):
+    """
+    創建比較不同方法性能的雷達圖
+    
+    Parameters:
+    -----------
+    all_results : dict
+        包含每個方法結果的字典 {方法名稱: DataFrame}
+    predictor : str
+        所有方法使用的預測器
+    imgName : str
+        圖像名稱
+    output_dir : str
+        輸出目錄
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    import pandas as pd
+    
+    # 檢查是否有足夠的方法來創建雷達圖
+    if len(all_results) < 2:
+        return
+    
+    # 選擇用於比較的 BPP 水平
+    # 找到所有方法共有的 BPP 範圍
+    all_bpp_min = max([df['BPP'].min() for df in all_results.values()])
+    all_bpp_max = min([df['BPP'].max() for df in all_results.values()])
+    
+    # 如果共同範圍無效，則退出
+    if all_bpp_min >= all_bpp_max:
+        print("Cannot create radar chart: methods have non-overlapping BPP ranges")
+        return
+    
+    # 選擇 3 個 BPP 點進行比較：低、中、高
+    bpp_levels = [
+        all_bpp_min + (all_bpp_max - all_bpp_min) * 0.25,  # 低 BPP
+        all_bpp_min + (all_bpp_max - all_bpp_min) * 0.5,   # 中 BPP
+        all_bpp_min + (all_bpp_max - all_bpp_min) * 0.75   # 高 BPP
+    ]
+    
+    # 雷達圖類別
+    categories = ['PSNR', 'SSIM', 'Speed']
+    
+    # 為不同方法設置顏色
+    colors = {
+        'rotation': 'blue',
+        'split': 'green',
+        'quadtree': 'red',
+        'custom': 'purple'  # 用於其他方法
+    }
+    
+    # 用於顯示每個方法在各個類別的性能
+    fig, axs = plt.subplots(1, 3, figsize=(18, 6), subplot_kw=dict(polar=True))
+    
+    # 為每個 BPP 水平創建雷達圖
+    for i, bpp in enumerate(bpp_levels):
+        ax = axs[i]
+        
+        # 獲取每個方法在此 BPP 下的性能
+        performances = {}
+        for method, df in all_results.items():
+            # 找到最接近的 BPP
+            closest_idx = (df['BPP'] - bpp).abs().idxmin()
+            closest_row = df.loc[closest_idx]
+            
+            # 記錄性能指標
+            performances[method] = {
+                'PSNR': closest_row['PSNR'],
+                'SSIM': closest_row['SSIM'],
+                'Speed': 1.0 / closest_row['Processing_Time']  # 速度是處理時間的倒數
+            }
+        
+        # 正規化性能指標到 0-1 範圍
+        normalized_performances = {}
+        for category in categories:
+            values = [performances[method][category] for method in performances]
+            min_val = min(values)
+            max_val = max(values)
+            
+            if max_val > min_val:
+                for method in performances:
+                    if category not in normalized_performances:
+                        normalized_performances[category] = {}
+                    
+                    # 正規化，確保較高的值總是更好
+                    normalized_performances[category][method] = (performances[method][category] - min_val) / (max_val - min_val)
+            else:
+                # 如果所有值相同，則設為 1
+                for method in performances:
+                    if category not in normalized_performances:
+                        normalized_performances[category] = {}
+                    normalized_performances[category][method] = 1.0
+        
+        # 設置角度
+        angles = np.linspace(0, 2*np.pi, len(categories), endpoint=False).tolist()
+        angles += angles[:1]  # 閉合圖形
+        
+        # 設置雷達圖
+        ax.set_theta_offset(np.pi / 2)
+        ax.set_theta_direction(-1)
+        ax.set_rlabel_position(0)
+        
+        # 添加類別標籤
+        ax.set_xticks(angles[:-1])
+        ax.set_xticklabels(categories)
+        
+        # 設置 y 軸刻度
+        ax.set_yticks([0.25, 0.5, 0.75, 1.0])
+        ax.set_yticklabels(['0.25', '0.5', '0.75', '1.0'])
+        ax.set_rlim(0, 1)
+        
+        # 繪製每個方法的雷達圖
+        for method in performances:
+            color = colors.get(method, 'black')
+            
+            # 獲取性能值
+            values = [normalized_performances[cat][method] for cat in categories]
+            values += values[:1]  # 閉合圖形
+            
+            # 繪製雷達線
+            ax.plot(angles, values, color=color, linewidth=2, label=method)
+            ax.fill(angles, values, color=color, alpha=0.1)
+        
+        # 設置標題
+        ax.set_title(f'BPP = {bpp:.4f}', size=14, y=1.1)
+        
+        # 只在第一個子圖顯示圖例
+        if i == 0:
+            ax.legend(loc='upper right', bbox_to_anchor=(0.1, 0.1))
+    
+    plt.suptitle(f'Performance Comparison of Different Methods with {predictor.capitalize()} Predictor', size=16)
+    plt.tight_layout()
+    
+    # 保存圖表
+    plt.savefig(f"{output_dir}/method_radar_comparison.png", dpi=300, bbox_inches='tight')
+    plt.close()
 
 def create_wide_format_tables(all_results, output_dir):
     """

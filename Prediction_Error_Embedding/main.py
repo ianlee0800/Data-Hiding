@@ -6,7 +6,6 @@ from tqdm import tqdm
 import cupy as cp
 import numpy as np
 import cv2
-import time
 from image_processing import (
     save_image,
     generate_histogram,
@@ -26,7 +25,8 @@ from utils import (
     run_multiple_predictors,
     run_precise_measurements,
     run_multi_predictor_precise_measurements,
-    run_simplified_precise_measurements
+    run_simplified_precise_measurements,
+    run_method_comparison
 )
 # 導入視覺化模組
 from visualization import (
@@ -64,46 +64,64 @@ def main():
     6. 調整圖像儲存路徑至 "./Prediction_Error_Embedding/outcome/image"
     7. 按照方法類型儲存更多詳細的實驗圖像
     8. 新增彩色圖像處理支持，自動偵測圖像類型
+    9. 新增精確測量的步長控制 (step_size)
+    10. 新增比較不同方法的功能 (method_comparison)
     """
     # ==== 參數設置（直接在代碼中調整） ====
     
     # 基本參數設置
-    imgName = "Male"         # 圖像名稱
-    filetype = "tiff"           # 圖像檔案類型
-    total_embeddings = 1        # 總嵌入次數
+    imgName = "Male"           # 圖像名稱
+    filetype = "tiff"         # 圖像檔案類型
+    total_embeddings = 1      # 總嵌入次數
     
     # 各預測器的ratio_of_ones設置
     predictor_ratios = {
-        "PROPOSED": 0.5,        # proposed預測器的ratio_of_ones
-        "MED": 1.0,             # MED預測器的ratio_of_ones
-        "GAP": 0.7,             # GAP預測器的ratio_of_ones
-        "RHOMBUS": 0.9          # RHOMBUS預測器的ratio_of_ones
+        "PROPOSED": 0.3,      # proposed預測器的ratio_of_ones
+        "MED": 1.0,           # MED預測器的ratio_of_ones
+        "GAP": 0.7,           # GAP預測器的ratio_of_ones
+        "RHOMBUS": 0.9        # RHOMBUS預測器的ratio_of_ones
     }
     
-    el_mode = 0                 # 0: 無限制, 1: 漸增, 2: 漸減
+    el_mode = 0               # 0: 無限制, 1: 漸增, 2: 漸減
     use_different_weights = False 
     
     # 測量方式
-    use_precise_measurement = False  # True: 使用精確測量模式, False: 使用近似模式
+    use_precise_measurement = False     # True: 使用精確測量模式, False: 使用近似模式
+    use_method_comparison = True       # True: 比較不同方法, False: 不比較
     
-    # 統計分段數量
-    stats_segments = 20
+    # 精確測量參數
+    # 以下兩個參數二選一，若都設置則優先使用step_size
+    stats_segments = 20                 # 統計分段數量
+    step_size = 100000                   # 測量步長（位元），如不使用步長則設為None
     
     # 預測方法選擇
     # 可選：PROPOSED, MED, GAP, RHOMBUS, ALL (ALL表示運行所有方法並生成比較)
     prediction_method_str = "PROPOSED"
     
     # 方法選擇
-    method = "quadtree"         # 可選："rotation", "split", "quadtree"
+    method = "split"          # 可選："rotation", "split", "quadtree"
+    
+    # 方法比較參數（僅當use_method_comparison=True時有效）
+    methods_to_compare = ["rotation", "quadtree"]  # 要比較的方法
+    comparison_predictor = "proposed"                       # 比較使用的預測器
     
     # 各方法共用參數
-    split_size = 2              # 用於 rotation 和 split 方法
-    block_base = False          # 用於 split 方法
+    split_size = 2            # 用於 rotation 和 split 方法
+    block_base = False        # 用於 split 方法
     
     # quad tree 特定參數
     quad_tree_params = {
         'min_block_size': 16,   # 支援到16x16
         'variance_threshold': 300
+    }
+    
+    # 方法特定參數
+    method_params = {
+        "rotation": {"split_size": split_size, "use_different_weights": use_different_weights},
+        "split": {"split_size": split_size, "block_base": block_base, "use_different_weights": use_different_weights},
+        "quadtree": {"min_block_size": quad_tree_params['min_block_size'], 
+                    "variance_threshold": quad_tree_params['variance_threshold'], 
+                    "use_different_weights": use_different_weights}
     }
     
     # ==== 主程序開始 ====
@@ -115,6 +133,30 @@ def main():
         "GAP": PredictionMethod.GAP,
         "RHOMBUS": PredictionMethod.RHOMBUS
     }
+    
+    # ==== 新增功能: 方法比較模式 ====
+    if use_method_comparison:
+        print(f"\n{'='*80}")
+        print(f"Running method comparison with {comparison_predictor} predictor")
+        print(f"Methods to compare: {methods_to_compare}")
+        print(f"{'='*80}")
+        
+        # 執行方法比較
+        all_method_results = run_method_comparison(
+            imgName=imgName,
+            filetype=filetype,
+            predictor=comparison_predictor,
+            ratio_of_ones=predictor_ratios.get(comparison_predictor.upper(), 0.5),
+            methods=methods_to_compare,
+            method_params=method_params,
+            total_embeddings=total_embeddings,
+            el_mode=el_mode,
+            segments=stats_segments,
+            step_size=step_size
+        )
+        
+        print(f"Method comparison completed.")
+        return
     
     # 如果選擇 ALL，則執行所有預測方法並生成比較
     if prediction_method_str.upper() == "ALL":
@@ -132,6 +174,7 @@ def main():
                 total_embeddings=total_embeddings,
                 el_mode=el_mode,
                 segments=stats_segments,
+                step_size=step_size,  # 新增步長參數
                 use_different_weights=use_different_weights,
                 split_size=split_size,
                 block_base=block_base,
@@ -232,7 +275,7 @@ def main():
         
         # 如果使用精確測量模式，執行精確測量後返回
         if use_precise_measurement:
-            print(f"\nUsing precise measurement mode with {stats_segments} separate runs...")
+            print(f"\nUsing precise measurement mode...")
             
             # 判斷是否為 proposed 預測器
             is_proposed = prediction_method_str.upper() == "PROPOSED"
@@ -241,15 +284,15 @@ def main():
                 # 為 proposed 執行完整測量，包括圖像和圖表
                 run_precise_measurements(
                     origImg, imgName, method, prediction_method, ratio_of_ones, 
-                    total_embeddings, el_mode, stats_segments, use_different_weights,
-                    split_size, block_base, quad_tree_params
+                    total_embeddings, el_mode, stats_segments, step_size,  # 新增step_size
+                    use_different_weights, split_size, block_base, quad_tree_params
                 )
             else:
                 # 為其他預測器執行簡化測量，僅儲存數據
                 run_simplified_precise_measurements(
                     origImg, imgName, method, prediction_method, ratio_of_ones, 
-                    total_embeddings, el_mode, stats_segments, use_different_weights,
-                    split_size, block_base, quad_tree_params
+                    total_embeddings, el_mode, stats_segments, step_size,  # 新增step_size
+                    use_different_weights, split_size, block_base, quad_tree_params
                 )
             
             return
