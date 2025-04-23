@@ -92,7 +92,7 @@ def main():
     # 精確測量參數
     # 以下兩個參數二選一，若都設置則優先使用step_size
     stats_segments = 20                 # 統計分段數量
-    step_size = 100000                   # 測量步長（位元），如不使用步長則設為None
+    step_size = 10000                   # 測量步長（位元），如不使用步長則設為None
     
     # 預測方法選擇
     # 可選：PROPOSED, MED, GAP, RHOMBUS, ALL (ALL表示運行所有方法並生成比較)

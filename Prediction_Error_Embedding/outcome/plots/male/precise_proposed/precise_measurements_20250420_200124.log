@@ -1,0 +1,127 @@
+Precise measurement run started at 2025-04-20 20:01:24
+Image: Male
+Method: rotation
+Prediction method: proposed
+Ratio of ones: 0.3
+Total embeddings: 1
+EL mode: 0
+Step size: 100000 bits
+Use different weights: False
+
+================================================================================
+
+Step 1: Finding maximum payload capacity
+Maximum payload: 882695 bits
+Max BPP: 0.841804
+Time taken: 1.58 seconds
+
+Step 2: Calculating measurement points with 100000 bit steps
+Target payload points:
+  Point 1: 100000 bits (11.3% of max)
+  Point 2: 200000 bits (22.7% of max)
+  Point 3: 300000 bits (34.0% of max)
+  Point 4: 400000 bits (45.3% of max)
+  Point 5: 500000 bits (56.6% of max)
+  Point 6: 600000 bits (68.0% of max)
+  Point 7: 700000 bits (79.3% of max)
+  Point 8: 800000 bits (90.6% of max)
+  Point 9: 882695 bits (100.0% of max)
+
+Step 3: Running embedding algorithm for each target point
+100.0% target (Max capacity):
+  Target: 882695 bits
+  Actual: 882695 bits
+  BPP: 0.841804
+  PSNR: 52.10
+  SSIM: 0.9970
+  Hist_Corr: 0.9815
+  Time: 1.58 seconds
+
+11.3% target:
+  Target: 100000 bits
+  Actual: 100000 bits
+  BPP: 0.095367
+  PSNR: 59.41
+  SSIM: 0.9996
+  Hist_Corr: 0.9996
+  Time: 0.58 seconds
+
+22.7% target:
+  Target: 200000 bits
+  Actual: 200000 bits
+  BPP: 0.190735
+  PSNR: 58.02
+  SSIM: 0.9992
+  Hist_Corr: 0.9958
+  Time: 0.57 seconds
+
+34.0% target:
+  Target: 300000 bits
+  Actual: 300000 bits
+  BPP: 0.286102
+  PSNR: 55.34
+  SSIM: 0.9986
+  Hist_Corr: 0.9955
+  Time: 0.59 seconds
+
+45.3% target:
+  Target: 400000 bits
+  Actual: 400000 bits
+  BPP: 0.381470
+  PSNR: 55.33
+  SSIM: 0.9986
+  Hist_Corr: 0.9950
+  Time: 0.60 seconds
+
+56.6% target:
+  Target: 500000 bits
+  Actual: 500000 bits
+  BPP: 0.476837
+  PSNR: 54.48
+  SSIM: 0.9982
+  Hist_Corr: 0.9814
+  Time: 0.63 seconds
+
+68.0% target:
+  Target: 600000 bits
+  Actual: 600000 bits
+  BPP: 0.572205
+  PSNR: 52.71
+  SSIM: 0.9967
+  Hist_Corr: 0.9911
+  Time: 0.65 seconds
+
+79.3% target:
+  Target: 700000 bits
+  Actual: 700000 bits
+  BPP: 0.667572
+  PSNR: 52.54
+  SSIM: 0.9965
+  Hist_Corr: 0.9780
+  Time: 0.69 seconds
+
+90.6% target:
+  Target: 800000 bits
+  Actual: 800000 bits
+  BPP: 0.762939
+  PSNR: 52.10
+  SSIM: 0.9967
+  Hist_Corr: 0.9504
+  Time: 0.72 seconds
+
+Results summary:
+Total processing time: 8.00 seconds
+Average time per point: 0.89 seconds
+Results saved to ./Prediction_Error_Embedding/outcome/plots/Male/precise_proposed
+
+Data table:
+ Target_Percentage  Target_Payload  Actual_Payload      BPP      PSNR   SSIM  Hist_Corr  Processing_Time Suspicious
+         11.328941          100000          100000 0.095367 59.409069 0.9996   0.999566         0.584117      False
+         22.657883          200000          200000 0.190735 58.024092 0.9992   0.995808         0.566796      False
+         33.986824          300000          300000 0.286102 55.336416 0.9986   0.995531         0.594070      False
+         45.315766          400000          400000 0.381470 55.326221 0.9986   0.995010         0.599568      False
+         56.644707          500000          500000 0.476837 54.478524 0.9982   0.981385         0.630151      False
+         67.973649          600000          600000 0.572205 52.711150 0.9967   0.991131         0.645672      False
+         79.302590          700000          700000 0.667572 52.543529 0.9965   0.977956         0.686226      False
+         90.631532          800000          800000 0.762939 52.097057 0.9967   0.950380         0.721506      False
+        100.000000          882695          882695 0.841804 52.101943 0.9970   0.981500         1.575230        NaN

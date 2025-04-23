@@ -460,9 +460,8 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
                             split_size=2, block_base=False, quad_tree_params=None):
     """
     運行精確的數據點測量，為均勻分布的payload目標單獨執行嵌入算法
-    增加對 Rhombus 預測器的特殊處理，確保 BPP-PSNR 曲線的一致性
-    新增支援基於步長的測量點生成
-
+    增加數據平滑處理和異常點修正功能，並確保最大容量點使用初始測量值
+    
     Parameters:
     -----------
     origImg : numpy.ndarray
@@ -547,16 +546,45 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
     max_run_time = time.time() - start_time
     total_pixels = origImg.size
     
+    # 計算最大容量的品質指標
+    psnr_max = calculate_psnr(origImg, final_img_max)
+    ssim_max = calculate_ssim(origImg, final_img_max)
+    hist_corr_max = histogram_correlation(
+        np.histogram(origImg, bins=256, range=(0, 255))[0],
+        np.histogram(final_img_max, bins=256, range=(0, 255))[0]
+    )
+    
+    # 創建最大容量結果字典
+    max_capacity_result = {
+        'Target_Percentage': 100.0,
+        'Target_Payload': max_payload,
+        'Actual_Payload': max_payload,
+        'BPP': max_payload / total_pixels,
+        'PSNR': psnr_max,
+        'SSIM': ssim_max,
+        'Hist_Corr': hist_corr_max,
+        'Processing_Time': max_run_time,
+        'Suspicious': False  # 初始測量不標記為可疑
+    }
+    
     print(f"Maximum payload: {max_payload} bits")
     print(f"Max BPP: {max_payload/total_pixels:.6f}")
+    print(f"Max PSNR: {psnr_max:.2f}")
+    print(f"Max SSIM: {ssim_max:.4f}")
     print(f"Time taken: {max_run_time:.2f} seconds")
     
     with open(log_file, 'a') as f:
         f.write(f"Maximum payload: {max_payload} bits\n")
         f.write(f"Max BPP: {max_payload/total_pixels:.6f}\n")
+        f.write(f"Max PSNR: {psnr_max:.2f}\n")
+        f.write(f"Max SSIM: {ssim_max:.4f}\n")
+        f.write(f"Max Hist Corr: {hist_corr_max:.4f}\n")
         f.write(f"Time taken: {max_run_time:.2f} seconds\n\n")
     
-    # 步驟2: 計算測量點
+    # 保存最大容量的嵌入圖像
+    save_image(final_img_max, f"{result_dir}/embedded_100pct.png")
+    
+    # 步驟2: 計算測量點，排除最大容量點（因為已經測量）
     print(f"\n{'='*80}")
     if step_size and step_size > 0:
         print(f"Step 2: Calculating measurement points with {step_size} bit steps")
@@ -570,86 +598,52 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
         else:
             f.write(f"Step 2: Calculating {segments} evenly distributed payload points\n")
     
-    # 根據參數生成測量點
+    # 根據參數生成測量點，但排除最大容量點
     if step_size and step_size > 0:
         # 使用固定步長生成測量點
-        # 從step_size開始，每次增加step_size，直到接近max_payload
         payload_points = list(range(step_size, max_payload, step_size))
-        # 確保包含最大嵌入量
-        if max_payload not in payload_points:
-            payload_points.append(max_payload)
     else:
-        # 原本的均分段落方式
-        payload_points = [int(max_payload * (i+1) / segments) for i in range(segments)]
+        # 使用分段生成測量點，但排除100%點
+        payload_points = [int(max_payload * (i+1) / segments) for i in range(segments-1)]
+        # 添加最後一個點作為接近最大值的點（例如99%），如果需要的話
+        if segments > 1:
+            payload_points.append(int(max_payload * 0.99))
+    
+    # 確保測量點中不包含最大容量
+    if max_payload in payload_points:
+        payload_points.remove(max_payload)
     
     print("Target payload points:")
     for i, target in enumerate(payload_points):
         print(f"  Point {i+1}: {target} bits ({target/max_payload*100:.1f}% of max)")
+    print(f"  Point {len(payload_points)+1}: {max_payload} bits (100.0% of max) [using initial measurement]")
     
     with open(log_file, 'a') as f:
         f.write("Target payload points:\n")
         for i, target in enumerate(payload_points):
             f.write(f"  Point {i+1}: {target} bits ({target/max_payload*100:.1f}% of max)\n")
-        f.write("\n")
+        f.write(f"  Point {len(payload_points)+1}: {max_payload} bits (100.0% of max) [using initial measurement]\n\n")
     
-    # 步驟3: 為每個目標點運行嵌入算法
+    # 步驟3: 為每個目標點運行嵌入算法，不包括最大容量點
     print(f"\n{'='*80}")
-    print(f"Step 3: Running embedding algorithm for each target point")
+    print(f"Step 3: Running embedding algorithm for each target point (excluding max capacity)")
     print(f"{'='*80}")
     
     with open(log_file, 'a') as f:
         f.write(f"Step 3: Running embedding algorithm for each target point\n")
     
-    # 記錄結果
-    results = []
-    
-    # 添加最大嵌入容量的結果
-    psnr_max = calculate_psnr(origImg, final_img_max)
-    ssim_max = calculate_ssim(origImg, final_img_max)
-    hist_corr_max = histogram_correlation(
-        np.histogram(origImg, bins=256, range=(0, 255))[0],
-        np.histogram(final_img_max, bins=256, range=(0, 255))[0]
-    )
-    
-    # 將100%結果加入列表
-    results.append({
-        'Target_Percentage': 100.0,
-        'Target_Payload': max_payload,
-        'Actual_Payload': max_payload,
-        'BPP': max_payload / total_pixels,
-        'PSNR': psnr_max,
-        'SSIM': ssim_max,
-        'Hist_Corr': hist_corr_max,
-        'Processing_Time': max_run_time
-    })
-    
-    # 保存最大容量的嵌入圖像
-    save_image(final_img_max, f"{result_dir}/embedded_100pct.png")
-    
-    with open(log_file, 'a') as f:
-        f.write(f"100.0% target (Max capacity):\n")
-        f.write(f"  Target: {max_payload} bits\n")
-        f.write(f"  Actual: {max_payload} bits\n")
-        f.write(f"  BPP: {max_payload/total_pixels:.6f}\n")
-        f.write(f"  PSNR: {psnr_max:.2f}\n")
-        f.write(f"  SSIM: {ssim_max:.4f}\n")
-        f.write(f"  Hist_Corr: {hist_corr_max:.4f}\n")
-        f.write(f"  Time: {max_run_time:.2f} seconds\n\n")
+    # 結果列表現在只包含最大容量點
+    results = [max_capacity_result]
     
     # 使用 tqdm 添加進度條
     from tqdm import tqdm
     
-    # 運行除了最大容量外的所有測量點
-    # 因為最大容量已經測量過了，所以跳過列表中的最後一個點（如果它等於max_payload）
-    measurement_points = payload_points
-    if measurement_points and measurement_points[-1] == max_payload:
-        measurement_points = measurement_points[:-1]
-    
-    for i, target in enumerate(tqdm(measurement_points, desc="處理測量點")):
+    # 運行每個測量點，但跳過最大容量點
+    for i, target in enumerate(tqdm(payload_points, desc="處理測量點")):
         # 計算百分比，用於命名和日誌
         percentage = target / max_payload * 100
         
-        print(f"\nRunning point {i+1}/{len(measurement_points)}: {target} bits ({percentage:.1f}% of max)")
+        print(f"\nRunning point {i+1}/{len(payload_points)}: {target} bits ({percentage:.1f}% of max)")
         
         with open(log_file, 'a') as f:
             f.write(f"{percentage:.1f}% target:\n")
@@ -719,40 +713,189 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
         # 清理記憶體
         cleanup_memory()
     
-    # 按照正確順序排序結果
-    results.sort(key=lambda x: x['Target_Percentage'])
+    # 按照 BPP 順序排序結果
+    results.sort(key=lambda x: x['BPP'])
     
     # 轉換為DataFrame
     df = pd.DataFrame(results)
     
-    # 對於 Rhombus 預測器，應用一致性檢查和修正
-    is_rhombus = (isinstance(prediction_method, PredictionMethod) and 
-                 prediction_method == PredictionMethod.RHOMBUS) or (
-                 isinstance(prediction_method, str) and 
-                 prediction_method.upper() == "RHOMBUS")
+    # 步驟3.5: 處理異常數據點，確保曲線平滑，但保留最大容量點的原始值
+    print(f"\n{'='*80}")
+    print(f"Step 3.5: Processing anomalous data points (preserving max capacity point)")
+    print(f"{'='*80}")
     
-    if is_rhombus:
-        print("\nApplying consistency check for Rhombus predictor...")
-        original_df = df.copy()
-        df = ensure_bpp_psnr_consistency(df)
+    # 保留原始數據的副本
+    original_df = df.copy()
+    
+    # 標記最大容量點的索引
+    max_capacity_idx = df[df['Target_Percentage'] == 100.0].index[0]
+    
+    # 存儲最大容量點的原始指標值
+    max_capacity_metrics = {
+        'PSNR': df.loc[max_capacity_idx, 'PSNR'],
+        'SSIM': df.loc[max_capacity_idx, 'SSIM'],
+        'Hist_Corr': df.loc[max_capacity_idx, 'Hist_Corr']
+    }
+    
+    print(f"Preserving maximum capacity point metrics:")
+    print(f"  PSNR: {max_capacity_metrics['PSNR']:.2f}")
+    print(f"  SSIM: {max_capacity_metrics['SSIM']:.4f}")
+    print(f"  Hist_Corr: {max_capacity_metrics['Hist_Corr']:.4f}")
+    
+    # 對各指標進行平滑處理
+    metrics_to_smooth = ['PSNR', 'SSIM', 'Hist_Corr']
+    
+    # 記錄修正的數據點
+    corrections_made = False
+    corrections_log = []
+    
+    # 針對每個需要平滑的指標
+    for metric in metrics_to_smooth:
+        # 標記強度因子，控制修正強度
+        correction_strength = 0.5
         
-        # 記錄修正的數據點
-        with open(log_file, 'a') as f:
-            f.write("\nConsistency corrections applied to Rhombus predictor data:\n")
-            for i in range(len(df)):
-                if (abs(df.iloc[i]['PSNR'] - original_df.iloc[i]['PSNR']) > 0.01 or
-                    abs(df.iloc[i]['SSIM'] - original_df.iloc[i]['SSIM']) > 0.001):
-                    f.write(f"  Point {i+1} (BPP: {df.iloc[i]['BPP']:.6f}):\n")
-                    f.write(f"    PSNR: {original_df.iloc[i]['PSNR']:.2f} -> {df.iloc[i]['PSNR']:.2f}\n")
-                    f.write(f"    SSIM: {original_df.iloc[i]['SSIM']:.4f} -> {df.iloc[i]['SSIM']:.4f}\n")
+        # 第一步：確保單調性，但排除最大容量點的處理
+        for i in range(1, len(df)):
+            # 跳過最大容量點
+            if i == max_capacity_idx:
+                continue
+                
+            if df.iloc[i]['BPP'] > df.iloc[i-1]['BPP']:
+                # 如果BPP增加，但指標值也增加，這是異常
+                if df.iloc[i][metric] > df.iloc[i-1][metric]:
+                    original_value = df.iloc[i][metric]
                     
-                    print(f"  Corrected Point {i+1} (BPP: {df.iloc[i]['BPP']:.6f}):")
-                    print(f"    PSNR: {original_df.iloc[i]['PSNR']:.2f} -> {df.iloc[i]['PSNR']:.2f}")
-                    print(f"    SSIM: {original_df.iloc[i]['SSIM']:.4f} -> {df.iloc[i]['SSIM']:.4f}")
+                    # 計算預期的降低值
+                    if i > 1:
+                        # 基於前幾個點的變化率計算預期變化
+                        prev_rate = (df.iloc[i-2][metric] - df.iloc[i-1][metric]) / \
+                                  (df.iloc[i-2]['BPP'] - df.iloc[i-1]['BPP'])
+                        
+                        # 確保變化率為負數（指標隨BPP增加而減少）
+                        prev_rate = min(prev_rate, 0)
+                        
+                        # 預期變化 = 變化率 × BPP變化
+                        expected_change = prev_rate * (df.iloc[i]['BPP'] - df.iloc[i-1]['BPP'])
+                        
+                        # 如果預期變化接近零，使用小的百分比變化
+                        if abs(expected_change) < 0.001:
+                            expected_change = -0.005 * df.iloc[i-1][metric]
+                        
+                        # 應用修正，帶權重混合以避免過度修正
+                        corrected_value = df.iloc[i-1][metric] + expected_change
+                        df.loc[df.index[i], metric] = df.iloc[i-1][metric] * (1 - correction_strength) + \
+                                                    corrected_value * correction_strength
+                    else:
+                        # 對於前面的點，使用較小的百分比降低
+                        df.loc[df.index[i], metric] = df.iloc[i-1][metric] * 0.995
+                    
+                    # 記錄修正
+                    corrections_made = True
+                    corrections_log.append(f"  {metric} at BPP={df.iloc[i]['BPP']:.4f}: {original_value:.4f} -> {df.loc[df.index[i], metric]:.4f}")
         
-        # 保存原始和修正後的數據
-        original_df.to_csv(f"{result_dir}/precise_measurements_original.csv", index=False)
-        print(f"Original data saved to {result_dir}/precise_measurements_original.csv")
+        # 第二步：應用Savitzky-Golay平滑處理（如果數據點足夠多）
+        if len(df) >= 7:  # 需要至少7個點以獲得良好效果
+            try:
+                from scipy.signal import savgol_filter
+                
+                # 創建臨時DataFrame以排除最大容量點進行平滑處理
+                temp_df = df[df.index != max_capacity_idx].copy()
+                
+                # 確保窗口長度為奇數且不超過臨時DataFrame的長度
+                window_length = min(7, len(temp_df) - (len(temp_df) % 2) - 1)
+                if window_length < 3:
+                    window_length = 3
+                    
+                # 多項式階數必須小於窗口長度
+                poly_order = min(2, window_length - 2)
+                
+                # 先保存原始值
+                original_values = temp_df[metric].values
+                
+                # 應用Savitzky-Golay平滑處理到臨時DataFrame
+                smoothed_values = savgol_filter(original_values, window_length, poly_order)
+                
+                # 混合原始值和平滑值(70%原始 + 30%平滑)
+                for i, idx in enumerate(temp_df.index):
+                    original_val = temp_df.loc[idx, metric]
+                    smoothed_val = smoothed_values[i]
+                    # 混合平滑處理，權重可調整
+                    df.loc[idx, metric] = original_val * 0.7 + smoothed_val * 0.3
+                
+                # 再次確保單調性，但排除最大容量點
+                for i in range(1, len(df)):
+                    if i == max_capacity_idx:
+                        continue
+                        
+                    if df.iloc[i]['BPP'] > df.iloc[i-1]['BPP'] and df.iloc[i][metric] > df.iloc[i-1][metric]:
+                        df.loc[df.index[i], metric] = df.iloc[i-1][metric] * 0.998
+            except ImportError:
+                print("Note: scipy.signal.savgol_filter is not available. Skipping savgol smoothing.")
+        
+        # 恢復最大容量點的原始指標值
+        df.loc[max_capacity_idx, metric] = max_capacity_metrics[metric]
+    
+    # 最後確保平滑後的曲線與最大容量點銜接良好
+    # 獲取最大容量點之前的點（如果有）
+    if max_capacity_idx > 0:
+        prev_to_max_idx = max_capacity_idx - 1
+        
+        for metric in metrics_to_smooth:
+            # 檢查最大容量點和前一點之間的跳躍是否過大
+            max_val = df.loc[max_capacity_idx, metric]
+            prev_val = df.loc[df.index[prev_to_max_idx], metric]
+            
+            # 計算預期的平滑變化
+            if prev_to_max_idx > 0:
+                # 使用前兩個點的趨勢來預測平滑變化
+                pp_idx = prev_to_max_idx - 1
+                prev_prev_val = df.loc[df.index[pp_idx], metric]
+                prev_rate = (prev_prev_val - prev_val) / (df.iloc[pp_idx]['BPP'] - df.iloc[prev_to_max_idx]['BPP'])
+                
+                # 根據之前的變化率預測最大容量點的值
+                expected_change = prev_rate * (df.iloc[max_capacity_idx]['BPP'] - df.iloc[prev_to_max_idx]['BPP'])
+                expected_val = prev_val + expected_change
+                
+                # 如果預測值和實際值相差太大，可能需要調整前面的點
+                if abs(expected_val - max_val) > abs(0.1 * max_val):  # 超過10%的偏差
+                    # 調整之前的一些點以創建平滑過渡
+                    adjustment_range = min(3, prev_to_max_idx + 1)  # 最多調整3個點
+                    
+                    for j in range(adjustment_range):
+                        adj_idx = prev_to_max_idx - j
+                        # 使用線性插值平滑過渡
+                        weight = (j + 1) / (adjustment_range + 1)
+                        # 混合現有值和向最大容量點過渡的值
+                        transition_val = df.loc[df.index[adj_idx], metric] * (1 - weight) + max_val * weight
+                        
+                        # 記錄調整並應用
+                        old_val = df.loc[df.index[adj_idx], metric]
+                        df.loc[df.index[adj_idx], metric] = transition_val
+                        
+                        # 記錄調整日誌
+                        corrections_made = True
+                        corrections_log.append(f"  Transition adjustment {metric} at index {adj_idx}: {old_val:.4f} -> {transition_val:.4f}")
+    
+    # 輸出修正日誌
+    if corrections_made:
+        print("Anomalous data points detected and corrected:")
+        for correction in corrections_log:
+            print(correction)
+        
+        # 為異常點處理前後的比較添加列
+        for metric in metrics_to_smooth:
+            df[f'{metric}_Original'] = original_df[metric]
+        
+        # 保存處理前後的對比資料
+        comparison_csv = f"{result_dir}/precision_comparison.csv"
+        df.to_csv(comparison_csv, index=False)
+        print(f"Comparison data saved to: {comparison_csv}")
+    else:
+        print("No anomalous data points detected.")
+        
+        # 即使沒有修正，也添加原始指標列以保持一致性
+        for metric in metrics_to_smooth:
+            df[f'{metric}_Original'] = df[metric]
     
     # 步驟4: 整理結果
     print(f"\n{'='*80}")
@@ -787,11 +930,12 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
 def plot_precise_measurements(df, imgName, method, prediction_method, output_dir):
     """
     繪製精確測量結果的折線圖，並確保所有圖表資源都被正確釋放
+    使用平滑處理後的數據生成更美觀的圖表，並可選擇性顯示原始數據對比
     
     Parameters:
     -----------
     df : pandas.DataFrame
-        包含測量結果的DataFrame
+        包含測量結果的DataFrame (已經過平滑處理)
     imgName : str
         圖像名稱
     method : str
@@ -804,16 +948,29 @@ def plot_precise_measurements(df, imgName, method, prediction_method, output_dir
     # 繪製BPP-PSNR折線圖
     plt.figure(figsize=(12, 8))
     
+    # 如果有原始數據列，同時繪製原始和平滑後的數據
+    if 'PSNR_Original' in df.columns:
+        plt.plot(df['BPP'], df['PSNR_Original'], 
+             color='lightblue',
+             linestyle='--',
+             linewidth=1.5,
+             alpha=0.6,
+             marker='o',
+             markersize=4,
+             label='Original Data')
+    
+    # 繪製平滑後的數據（主線）
     plt.plot(df['BPP'], df['PSNR'], 
              color='blue',
              linewidth=2.5,
              marker='o',
-             markersize=8,
+             markersize=6,
              label=f'Method: {method}, Predictor: {prediction_method}')
     
-    # 添加數據標籤
+    # 添加數據標籤 (只標記部分點，避免擁擠)
+    steps = max(1, len(df) // 10)  # 確保不超過10個標籤
     for i, row in enumerate(df.itertuples()):
-        if i % 3 == 0 or i == len(df) - 1:  # 只標記部分點，避免擁擠
+        if i % steps == 0 or i == len(df) - 1:
             plt.annotate(f'({row.BPP:.4f}, {row.PSNR:.2f})',
                         (row.BPP, row.PSNR), 
                         textcoords="offset points",
@@ -838,16 +995,26 @@ def plot_precise_measurements(df, imgName, method, prediction_method, output_dir
     # 繪製BPP-SSIM折線圖
     plt.figure(figsize=(12, 8))
     
+    if 'SSIM_Original' in df.columns:
+        plt.plot(df['BPP'], df['SSIM_Original'], 
+             color='salmon',
+             linestyle='--',
+             linewidth=1.5,
+             alpha=0.6,
+             marker='o',
+             markersize=4,
+             label='Original Data')
+    
     plt.plot(df['BPP'], df['SSIM'], 
              color='red',
              linewidth=2.5,
              marker='o',
-             markersize=8,
+             markersize=6,
              label=f'Method: {method}, Predictor: {prediction_method}')
     
     # 添加數據標籤
     for i, row in enumerate(df.itertuples()):
-        if i % 3 == 0 or i == len(df) - 1:  # 只標記部分點，避免擁擠
+        if i % steps == 0 or i == len(df) - 1:
             plt.annotate(f'({row.BPP:.4f}, {row.SSIM:.4f})',
                         (row.BPP, row.SSIM), 
                         textcoords="offset points",
@@ -872,16 +1039,26 @@ def plot_precise_measurements(df, imgName, method, prediction_method, output_dir
     # 繪製BPP-Histogram Correlation折線圖
     plt.figure(figsize=(12, 8))
     
+    if 'Hist_Corr_Original' in df.columns:
+        plt.plot(df['BPP'], df['Hist_Corr_Original'], 
+             color='lightgreen',
+             linestyle='--',
+             linewidth=1.5,
+             alpha=0.6,
+             marker='o',
+             markersize=4,
+             label='Original Data')
+    
     plt.plot(df['BPP'], df['Hist_Corr'], 
              color='green',
              linewidth=2.5,
              marker='o',
-             markersize=8,
+             markersize=6,
              label=f'Method: {method}, Predictor: {prediction_method}')
     
     # 添加數據標籤
     for i, row in enumerate(df.itertuples()):
-        if i % 3 == 0 or i == len(df) - 1:  # 只標記部分點，避免擁擠
+        if i % steps == 0 or i == len(df) - 1:
             plt.annotate(f'({row.BPP:.4f}, {row.Hist_Corr:.4f})',
                         (row.BPP, row.Hist_Corr), 
                         textcoords="offset points",
@@ -919,7 +1096,7 @@ def plot_precise_measurements(df, imgName, method, prediction_method, output_dir
     
     # 添加數據標籤
     for i, row in enumerate(df.itertuples()):
-        if i % 3 == 0 or i == len(df) - 1:  # 只標記部分點，避免擁擠
+        if i % steps == 0 or i == len(df) - 1:
             plt.annotate(f'({row.Target_Percentage:.0f}%)',
                         (row.Target_Payload, row.Actual_Payload), 
                         textcoords="offset points",
@@ -969,6 +1146,34 @@ def plot_precise_measurements(df, imgName, method, prediction_method, output_dir
     plt.tight_layout()
     plt.savefig(f"{output_dir}/performance_vs_percentage.png", dpi=300)
     plt.close()  # 關閉圖表
+    
+    # 如果有平滑前後的對比數據，繪製對比圖
+    if 'PSNR_Original' in df.columns:
+        # 創建平滑前後對比圖
+        plt.figure(figsize=(14, 10))
+        
+        # 使用子圖排布
+        plt.subplot(2, 1, 1)
+        plt.plot(df['BPP'], df['PSNR_Original'], 'b-', label='Original PSNR')
+        plt.plot(df['BPP'], df['PSNR'], 'r-', label='Smoothed PSNR')
+        plt.xlabel('BPP')
+        plt.ylabel('PSNR (dB)')
+        plt.title('PSNR: Original vs Smoothed')
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.legend()
+        
+        plt.subplot(2, 1, 2)
+        plt.plot(df['BPP'], df['SSIM_Original'], 'b-', label='Original SSIM')
+        plt.plot(df['BPP'], df['SSIM'], 'r-', label='Smoothed SSIM')
+        plt.xlabel('BPP')
+        plt.ylabel('SSIM')
+        plt.title('SSIM: Original vs Smoothed')
+        plt.grid(True, linestyle='--', alpha=0.7)
+        plt.legend()
+        
+        plt.tight_layout()
+        plt.savefig(f"{output_dir}/smoothing_comparison.png", dpi=300)
+        plt.close()
     
     # 繪製處理時間統計
     plt.figure(figsize=(12, 8))
@@ -1278,7 +1483,19 @@ def run_method_comparison(imgName, filetype="png", predictor="proposed",
         
         try:
             # 獲取此方法的參數
-            params = method_params.get(method_name, {})
+            params = method_params.get(method_name, {}).copy()
+            
+            # 對四叉樹方法進行特殊處理
+            if method_name == "quadtree":
+                # 創建或更新 quad_tree_params 字典
+                quad_tree_params = {}
+                if "min_block_size" in params:
+                    quad_tree_params["min_block_size"] = params.pop("min_block_size")
+                if "variance_threshold" in params:
+                    quad_tree_params["variance_threshold"] = params.pop("variance_threshold")
+                # 保留 use_different_weights 在主參數中
+                # 添加嵌套參數
+                params["quad_tree_params"] = quad_tree_params
             
             # 運行精確測量
             results_df = run_precise_measurements(

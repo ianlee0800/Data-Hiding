@@ -1,0 +1,16 @@
+Method comparison started at 2025-04-20 20:01:24
+Image: Male.tiff
+Predictor: proposed
+Methods to compare: ['rotation', 'quadtree']
+Total embeddings: 1
+EL mode: 0
+Step size: 100000 bits
+
+================================================================================
+
+Completed measurements for rotation method
+Results saved to ./Prediction_Error_Embedding/outcome/plots/Male/method_comparison_proposed/rotation_proposed_precise.csv
+
+Completed measurements for quadtree method
+Results saved to ./Prediction_Error_Embedding/outcome/plots/Male/method_comparison_proposed/quadtree_proposed_precise.csv
+

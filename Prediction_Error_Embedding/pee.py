@@ -299,6 +299,9 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
     if isinstance(data, cp.ndarray):
         data = cp.asnumpy(data)
     
+    if remaining_target is not None and not isinstance(remaining_target, list):
+        remaining_target = [remaining_target]
+    
     # 精確容量控制 - 如果剩餘目標容量小於數據量的10%，使用精確嵌入
     precise_embedding = False
     if remaining_target is not None:

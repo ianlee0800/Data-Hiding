@@ -1,0 +1,1438 @@
+Precise measurement run started at 2025-04-20 20:15:38
+Image: Male
+Method: quadtree
+Prediction method: proposed
+Ratio of ones: 0.3
+Total embeddings: 1
+EL mode: 0
+Step size: 10000 bits
+Use different weights: False
+
+================================================================================
+
+Step 1: Finding maximum payload capacity
+Maximum payload: 1237220 bits
+Max BPP: 1.179905
+Time taken: 23.97 seconds
+
+Step 2: Calculating measurement points with 10000 bit steps
+Target payload points:
+  Point 1: 10000 bits (0.8% of max)
+  Point 2: 20000 bits (1.6% of max)
+  Point 3: 30000 bits (2.4% of max)
+  Point 4: 40000 bits (3.2% of max)
+  Point 5: 50000 bits (4.0% of max)
+  Point 6: 60000 bits (4.8% of max)
+  Point 7: 70000 bits (5.7% of max)
+  Point 8: 80000 bits (6.5% of max)
+  Point 9: 90000 bits (7.3% of max)
+  Point 10: 100000 bits (8.1% of max)
+  Point 11: 110000 bits (8.9% of max)
+  Point 12: 120000 bits (9.7% of max)
+  Point 13: 130000 bits (10.5% of max)
+  Point 14: 140000 bits (11.3% of max)
+  Point 15: 150000 bits (12.1% of max)
+  Point 16: 160000 bits (12.9% of max)
+  Point 17: 170000 bits (13.7% of max)
+  Point 18: 180000 bits (14.5% of max)
+  Point 19: 190000 bits (15.4% of max)
+  Point 20: 200000 bits (16.2% of max)
+  Point 21: 210000 bits (17.0% of max)
+  Point 22: 220000 bits (17.8% of max)
+  Point 23: 230000 bits (18.6% of max)
+  Point 24: 240000 bits (19.4% of max)
+  Point 25: 250000 bits (20.2% of max)
+  Point 26: 260000 bits (21.0% of max)
+  Point 27: 270000 bits (21.8% of max)
+  Point 28: 280000 bits (22.6% of max)
+  Point 29: 290000 bits (23.4% of max)
+  Point 30: 300000 bits (24.2% of max)
+  Point 31: 310000 bits (25.1% of max)
+  Point 32: 320000 bits (25.9% of max)
+  Point 33: 330000 bits (26.7% of max)
+  Point 34: 340000 bits (27.5% of max)
+  Point 35: 350000 bits (28.3% of max)
+  Point 36: 360000 bits (29.1% of max)
+  Point 37: 370000 bits (29.9% of max)
+  Point 38: 380000 bits (30.7% of max)
+  Point 39: 390000 bits (31.5% of max)
+  Point 40: 400000 bits (32.3% of max)
+  Point 41: 410000 bits (33.1% of max)
+  Point 42: 420000 bits (33.9% of max)
+  Point 43: 430000 bits (34.8% of max)
+  Point 44: 440000 bits (35.6% of max)
+  Point 45: 450000 bits (36.4% of max)
+  Point 46: 460000 bits (37.2% of max)
+  Point 47: 470000 bits (38.0% of max)
+  Point 48: 480000 bits (38.8% of max)
+  Point 49: 490000 bits (39.6% of max)
+  Point 50: 500000 bits (40.4% of max)
+  Point 51: 510000 bits (41.2% of max)
+  Point 52: 520000 bits (42.0% of max)
+  Point 53: 530000 bits (42.8% of max)
+  Point 54: 540000 bits (43.6% of max)
+  Point 55: 550000 bits (44.5% of max)
+  Point 56: 560000 bits (45.3% of max)
+  Point 57: 570000 bits (46.1% of max)
+  Point 58: 580000 bits (46.9% of max)
+  Point 59: 590000 bits (47.7% of max)
+  Point 60: 600000 bits (48.5% of max)
+  Point 61: 610000 bits (49.3% of max)
+  Point 62: 620000 bits (50.1% of max)
+  Point 63: 630000 bits (50.9% of max)
+  Point 64: 640000 bits (51.7% of max)
+  Point 65: 650000 bits (52.5% of max)
+  Point 66: 660000 bits (53.3% of max)
+  Point 67: 670000 bits (54.2% of max)
+  Point 68: 680000 bits (55.0% of max)
+  Point 69: 690000 bits (55.8% of max)
+  Point 70: 700000 bits (56.6% of max)
+  Point 71: 710000 bits (57.4% of max)
+  Point 72: 720000 bits (58.2% of max)
+  Point 73: 730000 bits (59.0% of max)
+  Point 74: 740000 bits (59.8% of max)
+  Point 75: 750000 bits (60.6% of max)
+  Point 76: 760000 bits (61.4% of max)
+  Point 77: 770000 bits (62.2% of max)
+  Point 78: 780000 bits (63.0% of max)
+  Point 79: 790000 bits (63.9% of max)
+  Point 80: 800000 bits (64.7% of max)
+  Point 81: 810000 bits (65.5% of max)
+  Point 82: 820000 bits (66.3% of max)
+  Point 83: 830000 bits (67.1% of max)
+  Point 84: 840000 bits (67.9% of max)
+  Point 85: 850000 bits (68.7% of max)
+  Point 86: 860000 bits (69.5% of max)
+  Point 87: 870000 bits (70.3% of max)
+  Point 88: 880000 bits (71.1% of max)
+  Point 89: 890000 bits (71.9% of max)
+  Point 90: 900000 bits (72.7% of max)
+  Point 91: 910000 bits (73.6% of max)
+  Point 92: 920000 bits (74.4% of max)
+  Point 93: 930000 bits (75.2% of max)
+  Point 94: 940000 bits (76.0% of max)
+  Point 95: 950000 bits (76.8% of max)
+  Point 96: 960000 bits (77.6% of max)
+  Point 97: 970000 bits (78.4% of max)
+  Point 98: 980000 bits (79.2% of max)
+  Point 99: 990000 bits (80.0% of max)
+  Point 100: 1000000 bits (80.8% of max)
+  Point 101: 1010000 bits (81.6% of max)
+  Point 102: 1020000 bits (82.4% of max)
+  Point 103: 1030000 bits (83.3% of max)
+  Point 104: 1040000 bits (84.1% of max)
+  Point 105: 1050000 bits (84.9% of max)
+  Point 106: 1060000 bits (85.7% of max)
+  Point 107: 1070000 bits (86.5% of max)
+  Point 108: 1080000 bits (87.3% of max)
+  Point 109: 1090000 bits (88.1% of max)
+  Point 110: 1100000 bits (88.9% of max)
+  Point 111: 1110000 bits (89.7% of max)
+  Point 112: 1120000 bits (90.5% of max)
+  Point 113: 1130000 bits (91.3% of max)
+  Point 114: 1140000 bits (92.1% of max)
+  Point 115: 1150000 bits (93.0% of max)
+  Point 116: 1160000 bits (93.8% of max)
+  Point 117: 1170000 bits (94.6% of max)
+  Point 118: 1180000 bits (95.4% of max)
+  Point 119: 1190000 bits (96.2% of max)
+  Point 120: 1200000 bits (97.0% of max)
+  Point 121: 1210000 bits (97.8% of max)
+  Point 122: 1220000 bits (98.6% of max)
+  Point 123: 1230000 bits (99.4% of max)
+  Point 124: 1237220 bits (100.0% of max)
+
+Step 3: Running embedding algorithm for each target point
+100.0% target (Max capacity):
+  Target: 1237220 bits
+  Actual: 1237220 bits
+  BPP: 1.179905
+  PSNR: 50.44
+  SSIM: 0.9959
+  Hist_Corr: 0.9878
+  Time: 23.97 seconds
+
+0.8% target:
+  Target: 10000 bits
+  Actual: 10000 bits
+  BPP: 0.009537
+  PSNR: 62.04
+  SSIM: 0.9998
+  Hist_Corr: 0.9999
+  Time: 5.01 seconds
+
+1.6% target:
+  Target: 20000 bits
+  Warning: Suspicious PSNR value detected: 68.12 > previous 62.04
+  Actual: 20000 bits
+  BPP: 0.019073
+  PSNR: 68.12
+  SSIM: 0.9999
+  Hist_Corr: 1.0000
+  Time: 4.75 seconds
+
+2.4% target:
+  Target: 30000 bits
+  Actual: 30000 bits
+  BPP: 0.028610
+  PSNR: 62.05
+  SSIM: 0.9998
+  Hist_Corr: 0.9999
+  Time: 4.67 seconds
+
+3.2% target:
+  Target: 40000 bits
+  Warning: Suspicious PSNR value detected: 68.32 > previous 62.05
+  Actual: 40000 bits
+  BPP: 0.038147
+  PSNR: 68.32
+  SSIM: 1.0000
+  Hist_Corr: 1.0000
+  Time: 4.70 seconds
+
+4.0% target:
+  Target: 50000 bits
+  Actual: 50000 bits
+  BPP: 0.047684
+  PSNR: 61.62
+  SSIM: 0.9998
+  Hist_Corr: 0.9999
+  Time: 4.69 seconds
+
+4.8% target:
+  Target: 60000 bits
+  Actual: 60000 bits
+  BPP: 0.057220
+  PSNR: 60.24
+  SSIM: 0.9997
+  Hist_Corr: 0.9993
+  Time: 4.63 seconds
+
+5.7% target:
+  Target: 70000 bits
+  Actual: 70000 bits
+  BPP: 0.066757
+  PSNR: 59.66
+  SSIM: 0.9997
+  Hist_Corr: 0.9996
+  Time: 4.68 seconds
+
+6.5% target:
+  Target: 80000 bits
+  Actual: 80000 bits
+  BPP: 0.076294
+  PSNR: 59.26
+  SSIM: 0.9997
+  Hist_Corr: 0.9996
+  Time: 4.73 seconds
+
+7.3% target:
+  Target: 90000 bits
+  Warning: Suspicious PSNR value detected: 59.48 > previous 59.26
+  Actual: 90000 bits
+  BPP: 0.085831
+  PSNR: 59.48
+  SSIM: 0.9997
+  Hist_Corr: 0.9997
+  Time: 4.73 seconds
+
+8.1% target:
+  Target: 100000 bits
+  Actual: 100000 bits
+  BPP: 0.095367
+  PSNR: 58.80
+  SSIM: 0.9996
+  Hist_Corr: 0.9996
+  Time: 4.70 seconds
+
+8.9% target:
+  Target: 110000 bits
+  Actual: 110000 bits
+  BPP: 0.104904
+  PSNR: 58.74
+  SSIM: 0.9995
+  Hist_Corr: 0.9987
+  Time: 4.71 seconds
+
+9.7% target:
+  Target: 120000 bits
+  Warning: Suspicious PSNR value detected: 58.82 > previous 58.74
+  Actual: 120000 bits
+  BPP: 0.114441
+  PSNR: 58.82
+  SSIM: 0.9995
+  Hist_Corr: 0.9985
+  Time: 4.71 seconds
+
+10.5% target:
+  Target: 130000 bits
+  Actual: 130000 bits
+  BPP: 0.123978
+  PSNR: 58.01
+  SSIM: 0.9995
+  Hist_Corr: 0.9994
+  Time: 4.76 seconds
+
+11.3% target:
+  Target: 140000 bits
+  Warning: Suspicious PSNR value detected: 58.24 > previous 58.01
+  Actual: 140000 bits
+  BPP: 0.133514
+  PSNR: 58.24
+  SSIM: 0.9995
+  Hist_Corr: 0.9989
+  Time: 4.67 seconds
+
+12.1% target:
+  Target: 150000 bits
+  Actual: 150000 bits
+  BPP: 0.143051
+  PSNR: 57.58
+  SSIM: 0.9995
+  Hist_Corr: 0.9993
+  Time: 4.66 seconds
+
+12.9% target:
+  Target: 160000 bits
+  Actual: 160000 bits
+  BPP: 0.152588
+  PSNR: 56.79
+  SSIM: 0.9994
+  Hist_Corr: 0.9990
+  Time: 4.75 seconds
+
+13.7% target:
+  Target: 170000 bits
+  Warning: Suspicious PSNR value detected: 58.20 > previous 56.79
+  Actual: 170000 bits
+  BPP: 0.162125
+  PSNR: 58.20
+  SSIM: 0.9994
+  Hist_Corr: 0.9992
+  Time: 4.72 seconds
+
+14.5% target:
+  Target: 180000 bits
+  Actual: 180000 bits
+  BPP: 0.171661
+  PSNR: 57.93
+  SSIM: 0.9994
+  Hist_Corr: 0.9993
+  Time: 4.76 seconds
+
+15.4% target:
+  Target: 190000 bits
+  Actual: 190000 bits
+  BPP: 0.181198
+  PSNR: 56.72
+  SSIM: 0.9993
+  Hist_Corr: 0.9988
+  Time: 4.68 seconds
+
+16.2% target:
+  Target: 200000 bits
+  Warning: Suspicious PSNR value detected: 58.11 > previous 56.72
+  Actual: 200000 bits
+  BPP: 0.190735
+  PSNR: 58.11
+  SSIM: 0.9993
+  Hist_Corr: 0.9971
+  Time: 4.78 seconds
+
+17.0% target:
+  Target: 210000 bits
+  Actual: 209281 bits
+  BPP: 0.199586
+  PSNR: 53.75
+  SSIM: 0.9979
+  Hist_Corr: 0.9886
+  Time: 12.02 seconds
+
+17.8% target:
+  Target: 220000 bits
+  Actual: 217973 bits
+  BPP: 0.207875
+  PSNR: 53.70
+  SSIM: 0.9980
+  Hist_Corr: 0.9899
+  Time: 11.77 seconds
+
+18.6% target:
+  Target: 230000 bits
+  Warning: Suspicious PSNR value detected: 53.79 > previous 53.70
+  Actual: 229456 bits
+  BPP: 0.218826
+  PSNR: 53.79
+  SSIM: 0.9980
+  Hist_Corr: 0.9914
+  Time: 11.72 seconds
+
+19.4% target:
+  Target: 240000 bits
+  Warning: Suspicious PSNR value detected: 53.89 > previous 53.79
+  Actual: 238377 bits
+  BPP: 0.227334
+  PSNR: 53.89
+  SSIM: 0.9981
+  Hist_Corr: 0.9937
+  Time: 12.14 seconds
+
+20.2% target:
+  Target: 250000 bits
+  Actual: 249860 bits
+  BPP: 0.238285
+  PSNR: 53.69
+  SSIM: 0.9980
+  Hist_Corr: 0.9920
+  Time: 12.54 seconds
+
+21.0% target:
+  Target: 260000 bits
+  Actual: 258552 bits
+  BPP: 0.246574
+  PSNR: 53.66
+  SSIM: 0.9980
+  Hist_Corr: 0.9910
+  Time: 12.19 seconds
+
+21.8% target:
+  Target: 270000 bits
+  Warning: Suspicious PSNR value detected: 53.78 > previous 53.66
+  Actual: 267471 bits
+  BPP: 0.255080
+  PSNR: 53.78
+  SSIM: 0.9980
+  Hist_Corr: 0.9918
+  Time: 11.47 seconds
+
+22.6% target:
+  Target: 280000 bits
+  Warning: Suspicious PSNR value detected: 53.83 > previous 53.78
+  Actual: 278956 bits
+  BPP: 0.266033
+  PSNR: 53.83
+  SSIM: 0.9979
+  Hist_Corr: 0.9892
+  Time: 11.63 seconds
+
+23.4% target:
+  Target: 290000 bits
+  Warning: Suspicious PSNR value detected: 53.86 > previous 53.83
+  Actual: 287875 bits
+  BPP: 0.274539
+  PSNR: 53.86
+  SSIM: 0.9981
+  Hist_Corr: 0.9925
+  Time: 11.89 seconds
+
+24.2% target:
+  Target: 300000 bits
+  Actual: 299131 bits
+  BPP: 0.285274
+  PSNR: 53.69
+  SSIM: 0.9979
+  Hist_Corr: 0.9894
+  Time: 11.81 seconds
+
+25.1% target:
+  Target: 310000 bits
+  Warning: Suspicious PSNR value detected: 53.84 > previous 53.69
+  Actual: 308050 bits
+  BPP: 0.293779
+  PSNR: 53.84
+  SSIM: 0.9981
+  Hist_Corr: 0.9933
+  Time: 12.07 seconds
+
+25.9% target:
+  Target: 320000 bits
+  Actual: 319566 bits
+  BPP: 0.304762
+  PSNR: 53.61
+  SSIM: 0.9979
+  Hist_Corr: 0.9832
+  Time: 12.30 seconds
+
+26.7% target:
+  Target: 330000 bits
+  Warning: Suspicious PSNR value detected: 53.72 > previous 53.61
+  Actual: 328485 bits
+  BPP: 0.313268
+  PSNR: 53.72
+  SSIM: 0.9980
+  Hist_Corr: 0.9884
+  Time: 12.21 seconds
+
+27.5% target:
+  Target: 340000 bits
+  Warning: Suspicious PSNR value detected: 53.79 > previous 53.72
+  Actual: 339968 bits
+  BPP: 0.324219
+  PSNR: 53.79
+  SSIM: 0.9980
+  Hist_Corr: 0.9934
+  Time: 11.72 seconds
+
+28.3% target:
+  Target: 350000 bits
+  Actual: 348660 bits
+  BPP: 0.332508
+  PSNR: 53.69
+  SSIM: 0.9978
+  Hist_Corr: 0.9839
+  Time: 11.66 seconds
+
+29.1% target:
+  Target: 360000 bits
+  Warning: Suspicious PSNR value detected: 53.86 > previous 53.69
+  Actual: 357581 bits
+  BPP: 0.341016
+  PSNR: 53.86
+  SSIM: 0.9980
+  Hist_Corr: 0.9926
+  Time: 11.38 seconds
+
+29.9% target:
+  Target: 370000 bits
+  Actual: 369064 bits
+  BPP: 0.351967
+  PSNR: 53.74
+  SSIM: 0.9980
+  Hist_Corr: 0.9922
+  Time: 11.83 seconds
+
+30.7% target:
+  Target: 380000 bits
+  Warning: Suspicious PSNR value detected: 53.77 > previous 53.74
+  Actual: 377983 bits
+  BPP: 0.360473
+  PSNR: 53.77
+  SSIM: 0.9979
+  Hist_Corr: 0.9883
+  Time: 11.91 seconds
+
+31.5% target:
+  Target: 390000 bits
+  Actual: 389239 bits
+  BPP: 0.371207
+  PSNR: 53.71
+  SSIM: 0.9980
+  Hist_Corr: 0.9894
+  Time: 11.86 seconds
+
+32.3% target:
+  Target: 400000 bits
+  Warning: Suspicious PSNR value detected: 53.87 > previous 53.71
+  Actual: 398160 bits
+  BPP: 0.379715
+  PSNR: 53.87
+  SSIM: 0.9980
+  Hist_Corr: 0.9912
+  Time: 11.84 seconds
+
+33.1% target:
+  Target: 410000 bits
+  Actual: 409643 bits
+  BPP: 0.390666
+  PSNR: 53.84
+  SSIM: 0.9980
+  Hist_Corr: 0.9899
+  Time: 11.86 seconds
+
+33.9% target:
+  Target: 420000 bits
+  Actual: 418562 bits
+  BPP: 0.399172
+  PSNR: 53.76
+  SSIM: 0.9980
+  Hist_Corr: 0.9915
+  Time: 11.81 seconds
+
+34.8% target:
+  Target: 430000 bits
+  Actual: 427254 bits
+  BPP: 0.407461
+  PSNR: 53.71
+  SSIM: 0.9979
+  Hist_Corr: 0.9888
+  Time: 11.94 seconds
+
+35.6% target:
+  Target: 440000 bits
+  Warning: Suspicious PSNR value detected: 53.72 > previous 53.71
+  Actual: 438739 bits
+  BPP: 0.418414
+  PSNR: 53.72
+  SSIM: 0.9980
+  Hist_Corr: 0.9926
+  Time: 11.88 seconds
+
+36.4% target:
+  Target: 450000 bits
+  Actual: 447658 bits
+  BPP: 0.426920
+  PSNR: 53.69
+  SSIM: 0.9979
+  Hist_Corr: 0.9909
+  Time: 11.80 seconds
+
+37.2% target:
+  Target: 460000 bits
+  Warning: Suspicious PSNR value detected: 53.74 > previous 53.69
+  Actual: 459141 bits
+  BPP: 0.437871
+  PSNR: 53.74
+  SSIM: 0.9979
+  Hist_Corr: 0.9874
+  Time: 11.90 seconds
+
+38.0% target:
+  Target: 470000 bits
+  Actual: 467833 bits
+  BPP: 0.446160
+  PSNR: 53.68
+  SSIM: 0.9980
+  Hist_Corr: 0.9895
+  Time: 11.82 seconds
+
+38.8% target:
+  Target: 480000 bits
+  Actual: 479349 bits
+  BPP: 0.457143
+  PSNR: 53.67
+  SSIM: 0.9980
+  Hist_Corr: 0.9913
+  Time: 11.84 seconds
+
+39.6% target:
+  Target: 490000 bits
+  Actual: 488268 bits
+  BPP: 0.465649
+  PSNR: 53.50
+  SSIM: 0.9979
+  Hist_Corr: 0.9911
+  Time: 11.68 seconds
+
+40.4% target:
+  Target: 500000 bits
+  Warning: Suspicious PSNR value detected: 53.52 > previous 53.50
+  Actual: 499751 bits
+  BPP: 0.476600
+  PSNR: 53.52
+  SSIM: 0.9980
+  Hist_Corr: 0.9918
+  Time: 12.12 seconds
+
+41.2% target:
+  Target: 510000 bits
+  Actual: 508670 bits
+  BPP: 0.485106
+  PSNR: 53.44
+  SSIM: 0.9980
+  Hist_Corr: 0.9930
+  Time: 12.24 seconds
+
+42.0% target:
+  Target: 520000 bits
+  Actual: 517364 bits
+  BPP: 0.493397
+  PSNR: 53.43
+  SSIM: 0.9979
+  Hist_Corr: 0.9901
+  Time: 12.22 seconds
+
+42.8% target:
+  Target: 530000 bits
+  Actual: 528847 bits
+  BPP: 0.504348
+  PSNR: 53.33
+  SSIM: 0.9979
+  Hist_Corr: 0.9883
+  Time: 12.95 seconds
+
+43.6% target:
+  Target: 540000 bits
+  Actual: 537766 bits
+  BPP: 0.512854
+  PSNR: 53.29
+  SSIM: 0.9979
+  Hist_Corr: 0.9899
+  Time: 13.00 seconds
+
+44.5% target:
+  Target: 550000 bits
+  Actual: 549249 bits
+  BPP: 0.523805
+  PSNR: 53.10
+  SSIM: 0.9978
+  Hist_Corr: 0.9864
+  Time: 13.00 seconds
+
+45.3% target:
+  Target: 560000 bits
+  Actual: 557943 bits
+  BPP: 0.532096
+  PSNR: 53.09
+  SSIM: 0.9979
+  Hist_Corr: 0.9917
+  Time: 13.29 seconds
+
+46.1% target:
+  Target: 570000 bits
+  Actual: 569426 bits
+  BPP: 0.543047
+  PSNR: 52.86
+  SSIM: 0.9977
+  Hist_Corr: 0.9864
+  Time: 12.50 seconds
+
+46.9% target:
+  Target: 580000 bits
+  Actual: 578345 bits
+  BPP: 0.551553
+  PSNR: 52.83
+  SSIM: 0.9978
+  Hist_Corr: 0.9909
+  Time: 13.06 seconds
+
+47.7% target:
+  Target: 590000 bits
+  Actual: 589828 bits
+  BPP: 0.562504
+  PSNR: 52.55
+  SSIM: 0.9977
+  Hist_Corr: 0.9908
+  Time: 13.31 seconds
+
+48.5% target:
+  Target: 600000 bits
+  Actual: 598522 bits
+  BPP: 0.570795
+  PSNR: 52.48
+  SSIM: 0.9977
+  Hist_Corr: 0.9897
+  Time: 13.18 seconds
+
+49.3% target:
+  Target: 610000 bits
+  Actual: 607441 bits
+  BPP: 0.579301
+  PSNR: 52.22
+  SSIM: 0.9975
+  Hist_Corr: 0.9887
+  Time: 13.12 seconds
+
+50.1% target:
+  Target: 620000 bits
+  Warning: Suspicious PSNR value detected: 52.24 > previous 52.22
+  Actual: 618924 bits
+  BPP: 0.590252
+  PSNR: 52.24
+  SSIM: 0.9976
+  Hist_Corr: 0.9924
+  Time: 13.46 seconds
+
+50.9% target:
+  Target: 630000 bits
+  Actual: 627843 bits
+  BPP: 0.598758
+  PSNR: 51.96
+  SSIM: 0.9974
+  Hist_Corr: 0.9877
+  Time: 13.49 seconds
+
+51.7% target:
+  Target: 640000 bits
+  Actual: 639359 bits
+  BPP: 0.609740
+  PSNR: 51.91
+  SSIM: 0.9973
+  Hist_Corr: 0.9904
+  Time: 13.77 seconds
+
+52.5% target:
+  Target: 650000 bits
+  Actual: 648051 bits
+  BPP: 0.618030
+  PSNR: 51.81
+  SSIM: 0.9972
+  Hist_Corr: 0.9888
+  Time: 13.60 seconds
+
+53.3% target:
+  Target: 660000 bits
+  Warning: Suspicious PSNR value detected: 51.85 > previous 51.81
+  Actual: 659534 bits
+  BPP: 0.628981
+  PSNR: 51.85
+  SSIM: 0.9972
+  Hist_Corr: 0.9856
+  Time: 13.89 seconds
+
+54.2% target:
+  Target: 670000 bits
+  Actual: 668453 bits
+  BPP: 0.637486
+  PSNR: 51.64
+  SSIM: 0.9972
+  Hist_Corr: 0.9885
+  Time: 14.10 seconds
+
+55.0% target:
+  Target: 680000 bits
+  Warning: Suspicious PSNR value detected: 51.75 > previous 51.64
+  Actual: 679938 bits
+  BPP: 0.648439
+  PSNR: 51.75
+  SSIM: 0.9972
+  Hist_Corr: 0.9898
+  Time: 14.12 seconds
+
+55.8% target:
+  Target: 690000 bits
+  Actual: 688630 bits
+  BPP: 0.656729
+  PSNR: 51.58
+  SSIM: 0.9970
+  Hist_Corr: 0.9875
+  Time: 14.11 seconds
+
+56.6% target:
+  Target: 700000 bits
+  Warning: Suspicious PSNR value detected: 51.58 > previous 51.58
+  Actual: 697549 bits
+  BPP: 0.665235
+  PSNR: 51.58
+  SSIM: 0.9969
+  Hist_Corr: 0.9848
+  Time: 14.27 seconds
+
+57.4% target:
+  Target: 710000 bits
+  Actual: 709032 bits
+  BPP: 0.676186
+  PSNR: 51.47
+  SSIM: 0.9970
+  Hist_Corr: 0.9841
+  Time: 14.56 seconds
+
+58.2% target:
+  Target: 720000 bits
+  Actual: 717953 bits
+  BPP: 0.684693
+  PSNR: 51.44
+  SSIM: 0.9969
+  Hist_Corr: 0.9865
+  Time: 14.45 seconds
+
+59.0% target:
+  Target: 730000 bits
+  Actual: 729209 bits
+  BPP: 0.695428
+  PSNR: 51.33
+  SSIM: 0.9968
+  Hist_Corr: 0.9845
+  Time: 14.41 seconds
+
+59.8% target:
+  Target: 740000 bits
+  Warning: Suspicious PSNR value detected: 51.33 > previous 51.33
+  Actual: 738128 bits
+  BPP: 0.703934
+  PSNR: 51.33
+  SSIM: 0.9968
+  Hist_Corr: 0.9898
+  Time: 14.59 seconds
+
+60.6% target:
+  Target: 750000 bits
+  Actual: 749611 bits
+  BPP: 0.714885
+  PSNR: 51.26
+  SSIM: 0.9968
+  Hist_Corr: 0.9886
+  Time: 14.50 seconds
+
+61.4% target:
+  Target: 760000 bits
+  Warning: Suspicious PSNR value detected: 51.29 > previous 51.26
+  Actual: 758532 bits
+  BPP: 0.723392
+  PSNR: 51.29
+  SSIM: 0.9966
+  Hist_Corr: 0.9847
+  Time: 14.60 seconds
+
+62.2% target:
+  Target: 770000 bits
+  Warning: Suspicious PSNR value detected: 51.30 > previous 51.29
+  Actual: 767224 bits
+  BPP: 0.731682
+  PSNR: 51.30
+  SSIM: 0.9967
+  Hist_Corr: 0.9872
+  Time: 14.45 seconds
+
+63.0% target:
+  Target: 780000 bits
+  Actual: 778707 bits
+  BPP: 0.742633
+  PSNR: 51.17
+  SSIM: 0.9965
+  Hist_Corr: 0.9862
+  Time: 14.02 seconds
+
+63.9% target:
+  Target: 790000 bits
+  Warning: Suspicious PSNR value detected: 51.19 > previous 51.17
+  Actual: 787626 bits
+  BPP: 0.751139
+  PSNR: 51.19
+  SSIM: 0.9966
+  Hist_Corr: 0.9891
+  Time: 14.72 seconds
+
+64.7% target:
+  Target: 800000 bits
+  Warning: Suspicious PSNR value detected: 51.31 > previous 51.19
+  Actual: 799092 bits
+  BPP: 0.762074
+  PSNR: 51.31
+  SSIM: 0.9968
+  Hist_Corr: 0.9894
+  Time: 14.73 seconds
+
+65.5% target:
+  Target: 810000 bits
+  Actual: 808061 bits
+  BPP: 0.770627
+  PSNR: 51.27
+  SSIM: 0.9967
+  Hist_Corr: 0.9922
+  Time: 14.78 seconds
+
+66.3% target:
+  Target: 820000 bits
+  Actual: 819228 bits
+  BPP: 0.781277
+  PSNR: 51.10
+  SSIM: 0.9964
+  Hist_Corr: 0.9784
+  Time: 14.79 seconds
+
+67.1% target:
+  Target: 830000 bits
+  Warning: Suspicious PSNR value detected: 51.19 > previous 51.10
+  Actual: 827103 bits
+  BPP: 0.788787
+  PSNR: 51.19
+  SSIM: 0.9964
+  Hist_Corr: 0.9854
+  Time: 14.69 seconds
+
+67.9% target:
+  Target: 840000 bits
+  Actual: 839251 bits
+  BPP: 0.800372
+  PSNR: 50.99
+  SSIM: 0.9963
+  Hist_Corr: 0.9883
+  Time: 14.81 seconds
+
+68.7% target:
+  Target: 850000 bits
+  Warning: Suspicious PSNR value detected: 51.01 > previous 50.99
+  Actual: 848640 bits
+  BPP: 0.809326
+  PSNR: 51.01
+  SSIM: 0.9964
+  Hist_Corr: 0.9875
+  Time: 14.16 seconds
+
+69.5% target:
+  Target: 860000 bits
+  Warning: Suspicious PSNR value detected: 51.12 > previous 51.01
+  Actual: 857091 bits
+  BPP: 0.817386
+  PSNR: 51.12
+  SSIM: 0.9965
+  Hist_Corr: 0.9838
+  Time: 14.64 seconds
+
+70.3% target:
+  Target: 870000 bits
+  Warning: Suspicious PSNR value detected: 51.14 > previous 51.12
+  Actual: 868815 bits
+  BPP: 0.828567
+  PSNR: 51.14
+  SSIM: 0.9965
+  Hist_Corr: 0.9863
+  Time: 14.74 seconds
+
+71.1% target:
+  Target: 880000 bits
+  Actual: 877736 bits
+  BPP: 0.837074
+  PSNR: 50.96
+  SSIM: 0.9962
+  Hist_Corr: 0.9860
+  Time: 14.53 seconds
+
+71.9% target:
+  Target: 890000 bits
+  Warning: Suspicious PSNR value detected: 51.08 > previous 50.96
+  Actual: 887500 bits
+  BPP: 0.846386
+  PSNR: 51.08
+  SSIM: 0.9966
+  Hist_Corr: 0.9817
+  Time: 14.83 seconds
+
+72.7% target:
+  Target: 900000 bits
+  Actual: 895664 bits
+  BPP: 0.854172
+  PSNR: 51.06
+  SSIM: 0.9965
+  Hist_Corr: 0.9837
+  Time: 14.40 seconds
+
+73.6% target:
+  Target: 910000 bits
+  Actual: 908666 bits
+  BPP: 0.866571
+  PSNR: 51.00
+  SSIM: 0.9962
+  Hist_Corr: 0.9836
+  Time: 15.08 seconds
+
+74.4% target:
+  Target: 920000 bits
+  Actual: 918023 bits
+  BPP: 0.875495
+  PSNR: 50.98
+  SSIM: 0.9963
+  Hist_Corr: 0.9782
+  Time: 14.92 seconds
+
+75.2% target:
+  Target: 930000 bits
+  Warning: Suspicious PSNR value detected: 51.00 > previous 50.98
+  Actual: 928678 bits
+  BPP: 0.885656
+  PSNR: 51.00
+  SSIM: 0.9962
+  Hist_Corr: 0.9854
+  Time: 15.08 seconds
+
+76.0% target:
+  Target: 940000 bits
+  Actual: 938215 bits
+  BPP: 0.894752
+  PSNR: 50.77
+  SSIM: 0.9961
+  Hist_Corr: 0.9813
+  Time: 15.21 seconds
+
+76.8% target:
+  Target: 950000 bits
+  Warning: Suspicious PSNR value detected: 50.91 > previous 50.77
+  Actual: 947154 bits
+  BPP: 0.903276
+  PSNR: 50.91
+  SSIM: 0.9963
+  Hist_Corr: 0.9855
+  Time: 15.34 seconds
+
+77.6% target:
+  Target: 960000 bits
+  Actual: 958087 bits
+  BPP: 0.913703
+  PSNR: 50.85
+  SSIM: 0.9962
+  Hist_Corr: 0.9837
+  Time: 15.19 seconds
+
+78.4% target:
+  Target: 970000 bits
+  Actual: 965989 bits
+  BPP: 0.921239
+  PSNR: 50.84
+  SSIM: 0.9961
+  Hist_Corr: 0.9824
+  Time: 15.21 seconds
+
+79.2% target:
+  Target: 980000 bits
+  Actual: 977661 bits
+  BPP: 0.932370
+  PSNR: 50.75
+  SSIM: 0.9960
+  Hist_Corr: 0.9834
+  Time: 15.41 seconds
+
+80.0% target:
+  Target: 990000 bits
+  Actual: 985294 bits
+  BPP: 0.939650
+  PSNR: 50.66
+  SSIM: 0.9962
+  Hist_Corr: 0.9887
+  Time: 14.82 seconds
+
+80.8% target:
+  Target: 1000000 bits
+  Actual: 998747 bits
+  BPP: 0.952479
+  PSNR: 50.63
+  SSIM: 0.9962
+  Hist_Corr: 0.9879
+  Time: 15.72 seconds
+
+81.6% target:
+  Target: 1010000 bits
+  Actual: 1001866 bits
+  BPP: 0.955454
+  PSNR: 50.60
+  SSIM: 0.9962
+  Hist_Corr: 0.9781
+  Time: 16.25 seconds
+
+82.4% target:
+  Target: 1020000 bits
+  Warning: Suspicious PSNR value detected: 50.69 > previous 50.60
+  Actual: 1013723 bits
+  BPP: 0.966762
+  PSNR: 50.69
+  SSIM: 0.9962
+  Hist_Corr: 0.9833
+  Time: 16.14 seconds
+
+83.3% target:
+  Target: 1030000 bits
+  Actual: 1022367 bits
+  BPP: 0.975005
+  PSNR: 50.58
+  SSIM: 0.9963
+  Hist_Corr: 0.9888
+  Time: 15.91 seconds
+
+84.1% target:
+  Target: 1040000 bits
+  Warning: Suspicious PSNR value detected: 50.67 > previous 50.58
+  Actual: 1034865 bits
+  BPP: 0.986924
+  PSNR: 50.67
+  SSIM: 0.9960
+  Hist_Corr: 0.9800
+  Time: 15.90 seconds
+
+84.9% target:
+  Target: 1050000 bits
+  Warning: Suspicious PSNR value detected: 50.67 > previous 50.67
+  Actual: 1042737 bits
+  BPP: 0.994431
+  PSNR: 50.67
+  SSIM: 0.9962
+  Hist_Corr: 0.9872
+  Time: 16.04 seconds
+
+85.7% target:
+  Target: 1060000 bits
+  Actual: 1043216 bits
+  BPP: 0.994888
+  PSNR: 50.45
+  SSIM: 0.9960
+  Hist_Corr: 0.9656
+  Time: 16.30 seconds
+
+86.5% target:
+  Target: 1070000 bits
+  Warning: Suspicious PSNR value detected: 50.60 > previous 50.45
+  Actual: 1044532 bits
+  BPP: 0.996143
+  PSNR: 50.60
+  SSIM: 0.9961
+  Hist_Corr: 0.9869
+  Time: 15.74 seconds
+
+87.3% target:
+  Target: 1080000 bits
+  Actual: 1043355 bits
+  BPP: 0.995021
+  PSNR: 50.38
+  SSIM: 0.9960
+  Hist_Corr: 0.9850
+  Time: 16.12 seconds
+
+88.1% target:
+  Target: 1090000 bits
+  Warning: Suspicious PSNR value detected: 50.60 > previous 50.38
+  Actual: 1046307 bits
+  BPP: 0.997836
+  PSNR: 50.60
+  SSIM: 0.9961
+  Hist_Corr: 0.9865
+  Time: 17.17 seconds
+
+88.9% target:
+  Target: 1100000 bits
+  Actual: 1040741 bits
+  BPP: 0.992528
+  PSNR: 50.41
+  SSIM: 0.9960
+  Hist_Corr: 0.9793
+  Time: 17.49 seconds
+
+89.7% target:
+  Target: 1110000 bits
+  Warning: Suspicious PSNR value detected: 50.58 > previous 50.41
+  Actual: 1044099 bits
+  BPP: 0.995730
+  PSNR: 50.58
+  SSIM: 0.9962
+  Hist_Corr: 0.9759
+  Time: 17.37 seconds
+
+90.5% target:
+  Target: 1120000 bits
+  Actual: 1042609 bits
+  BPP: 0.994309
+  PSNR: 50.61
+  SSIM: 0.9963
+  Hist_Corr: 0.9836
+  Time: 17.07 seconds
+
+91.3% target:
+  Target: 1130000 bits
+  Actual: 1041987 bits
+  BPP: 0.993716
+  PSNR: 50.50
+  SSIM: 0.9959
+  Hist_Corr: 0.9879
+  Time: 16.78 seconds
+
+92.1% target:
+  Target: 1140000 bits
+  Warning: Suspicious PSNR value detected: 50.57 > previous 50.50
+  Actual: 1043491 bits
+  BPP: 0.995151
+  PSNR: 50.57
+  SSIM: 0.9962
+  Hist_Corr: 0.9850
+  Time: 16.94 seconds
+
+93.0% target:
+  Target: 1150000 bits
+  Actual: 1041659 bits
+  BPP: 0.993403
+  PSNR: 50.47
+  SSIM: 0.9959
+  Hist_Corr: 0.9794
+  Time: 17.08 seconds
+
+93.8% target:
+  Target: 1160000 bits
+  Actual: 1043771 bits
+  BPP: 0.995418
+  PSNR: 50.46
+  SSIM: 0.9960
+  Hist_Corr: 0.9848
+  Time: 17.02 seconds
+
+94.6% target:
+  Target: 1170000 bits
+  Warning: Suspicious PSNR value detected: 50.51 > previous 50.46
+  Actual: 1046701 bits
+  BPP: 0.998212
+  PSNR: 50.51
+  SSIM: 0.9961
+  Hist_Corr: 0.9800
+  Time: 17.68 seconds
+
+95.4% target:
+  Target: 1180000 bits
+  Actual: 1044524 bits
+  BPP: 0.996136
+  PSNR: 50.62
+  SSIM: 0.9961
+  Hist_Corr: 0.9863
+  Time: 17.21 seconds
+
+96.2% target:
+  Target: 1190000 bits
+  Actual: 1045153 bits
+  BPP: 0.996736
+  PSNR: 50.50
+  SSIM: 0.9960
+  Hist_Corr: 0.9794
+  Time: 17.48 seconds
+
+97.0% target:
+  Target: 1200000 bits
+  Actual: 1045062 bits
+  BPP: 0.996649
+  PSNR: 50.43
+  SSIM: 0.9958
+  Hist_Corr: 0.9817
+  Time: 17.37 seconds
+
+97.8% target:
+  Target: 1210000 bits
+  Actual: 1041045 bits
+  BPP: 0.992818
+  PSNR: 50.45
+  SSIM: 0.9960
+  Hist_Corr: 0.9860
+  Time: 17.97 seconds
+
+98.6% target:
+  Target: 1220000 bits
+  Warning: Suspicious PSNR value detected: 50.56 > previous 50.45
+  Actual: 1045485 bits
+  BPP: 0.997052
+  PSNR: 50.56
+  SSIM: 0.9962
+  Hist_Corr: 0.9832
+  Time: 17.46 seconds
+
+99.4% target:
+  Target: 1230000 bits
+  Actual: 1043217 bits
+  BPP: 0.994889
+  PSNR: 50.57
+  SSIM: 0.9961
+  Hist_Corr: 0.9846
+  Time: 18.14 seconds
+
+Results summary:
+Total processing time: 1595.70 seconds
+Average time per point: 12.87 seconds
+Results saved to ./Prediction_Error_Embedding/outcome/plots/Male/precise_proposed
+
+Data table:
+ Target_Percentage  Target_Payload  Actual_Payload      BPP      PSNR   SSIM  Hist_Corr  Processing_Time Suspicious
+          0.808264           10000           10000 0.009537 62.038427 0.9998   0.999860         5.008918      False
+          1.616527           20000           20000 0.019073 68.117884 0.9999   0.999986         4.745988       True
+          2.424791           30000           30000 0.028610 62.054242 0.9998   0.999867         4.668500      False
+          3.233055           40000           40000 0.038147 68.321629 1.0000   0.999984         4.702913       True
+          4.041318           50000           50000 0.047684 61.618597 0.9998   0.999853         4.689335      False
+          4.849582           60000           60000 0.057220 60.239455 0.9997   0.999292         4.628766      False
+          5.657846           70000           70000 0.066757 59.658947 0.9997   0.999641         4.680060      False
+          6.466110           80000           80000 0.076294 59.256137 0.9997   0.999621         4.734092      False
+          7.274373           90000           90000 0.085831 59.477031 0.9997   0.999664         4.727225       True
+          8.082637          100000          100000 0.095367 58.803798 0.9996   0.999553         4.698551      False
+          8.890901          110000          110000 0.104904 58.741047 0.9995   0.998668         4.706632      False
+          9.699164          120000          120000 0.114441 58.818572 0.9995   0.998464         4.711466       True
+         10.507428          130000          130000 0.123978 58.007434 0.9995   0.999411         4.758393      False
+         11.315692          140000          140000 0.133514 58.237749 0.9995   0.998949         4.671582       True
+         12.123955          150000          150000 0.143051 57.583852 0.9995   0.999279         4.657702      False
+         12.932219          160000          160000 0.152588 56.794968 0.9994   0.998982         4.745595      False
+         13.740483          170000          170000 0.162125 58.199922 0.9994   0.999250         4.719424       True
+         14.548746          180000          180000 0.171661 57.931254 0.9994   0.999262         4.761862      False
+         15.357010          190000          190000 0.181198 56.724621 0.9993   0.998826         4.676067      False
+         16.165274          200000          200000 0.190735 58.108520 0.9993   0.997106         4.780083       True
+         16.973537          210000          209281 0.199586 53.753235 0.9979   0.988618        12.024292      False
+         17.781801          220000          217973 0.207875 53.697753 0.9980   0.989899        11.771717      False
+         18.590065          230000          229456 0.218826 53.792104 0.9980   0.991403        11.718192       True
+         19.398329          240000          238377 0.227334 53.885215 0.9981   0.993740        12.143200       True
+         20.206592          250000          249860 0.238285 53.693443 0.9980   0.991965        12.542167      False
+         21.014856          260000          258552 0.246574 53.663712 0.9980   0.990952        12.194225      False
+         21.823120          270000          267471 0.255080 53.781624 0.9980   0.991760        11.466413       True
+         22.631383          280000          278956 0.266033 53.832649 0.9979   0.989238        11.627350       True
+         23.439647          290000          287875 0.274539 53.855121 0.9981   0.992463        11.889117       True
+         24.247911          300000          299131 0.285274 53.686426 0.9979   0.989429        11.807220      False
+         25.056174          310000          308050 0.293779 53.837886 0.9981   0.993330        12.069429       True
+         25.864438          320000          319566 0.304762 53.606753 0.9979   0.983206        12.296944      False
+         26.672702          330000          328485 0.313268 53.724670 0.9980   0.988448        12.214392       True
+         27.480965          340000          339968 0.324219 53.794118 0.9980   0.993441        11.722825       True
+         28.289229          350000          348660 0.332508 53.687960 0.9978   0.983945        11.658384      False
+         29.097493          360000          357581 0.341016 53.859999 0.9980   0.992585        11.381578       True
+         29.905756          370000          369064 0.351967 53.744235 0.9980   0.992167        11.827632      False
+         30.714020          380000          377983 0.360473 53.773644 0.9979   0.988305        11.913269       True
+         31.522284          390000          389239 0.371207 53.706179 0.9980   0.989421        11.864180      False
+         32.330548          400000          398160 0.379715 53.874803 0.9980   0.991151        11.837866       True
+         33.138811          410000          409643 0.390666 53.838163 0.9980   0.989933        11.861653      False
+         33.947075          420000          418562 0.399172 53.764738 0.9980   0.991540        11.809841      False
+         34.755339          430000          427254 0.407461 53.711026 0.9979   0.988773        11.935695      False
+         35.563602          440000          438739 0.418414 53.723393 0.9980   0.992592        11.881334       True
+         36.371866          450000          447658 0.426920 53.694993 0.9979   0.990865        11.798305      False
+         37.180130          460000          459141 0.437871 53.737362 0.9979   0.987359        11.900506       True
+         37.988393          470000          467833 0.446160 53.682082 0.9980   0.989469        11.815607      False
+         38.796657          480000          479349 0.457143 53.673347 0.9980   0.991322        11.842960      False
+         39.604921          490000          488268 0.465649 53.504126 0.9979   0.991131        11.678842      False
+         40.413184          500000          499751 0.476600 53.520542 0.9980   0.991816        12.122109       True
+         41.221448          510000          508670 0.485106 53.444237 0.9980   0.992971        12.243361      False
+         42.029712          520000          517364 0.493397 53.429453 0.9979   0.990100        12.223163      False
+         42.837975          530000          528847 0.504348 53.333093 0.9979   0.988305        12.953238      False
+         43.646239          540000          537766 0.512854 53.288969 0.9979   0.989870        13.002887      False
+         44.454503          550000          549249 0.523805 53.098493 0.9978   0.986440        12.995520      False
+         45.262767          560000          557943 0.532096 53.088715 0.9979   0.991729        13.293826      False
+         46.071030          570000          569426 0.543047 52.864189 0.9977   0.986390        12.503022      False
+         46.879294          580000          578345 0.551553 52.831254 0.9978   0.990920        13.059965      False
+         47.687558          590000          589828 0.562504 52.549654 0.9977   0.990775        13.312802      False
+         48.495821          600000          598522 0.570795 52.478768 0.9977   0.989677        13.184736      False
+         49.304085          610000          607441 0.579301 52.217574 0.9975   0.988709        13.116874      False
+         50.112349          620000          618924 0.590252 52.235708 0.9976   0.992378        13.457262       True
+         50.920612          630000          627843 0.598758 51.963046 0.9974   0.987677        13.493195      False
+         51.728876          640000          639359 0.609740 51.912712 0.9973   0.990450        13.768869      False
+         52.537140          650000          648051 0.618030 51.807429 0.9972   0.988832        13.604767      False
+         53.345403          660000          659534 0.628981 51.852549 0.9972   0.985593        13.885480       True
+         54.153667          670000          668453 0.637486 51.637844 0.9972   0.988481        14.102584      False
+         54.961931          680000          679938 0.648439 51.749650 0.9972   0.989769        14.121962       True
+         55.770194          690000          688630 0.656729 51.581072 0.9970   0.987545        14.106273      False
+         56.578458          700000          697549 0.665235 51.584089 0.9969   0.984784        14.267619       True
+         57.386722          710000          709032 0.676186 51.470628 0.9970   0.984060        14.561296      False
+         58.194986          720000          717953 0.684693 51.442826 0.9969   0.986505        14.454500      False
+         59.003249          730000          729209 0.695428 51.327716 0.9968   0.984452        14.405740      False
+         59.811513          740000          738128 0.703934 51.331159 0.9968   0.989774        14.592860       True
+         60.619777          750000          749611 0.714885 51.255808 0.9968   0.988649        14.502215      False
+         61.428040          760000          758532 0.723392 51.289654 0.9966   0.984726        14.599433       True
+         62.236304          770000          767224 0.731682 51.302616 0.9967   0.987239        14.453849       True
+         63.044568          780000          778707 0.742633 51.174598 0.9965   0.986161        14.023126      False
+         63.852831          790000          787626 0.751139 51.187406 0.9966   0.989084        14.720338       True
+         64.661095          800000          799092 0.762074 51.311731 0.9968   0.989361        14.728507       True
+         65.469359          810000          808061 0.770627 51.272066 0.9967   0.992167        14.779621      False
+         66.277622          820000          819228 0.781277 51.096396 0.9964   0.978384        14.786134      False
+         67.085886          830000          827103 0.788787 51.190547 0.9964   0.985361        14.686180       True
+         67.894150          840000          839251 0.800372 50.990916 0.9963   0.988291        14.813663      False
+         68.702413          850000          848640 0.809326 51.007239 0.9964   0.987483        14.158704       True
+         69.510677          860000          857091 0.817386 51.115764 0.9965   0.983753        14.644443       True
+         70.318941          870000          868815 0.828567 51.139886 0.9965   0.986253        14.735493       True
+         71.127205          880000          877736 0.837074 50.962117 0.9962   0.986033        14.525526      False
+         71.935468          890000          887500 0.846386 51.076478 0.9966   0.981658        14.827197       True
+         72.743732          900000          895664 0.854172 51.063871 0.9965   0.983709        14.395620      False
+         73.551996          910000          908666 0.866571 51.004822 0.9962   0.983586        15.075732      False
+         74.360259          920000          918023 0.875495 50.976441 0.9963   0.978175        14.916783      False
+         75.168523          930000          928678 0.885656 51.004637 0.9962   0.985359        15.083901       True
+         75.976787          940000          938215 0.894752 50.774901 0.9961   0.981251        15.209602      False
+         76.785050          950000          947154 0.903276 50.909088 0.9963   0.985485        15.339440       True
+         77.593314          960000          958087 0.913703 50.854736 0.9962   0.983728        15.185693      False
+         78.401578          970000          965989 0.921239 50.839432 0.9961   0.982449        15.213845      False
+         79.209841          980000          977661 0.932370 50.748501 0.9960   0.983419        15.409736      False
+         80.018105          990000          985294 0.939650 50.664042 0.9962   0.988668        14.821641      False
+         80.826369         1000000          998747 0.952479 50.625913 0.9962   0.987926        15.724123      False
+         81.634632         1010000         1001866 0.955454 50.602339 0.9962   0.978080        16.253021      False
+         82.442896         1020000         1013723 0.966762 50.687983 0.9962   0.983270        16.144241       True
+         83.251160         1030000         1022367 0.975005 50.583393 0.9963   0.988782        15.914421      False
+         84.059424         1040000         1034865 0.986924 50.668170 0.9960   0.979962        15.903324       True
+         84.867687         1050000         1042737 0.994431 50.669337 0.9962   0.987227        16.037222       True
+         85.675951         1060000         1043216 0.994888 50.445298 0.9960   0.965563        16.298414      False
+         86.484215         1070000         1044532 0.996143 50.595189 0.9961   0.986932        15.741801       True
+         87.292478         1080000         1043355 0.995021 50.384303 0.9960   0.984955        16.119644      False
+         88.100742         1090000         1046307 0.997836 50.598127 0.9961   0.986458        17.173480       True
+         88.909006         1100000         1040741 0.992528 50.408559 0.9960   0.979255        17.491727      False
+         89.717269         1110000         1044099 0.995730 50.580480 0.9962   0.975911        17.365158       True
+         90.525533         1120000         1042609 0.994309 50.610645 0.9963   0.983647        17.073449      False
+         91.333797         1130000         1041987 0.993716 50.496374 0.9959   0.987869        16.775520      False
+         92.142060         1140000         1043491 0.995151 50.571956 0.9962   0.985005        16.936352       True
+         92.950324         1150000         1041659 0.993403 50.474813 0.9959   0.979362        17.077569      False
+         93.758588         1160000         1043771 0.995418 50.464494 0.9960   0.984759        17.024953      False
+         94.566851         1170000         1046701 0.998212 50.508523 0.9961   0.979978        17.677382       True
+         95.375115         1180000         1044524 0.996136 50.624310 0.9961   0.986251        17.214036      False
+         96.183379         1190000         1045153 0.996736 50.498303 0.9960   0.979361        17.481117      False
+         96.991643         1200000         1045062 0.996649 50.434099 0.9958   0.981718        17.367677      False
+         97.799906         1210000         1041045 0.992818 50.453740 0.9960   0.986028        17.965115      False
+         98.608170         1220000         1045485 0.997052 50.557390 0.9962   0.983216        17.462399       True
+         99.416434         1230000         1043217 0.994889 50.569987 0.9961   0.984587        18.139048      False
+        100.000000         1237220         1237220 1.179905 50.442885 0.9959   0.987767        23.972320        NaN
