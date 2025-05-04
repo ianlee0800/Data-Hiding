@@ -1,0 +1,121 @@
+Precise measurement run started at 2025-04-27 13:00:45
+Image: Male
+Method: rotation
+Prediction method: proposed
+Ratio of ones: 1
+Total embeddings: 1
+EL mode: 0
+Step size: 100000 bits
+Use different weights: False
+
+================================================================================
+
+Step 1: Finding maximum payload capacity
+Maximum payload: 892068 bits
+Max BPP: 0.850742
+Max PSNR: 48.30
+Max SSIM: 0.9930
+Max Hist Corr: 0.9394
+Time taken: 2.13 seconds
+
+Step 2: Calculating measurement points with 100000 bit steps
+Target payload points:
+  Point 1: 100000 bits (11.2% of max)
+  Point 2: 200000 bits (22.4% of max)
+  Point 3: 300000 bits (33.6% of max)
+  Point 4: 400000 bits (44.8% of max)
+  Point 5: 500000 bits (56.0% of max)
+  Point 6: 600000 bits (67.3% of max)
+  Point 7: 700000 bits (78.5% of max)
+  Point 8: 800000 bits (89.7% of max)
+  Point 9: 892068 bits (100.0% of max) [using initial measurement]
+
+Step 3: Running embedding algorithm for each target point
+11.2% target:
+  Target: 100000 bits
+  Actual: 100000 bits
+  BPP: 0.095367
+  PSNR: 55.84
+  SSIM: 0.9981
+  Hist_Corr: 0.9297
+  Time: 0.71 seconds
+
+22.4% target:
+  Target: 200000 bits
+  Actual: 200000 bits
+  BPP: 0.190735
+  PSNR: 55.84
+  SSIM: 0.9981
+  Hist_Corr: 0.9297
+  Time: 0.76 seconds
+
+33.6% target:
+  Target: 300000 bits
+  Actual: 300000 bits
+  BPP: 0.286102
+  PSNR: 55.84
+  SSIM: 0.9981
+  Hist_Corr: 0.9297
+  Time: 0.79 seconds
+
+44.8% target:
+  Target: 400000 bits
+  Actual: 399974 bits
+  BPP: 0.381445
+  PSNR: 55.22
+  SSIM: 0.9981
+  Hist_Corr: 0.9307
+  Time: 0.69 seconds
+
+56.0% target:
+  Target: 500000 bits
+  Actual: 499583 bits
+  BPP: 0.476439
+  PSNR: 54.08
+  SSIM: 0.9978
+  Hist_Corr: 0.9344
+  Time: 0.76 seconds
+
+67.3% target:
+  Target: 600000 bits
+  Actual: 599112 bits
+  BPP: 0.571358
+  PSNR: 51.45
+  SSIM: 0.9967
+  Hist_Corr: 0.9407
+  Time: 1.01 seconds
+
+78.5% target:
+  Target: 700000 bits
+  Actual: 693759 bits
+  BPP: 0.661620
+  PSNR: 50.34
+  SSIM: 0.9954
+  Hist_Corr: 0.9410
+  Time: 1.11 seconds
+
+89.7% target:
+  Target: 800000 bits
+  Actual: 775883 bits
+  BPP: 0.739940
+  PSNR: 49.49
+  SSIM: 0.9946
+  Hist_Corr: 0.9372
+  Time: 1.27 seconds
+
+Results summary:
+Total processing time: 10.57 seconds
+Average time per point: 1.17 seconds
+Results saved to ./Prediction_Error_Embedding/outcome/plots/Male/precise_proposed
+
+Data table:
+ Target_Percentage  Target_Payload  Actual_Payload      BPP      PSNR     SSIM  Hist_Corr  Processing_Time  Suspicious  PSNR_Original  SSIM_Original  Hist_Corr_Original
+         11.209908          100000          100000 0.095367 55.830575 0.998046   0.929779         0.708696       False      55.839782         0.9981            0.929704
+         22.419816          200000          200000 0.190735 55.718914 0.996050   0.929666         0.756844       False      55.839782         0.9981            0.929704
+         33.629723          300000          300000 0.286102 55.607476 0.994058   0.929467         0.794605       False      55.839782         0.9981            0.929704
+         44.839631          400000          399974 0.381445 55.160318 0.992070   0.927554         0.693529       False      55.217527         0.9981            0.930684
+         56.049539          500000          499583 0.476439 53.949276 0.990086   0.926309         0.755481       False      54.081004         0.9978            0.934413
+         67.259447          600000          599112 0.571358 51.712905 0.988106   0.925498         1.006256       False      51.453236         0.9967            0.940700
+         78.469354          700000          693759 0.661620 50.468657 0.986130   0.923445         1.108337       False      50.341729         0.9954            0.940995
+         89.679262          800000          775883 0.739940 49.335753 0.984157   0.922281         1.268229       False      49.488226         0.9946            0.937155
+        100.000000          892068          892068 0.850742 48.295572 0.993000   0.939364         2.130246       False      48.295572         0.9930            0.939364

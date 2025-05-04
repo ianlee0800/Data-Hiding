@@ -308,7 +308,7 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
         # 如果剩餘容量非常小
         if remaining_target[0] <= len(data) * 0.1 and remaining_target[0] > 0:
             precise_embedding = True
-            print(f"Using precise embedding for last {remaining_target[0]} bits")
+            # print(f"Using precise embedding for last {remaining_target[0]} bits")
     
     # 限制數據量 - 使用可變容器中的值
     current_target = None

@@ -76,7 +76,7 @@ def main():
     
     # 各預測器的ratio_of_ones設置
     predictor_ratios = {
-        "PROPOSED": 0.3,      # proposed預測器的ratio_of_ones
+        "PROPOSED": 1,      # proposed預測器的ratio_of_ones
         "MED": 1.0,           # MED預測器的ratio_of_ones
         "GAP": 0.7,           # GAP預測器的ratio_of_ones
         "RHOMBUS": 0.9        # RHOMBUS預測器的ratio_of_ones
@@ -86,27 +86,27 @@ def main():
     use_different_weights = False 
     
     # 測量方式
-    use_precise_measurement = False     # True: 使用精確測量模式, False: 使用近似模式
-    use_method_comparison = True       # True: 比較不同方法, False: 不比較
+    use_precise_measurement = True     # True: 使用精確測量模式, False: 使用近似模式
+    use_method_comparison = False     # True: 比較不同方法, False: 不比較
     
     # 精確測量參數
     # 以下兩個參數二選一，若都設置則優先使用step_size
     stats_segments = 20                 # 統計分段數量
-    step_size = 10000                   # 測量步長（位元），如不使用步長則設為None
+    step_size = 100000                   # 測量步長（位元），如不使用步長則設為None
     
     # 預測方法選擇
     # 可選：PROPOSED, MED, GAP, RHOMBUS, ALL (ALL表示運行所有方法並生成比較)
     prediction_method_str = "PROPOSED"
     
     # 方法選擇
-    method = "split"          # 可選："rotation", "split", "quadtree"
+    method = "quadtree"          # 可選："rotation", "split", "quadtree"
     
     # 方法比較參數（僅當use_method_comparison=True時有效）
     methods_to_compare = ["rotation", "quadtree"]  # 要比較的方法
     comparison_predictor = "proposed"                       # 比較使用的預測器
     
     # 各方法共用參數
-    split_size = 2            # 用於 rotation 和 split 方法
+    split_size = 64            # 用於 rotation 和 split 方法
     block_base = False        # 用於 split 方法
     
     # quad tree 特定參數

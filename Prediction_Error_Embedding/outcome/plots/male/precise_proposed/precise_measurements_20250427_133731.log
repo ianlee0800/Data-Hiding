@@ -1,0 +1,99 @@
+Precise measurement run started at 2025-04-27 13:37:31
+Image: Male
+Method: rotation
+Prediction method: proposed
+Ratio of ones: 1
+Total embeddings: 1
+EL mode: 0
+Step size: 100000 bits
+Use different weights: False
+
+================================================================================
+
+Step 1: Finding maximum payload capacity
+Maximum payload: 684471 bits
+Max BPP: 0.652762
+Max PSNR: 54.77
+Max SSIM: 0.9959
+Max Hist Corr: 0.9415
+Time taken: 2.82 seconds
+
+Step 2: Calculating measurement points with 100000 bit steps
+Target payload points:
+  Point 1: 100000 bits (14.6% of max)
+  Point 2: 200000 bits (29.2% of max)
+  Point 3: 300000 bits (43.8% of max)
+  Point 4: 400000 bits (58.4% of max)
+  Point 5: 500000 bits (73.0% of max)
+  Point 6: 600000 bits (87.7% of max)
+  Point 7: 684471 bits (100.0% of max) [using initial measurement]
+
+Step 3: Running embedding algorithm for each target point
+14.6% target:
+  Target: 100000 bits
+  Actual: 100000 bits
+  BPP: 0.095367
+  PSNR: 65.04
+  SSIM: 0.9997
+  Hist_Corr: 0.9976
+  Time: 1.93 seconds
+
+29.2% target:
+  Target: 200000 bits
+  Actual: 200000 bits
+  BPP: 0.190735
+  PSNR: 62.34
+  SSIM: 0.9996
+  Hist_Corr: 0.9946
+  Time: 2.03 seconds
+
+43.8% target:
+  Target: 300000 bits
+  Actual: 300000 bits
+  BPP: 0.286102
+  PSNR: 60.33
+  SSIM: 0.9990
+  Hist_Corr: 0.9646
+  Time: 2.00 seconds
+
+58.4% target:
+  Target: 400000 bits
+  Actual: 400000 bits
+  BPP: 0.381470
+  PSNR: 59.22
+  SSIM: 0.9988
+  Hist_Corr: 0.9470
+  Time: 2.07 seconds
+
+73.0% target:
+  Target: 500000 bits
+  Actual: 500000 bits
+  BPP: 0.476837
+  PSNR: 58.14
+  SSIM: 0.9985
+  Hist_Corr: 0.9209
+  Time: 2.12 seconds
+
+87.7% target:
+  Target: 600000 bits
+  Actual: 600000 bits
+  BPP: 0.572205
+  PSNR: 56.73
+  SSIM: 0.9974
+  Hist_Corr: 0.9392
+  Time: 2.09 seconds
+
+Results summary:
+Total processing time: 16.18 seconds
+Average time per point: 2.31 seconds
+Results saved to ./Prediction_Error_Embedding/outcome/plots/Male/precise_proposed
+
+Data table:
+ Target_Percentage  Target_Payload  Actual_Payload      BPP      PSNR     SSIM  Hist_Corr  Processing_Time  Suspicious  PSNR_Original  SSIM_Original  Hist_Corr_Original
+         14.609823          100000          100000 0.095367 65.024408 0.999718   0.998402         1.930291       False      65.039977         0.9997            0.997585
+         29.219646          200000          200000 0.190735 62.358743 0.999552   0.992477         2.030090       False      62.336881         0.9996            0.994630
+         43.829468          300000          300000 0.286102 60.357596 0.999036   0.966142         1.999062       False      60.329769         0.9990            0.964586
+         58.439291          400000          400000 0.381470 59.209165 0.998805   0.945912         2.068580       False      59.222936         0.9988            0.947005
+         73.049114          500000          500000 0.476837 58.074511 0.998425   0.921690         2.123004       False      58.138539         0.9985            0.920927
+         87.658937          600000          600000 0.572205 56.768588 0.997437   0.907688         2.094913       False      56.734279         0.9974            0.939216
+        100.000000          684471          684471 0.652762 54.769968 0.995900   0.941507         2.816212       False      54.769968         0.9959            0.941507

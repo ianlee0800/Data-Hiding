@@ -206,7 +206,7 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
         for i, sub_img in enumerate(sub_images):
             # 檢查是否已達到目標payload
             if remaining_target is not None and remaining_target <= 0:
-                print(f"Target reached. Copying remaining sub-images without embedding.")
+                # print(f"Target reached. Copying remaining sub-images without embedding.")
                 embedded_sub_images.append(cp.asarray(sub_img))
                 continue
             
@@ -217,7 +217,7 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
             # 計算當前子圖像的嵌入目標
             if remaining_target is not None:
                 current_target = min(len(sub_data), remaining_target)
-                print(f"Sub-image {i} target: {current_target} bits")
+                # print(f"Sub-image {i} target: {current_target} bits")
             else:
                 current_target = None
             
@@ -256,7 +256,7 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
             if remaining_target is not None:
                 payload = min(payload, current_target)
                 remaining_target -= payload
-                print(f"Sub-image {i} embedded {payload} bits, remaining: {remaining_target}")
+                # print(f"Sub-image {i} embedded {payload} bits, remaining: {remaining_target}")
             
             embedded_sub_images.append(embedded_sub)
             stage_payload += payload
@@ -610,7 +610,7 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
         for i, sub_img in enumerate(sub_images):
             # 檢查是否已達到目標payload
             if remaining_target is not None and remaining_target <= 0:
-                print(f"Target reached. Copying remaining sub-images without embedding.")
+                # print(f"Target reached. Copying remaining sub-images without embedding.")
                 embedded_sub_images.append(cp.asarray(sub_img))
                 continue
             
@@ -626,7 +626,7 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
             # 計算當前子圖像的嵌入目標
             if remaining_target is not None:
                 current_target = min(len(sub_data), remaining_target)
-                print(f"Sub-image {i} target: {current_target} bits")
+                # print(f"Sub-image {i} target: {current_target} bits")
             else:
                 current_target = None
             
@@ -671,7 +671,7 @@ def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_differ
             if remaining_target is not None:
                 payload = min(payload, current_target)
                 remaining_target -= payload
-                print(f"Sub-image {i} embedded {payload} bits, remaining: {remaining_target}")
+                # print(f"Sub-image {i} embedded {payload} bits, remaining: {remaining_target}")
             
             # 將嵌入後的圖像旋轉回原始方向
             rotated_back_sub = cp.rot90(embedded_sub, k=-rotation // 90)
