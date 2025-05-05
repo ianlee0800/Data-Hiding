@@ -714,19 +714,16 @@ def create_color_channel_comparison(original_img, embedded_img, save_path):
     
     return comparison
 
-# 在visualization.py中添加以下函數
-# 放在文件的最後，保持與現有函數的風格一致
-
-def visualize_specific_quadtree_blocks(block_info, img_shape, specific_size, save_path):
+def visualize_specific_quadtree_blocks(block_info, original_img, specific_size, save_path):
     """
-    創建僅顯示特定大小區塊的quadtree視覺化，其他大小區塊顯示為黑色
+    創建僅顯示特定大小區塊的quadtree視覺化，保留原圖中特定大小區塊的內容，其他區塊轉為黑色
     
     Parameters:
     -----------
     block_info : dict
         包含區塊資訊的字典，格式為 {'size': {'blocks': [{'position': (y, x), 'size': size}, ...]}}
-    img_shape : tuple
-        原圖尺寸 (height, width)
+    original_img : numpy.ndarray
+        原始圖像
     specific_size : int
         要特別顯示的區塊大小（例如 16, 32, 64, 128, 256, 512）
     save_path : str
@@ -737,52 +734,92 @@ def visualize_specific_quadtree_blocks(block_info, img_shape, specific_size, sav
     numpy.ndarray
         特定區塊大小視覺化圖像
     """
-    # 創建空白圖像 (黑色背景，便於突出目標區塊)
-    height, width = img_shape
-    visualization = np.zeros((height, width, 3), dtype=np.uint8)  # 黑色背景
+    # 創建空白圖像 (黑色背景)
+    height, width = original_img.shape[:2]
     
-    # 為特定大小的區塊定義顏色 - 使用鮮明的顏色以突出顯示
-    highlight_color = (0, 255, 255)  # 黃色
+    # 判斷是否為彩色圖像
+    is_color = len(original_img.shape) == 3
+    
+    # 創建適當的黑色背景圖像
+    if is_color:
+        visualization = np.zeros((height, width, 3), dtype=np.uint8)  # 黑色背景
+    else:
+        visualization = np.zeros((height, width), dtype=np.uint8)  # 黑色背景
     
     # 檢查是否有指定大小的區塊
     size_str = str(specific_size)
+    blocks_count = 0
+    
     if size_str in block_info:
         blocks = block_info[size_str]['blocks']
+        blocks_count = len(blocks)
         
-        # 繪製特定大小的區塊
+        # 繪製特定大小的區塊，保留原圖內容
         for block in blocks:
             y, x = block['position']
-            cv2.rectangle(visualization, (x, y), (x + specific_size, y + specific_size), 
-                         highlight_color, -1)  # 填充區塊
-            cv2.rectangle(visualization, (x, y), (x + specific_size, y + specific_size), 
-                         (255, 255, 255), 1)  # 白色邊框
+            
+            # 複製原圖這個區塊的內容
+            visualization[y:y+specific_size, x:x+specific_size] = original_img[y:y+specific_size, x:x+specific_size]
+            
+            # 添加邊框 (格線)
+            border_width = max(1, specific_size // 64)  # 根據區塊大小調整邊框寬度
+            
+            # 繪製邊框
+            if is_color:
+                # 彩色圖像
+                # 上邊框
+                visualization[y:y+border_width, x:x+specific_size] = [255, 255, 0]  # 黃色邊框
+                # 下邊框
+                visualization[y+specific_size-border_width:y+specific_size, x:x+specific_size] = [255, 255, 0]
+                # 左邊框
+                visualization[y:y+specific_size, x:x+border_width] = [255, 255, 0]
+                # 右邊框
+                visualization[y:y+specific_size, x+specific_size-border_width:x+specific_size] = [255, 255, 0]
+            else:
+                # 灰階圖像
+                # 上邊框
+                visualization[y:y+border_width, x:x+specific_size] = 255
+                # 下邊框
+                visualization[y+specific_size-border_width:y+specific_size, x:x+specific_size] = 255
+                # 左邊框
+                visualization[y:y+specific_size, x:x+border_width] = 255
+                # 右邊框
+                visualization[y:y+specific_size, x+specific_size-border_width:x+specific_size] = 255
+    
+    # 添加文字說明
+    if is_color:
+        # 彩色圖像需要轉換為可添加文字的格式
+        visualization_with_text = visualization.copy()
+    else:
+        # 灰階圖像轉換為彩色以便添加彩色文字
+        visualization_with_text = cv2.cvtColor(visualization, cv2.COLOR_GRAY2BGR)
     
     # 添加圖像標題和圖例
     title = f"Blocks of Size {specific_size}x{specific_size}"
-    cv2.putText(visualization, title, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
+    cv2.putText(visualization_with_text, title, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
                1, (255, 255, 255), 2)
     
     # 顯示區塊數量
-    blocks_count = len(block_info[size_str]['blocks']) if size_str in block_info else 0
     count_text = f"Count: {blocks_count}"
-    cv2.putText(visualization, count_text, (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 
+    cv2.putText(visualization_with_text, count_text, (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 
                0.8, (255, 255, 255), 2)
     
     # 儲存圖像
-    cv2.imwrite(save_path, visualization)
+    cv2.imwrite(save_path, visualization_with_text)
     
+    # 返回不帶文字的原始可視化（如果需要進一步處理）
     return visualization
 
-def create_all_quadtree_block_visualizations(block_info, img_shape, output_dir, stage_num):
+def create_all_quadtree_block_visualizations(block_info, original_img, output_dir, stage_num):
     """
-    為所有區塊大小創建單獨的視覺化圖像
+    為所有區塊大小創建單獨的視覺化圖像，保留原圖中特定大小區塊的內容
     
     Parameters:
     -----------
     block_info : dict
         包含區塊資訊的字典
-    img_shape : tuple
-        原圖尺寸 (height, width)
+    original_img : numpy.ndarray
+        原始圖像
     output_dir : str
         輸出目錄
     stage_num : int
@@ -807,12 +844,12 @@ def create_all_quadtree_block_visualizations(block_info, img_shape, output_dir, 
         size_str = str(size)
         if size_str in block_info and len(block_info[size_str]['blocks']) > 0:
             save_path = f"{output_dir}/stage_{stage_num}_blocks_{size}x{size}.png"
-            visualize_specific_quadtree_blocks(block_info, img_shape, size, save_path)
+            visualize_specific_quadtree_blocks(block_info, original_img, size, save_path)
             visualization_paths[size] = save_path
     
     # 額外創建一個所有區塊的合併視覺化
     combined_path = f"{output_dir}/stage_{stage_num}_all_blocks.png"
-    all_blocks_vis = visualize_quadtree(block_info, img_shape)
+    all_blocks_vis = visualize_quadtree(block_info, original_img.shape[:2])  # 只需要形狀
     cv2.imwrite(combined_path, all_blocks_vis)
     visualization_paths['all'] = combined_path
     

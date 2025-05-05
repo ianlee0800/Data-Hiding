@@ -35,7 +35,9 @@ from visualization import (
     create_metrics_comparison_chart, visualize_embedding_heatmap,
     create_payload_distribution_chart, create_el_distribution_chart,
     create_histogram_animation, visualize_color_histograms, create_color_heatmap,
-    visualize_color_metrics_comparison, create_color_channel_comparison
+    visualize_color_metrics_comparison, create_color_channel_comparison,
+    visualize_specific_quadtree_blocks, create_all_quadtree_block_visualizations,
+    create_difference_histograms
 )
 
 from common import calculate_psnr, calculate_ssim, histogram_correlation, cleanup_memory
@@ -66,6 +68,8 @@ def main():
     8. 新增彩色圖像處理支持，自動偵測圖像類型
     9. 新增精確測量的步長控制 (step_size)
     10. 新增比較不同方法的功能 (method_comparison)
+    11. 新增針對quadtree方法呈現各區塊大小的獨立可視化
+    12. 新增各方法的預測誤差直方圖(before embedding, shifted, after embedding)
     """
     # ==== 參數設置（直接在代碼中調整） ====
     
@@ -123,6 +127,9 @@ def main():
                     "variance_threshold": quad_tree_params['variance_threshold'], 
                     "use_different_weights": use_different_weights}
     }
+    
+    # 啟用詳細輸出
+    verbose = True
     
     # ==== 主程序開始 ====
     
@@ -226,14 +233,19 @@ def main():
     if method == "rotation":
         os.makedirs(f"{image_dir}/rotated", exist_ok=True)
         os.makedirs(f"{image_dir}/subimages", exist_ok=True)
+        os.makedirs(f"{histogram_dir}/difference_histograms", exist_ok=True)  # 新增差異直方圖目錄
     elif method == "split":
         os.makedirs(f"{image_dir}/split_visualization", exist_ok=True)
         os.makedirs(f"{image_dir}/subimages", exist_ok=True)
+        os.makedirs(f"{histogram_dir}/difference_histograms", exist_ok=True)  # 新增差異直方圖目錄
     elif method == "quadtree":
         os.makedirs(f"{image_dir}/quadtree_visualization", exist_ok=True)
         os.makedirs(f"{image_dir}/with_grid", exist_ok=True)
-        os.makedirs(f"{image_dir}/rotated_blocks", exist_ok=True)  # New directory for rotated block images
+        os.makedirs(f"{image_dir}/rotated_blocks", exist_ok=True)
+        os.makedirs(f"{image_dir}/block_size_visualizations", exist_ok=True)  # 新增區塊大小可視化目錄
         os.makedirs(f"{plots_dir}/block_distribution", exist_ok=True)
+        os.makedirs(f"{histogram_dir}/difference_histograms", exist_ok=True)  # 新增差異直方圖目錄
+        os.makedirs(f"{histogram_dir}/block_histograms", exist_ok=True)      # 新增區塊直方圖目錄
         # 彩色圖像特有目錄
         os.makedirs(f"{image_dir}/channels", exist_ok=True)
         os.makedirs(f"{histogram_dir}/channels", exist_ok=True)
@@ -470,6 +482,30 @@ def main():
                         channel_path = f"{image_dir}/stage_{i}_channel_comparison.png"
                         create_color_channel_comparison(origImg, stage_img, channel_path)
                     
+                    # 新增: 創建差異直方圖 (對所有方法適用)
+                    # 確保差異直方圖目錄存在
+                    diff_hist_dir = f"{histogram_dir}/difference_histograms"
+                    os.makedirs(diff_hist_dir, exist_ok=True)
+                    
+                    # 檢查是否有必要的圖像來生成差異直方圖
+                    if 'pred_img' in stage and 'stage_img' in stage:
+                        original_for_hist = cp.asnumpy(origImg) if isinstance(origImg, cp.ndarray) else origImg
+                        pred_for_hist = stage['pred_img'] if isinstance(stage['pred_img'], np.ndarray) else \
+                                      (cp.asnumpy(stage['pred_img']) if isinstance(stage['pred_img'], cp.ndarray) else stage['pred_img'])
+                        embedded_for_hist = cp.asnumpy(stage['stage_img']) if isinstance(stage['stage_img'], cp.ndarray) else stage['stage_img']
+                        
+                        # 創建差異直方圖
+                        diff_hist_paths = create_difference_histograms(
+                            original_for_hist,
+                            pred_for_hist,
+                            embedded_for_hist,
+                            diff_hist_dir,
+                            method,  # 方法名稱
+                            i        # 階段編號
+                        )
+                        if verbose:
+                            print(f"  Created difference histograms for stage {i}")
+                    
                     # 根據方法類型處理特定圖像儲存
                     if method == "rotation" and is_grayscale_img:
                         # Rotation 方法特有項目 (僅適用於灰階)
@@ -582,7 +618,75 @@ def main():
                                     )
                                 except Exception as e:
                                     print(f"Warning: Could not create rotation angles visualization: {e}")
-                                
+                                    
+                        # 新增: 創建各區塊大小獨立可視化
+                        if 'block_info' in stage:
+                            # 創建區塊大小可視化目錄
+                            blocks_viz_dir = f"{image_dir}/block_size_visualizations"
+                            os.makedirs(blocks_viz_dir, exist_ok=True)
+                            
+                            if is_grayscale_img:
+                                try:
+                                    block_viz_paths = create_all_quadtree_block_visualizations(
+                                        stage['block_info'],
+                                        origImg.shape,
+                                        blocks_viz_dir,
+                                        i  # 階段編號
+                                    )
+                                    if verbose:
+                                        print(f"  Created block size visualizations for stage {i}")
+                                except Exception as e:
+                                    print(f"Warning: Could not create block size visualizations: {e}")
+                            else:
+                                # 彩色圖像 - 為藍色通道創建區塊大小可視化
+                                if 'blue' in stage['block_info']:
+                                    try:
+                                        blue_blocks_dir = f"{blocks_viz_dir}/blue"
+                                        os.makedirs(blue_blocks_dir, exist_ok=True)
+                                        
+                                        b, g, r = cv2.split(origImg)
+                                        blue_viz_paths = create_all_quadtree_block_visualizations(
+                                            stage['block_info']['blue'],
+                                            b.shape,
+                                            blue_blocks_dir,
+                                            i  # 階段編號
+                                        )
+                                        if verbose:
+                                            print(f"  Created blue channel block size visualizations for stage {i}")
+                                    except Exception as e:
+                                        print(f"Warning: Could not create blue channel block visualizations: {e}")
+                        
+                        # 新增: 創建區塊級別差異直方圖 (quadtree專用)
+                        if is_grayscale_img and 'block_info' in stage:
+                            # 創建區塊直方圖目錄
+                            block_hist_dir = f"{histogram_dir}/block_histograms"
+                            os.makedirs(block_hist_dir, exist_ok=True)
+                            
+                            # 處理每種大小的第一個區塊作為樣本
+                            for size_str in stage['block_info']:
+                                blocks = stage['block_info'][size_str]['blocks']
+                                if blocks:
+                                    # 取第一個區塊作為樣本
+                                    sample_block = blocks[0]
+                                    if ('original_img' in sample_block and 
+                                        'pred_img' in sample_block and 
+                                        'embedded_img' in sample_block):
+                                        
+                                        # 創建此區塊的差異直方圖
+                                        try:
+                                            block_diff_hist_paths = create_difference_histograms(
+                                                sample_block['original_img'],
+                                                sample_block['pred_img'],
+                                                sample_block['embedded_img'],
+                                                block_hist_dir,
+                                                f"{method}_block{size_str}",  # 方法和區塊大小
+                                                i  # 階段編號
+                                            )
+                                            if verbose:
+                                                print(f"  Created difference histograms for stage {i}, block size {size_str}")
+                                        except Exception as e:
+                                            print(f"Warning: Could not create block difference histograms: {e}")
+                
                 # 打印階段統計資訊
                 print(f"\nStage {i} metrics:")
                 print(f"  Payload: {stage['payload']} bits")
@@ -599,26 +703,42 @@ def main():
                 
                 # Quadtree 方法特有的統計輸出
                 if method == "quadtree" and 'block_info' in stage:
+                    # Create directory for block size visualizations
+                    blocks_viz_dir = f"{image_dir}/block_size_visualizations"
+                    os.makedirs(blocks_viz_dir, exist_ok=True)
+                    
+                    # Generate block size visualizations
                     if is_grayscale_img:
-                        print(f"\nBlock statistics for Stage {i}:")
-                        for size in sorted([int(s) for s in stage['block_info'].keys()], reverse=True):
-                            block_count = len(stage['block_info'][str(size)]['blocks'])
-                            if block_count > 0:
-                                rotation = stage['block_rotations'][size] if 'block_rotations' in stage else 0
-                                print(f"  {size}x{size} blocks: {block_count}, Rotation: {rotation}°")
-                        print("")
+                        try:
+                            block_viz_paths = create_all_quadtree_block_visualizations(
+                                stage['block_info'], 
+                                origImg,  # Pass the original image instead of just its shape
+                                blocks_viz_dir, 
+                                i  # stage number
+                            )
+                            if verbose:
+                                print(f"  Created block size visualizations for stage {i}")
+                        except Exception as e:
+                            print(f"Warning: Could not create block size visualizations: {e}")
                     else:
-                        # 彩色圖像時的區塊統計
+                        # For color images, create visualizations for blue channel
                         if 'blue' in stage['block_info']:
                             try:
-                                print(f"\nBlue channel block statistics for Stage {i}:")
-                                for size in sorted([int(s) for s in stage['block_info']['blue'].keys()], reverse=True):
-                                    block_count = len(stage['block_info']['blue'][str(size)]['blocks'])
-                                    if block_count > 0:
-                                        print(f"  {size}x{size} blocks: {block_count}")
-                                print("")
-                            except:
-                                print("Warning: Cannot display blue channel block statistics.")
+                                # Split channels
+                                b, g, r = cv2.split(origImg)
+                                blue_blocks_dir = f"{blocks_viz_dir}/blue"
+                                os.makedirs(blue_blocks_dir, exist_ok=True)
+                                
+                                blue_viz_paths = create_all_quadtree_block_visualizations(
+                                    stage['block_info']['blue'], 
+                                    b,  # Pass the blue channel of the original image
+                                    blue_blocks_dir, 
+                                    i  # stage number
+                                )
+                                if verbose:
+                                    print(f"  Created blue channel block size visualizations for stage {i}")
+                            except Exception as e:
+                                print(f"Warning: Could not create blue channel block visualizations: {e}")
 
             # 儲存最終嵌入結果圖像
             final_img_path = f"{image_dir}/final_result.png"
@@ -662,6 +782,24 @@ def main():
                     
                     # 儲存最終通道對比
                     create_color_channel_comparison(origImg, final_pee_img, f"{image_dir}/final_channel_comparison.png")
+                
+                # 創建最終差異直方圖
+                if 'pred_img' in pee_stages[-1]:
+                    try:
+                        final_pred_img = pee_stages[-1]['pred_img']
+                        diff_hist_dir = f"{histogram_dir}/difference_histograms"
+                        create_difference_histograms(
+                            cp.asnumpy(origImg) if isinstance(origImg, cp.ndarray) else origImg,
+                            final_pred_img,
+                            final_pee_img,
+                            diff_hist_dir,
+                            method,  # 方法名稱
+                            "final"  # 使用 "final" 作為標識符
+                        )
+                        if verbose:
+                            print(f"  Created final difference histograms")
+                    except Exception as e:
+                        print(f"Warning: Could not create final difference histograms: {e}")
             
             # Quadtree 方法特有：儲存最終帶格線圖像
             if method == "quadtree" and 'block_info' in pee_stages[-1]:
