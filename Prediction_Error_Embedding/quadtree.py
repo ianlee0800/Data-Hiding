@@ -15,7 +15,8 @@ from common import *
 
 from image_processing import (
     PredictionMethod,
-    save_image
+    save_image,
+    predict_image_cuda
 )
 
 def cleanup_quadtree_resources():
@@ -177,16 +178,25 @@ def process_current_block(block, position, size, stage_info, embedding, ratio_of
         else:
             # MED 和 GAP 方法不需要權重
             weights = None
+        
+        # 計算預測圖像 (使用安全的類型檢查)
+        pred_image = predict_image_cuda(block, prediction_method, weights)
+        
+        # 安全地獲取 NumPy 格式的預測圖像
+        if hasattr(pred_image, 'copy_to_host'):
+            pred_image_np = pred_image.copy_to_host()
+        else:
+            pred_image_np = pred_image
             
         # 執行數據嵌入
-        embedded_block, payload = multi_pass_embedding(
+        embedded_block, payload, pred_block = multi_pass_embedding(
             block,
             data_to_embed,
             local_el,
             weights,
             embedding,
             prediction_method=prediction_method,
-            remaining_target=remaining_target  # 傳遞可變容器
+            remaining_target=remaining_target
         )
         
         # 確保結果是 CuPy 數組
@@ -201,6 +211,10 @@ def process_current_block(block, position, size, stage_info, embedding, ratio_of
             # 計算逆旋轉角度
             k = (-rotation // 90) % 4
             embedded_block = cp.rot90(embedded_block, k=k)
+            
+            # 將預測圖像也旋轉回來
+            pred_image_np = np.rot90(pred_image_np, k=k)
+            
             if verbose:
                 print(f"  Rotated embedded block back by {-rotation}° to original orientation")
         
@@ -220,7 +234,10 @@ def process_current_block(block, position, size, stage_info, embedding, ratio_of
             )),
             'EL': int(to_numpy(local_el).max()),
             'prediction_method': prediction_method.value,
-            'rotation': rotation
+            'rotation': rotation,
+            'original_img': cp.asnumpy(original_block),  # 新增
+            'pred_img': pred_image_np,  # 新增
+            'embedded_img': cp.asnumpy(embedded_block)  # 新增
         }
         
         # 更新階段資訊

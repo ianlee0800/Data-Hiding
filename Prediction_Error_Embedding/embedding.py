@@ -184,7 +184,8 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
             'ssim': 0,
             'hist_corr': 0,
             'bpp': 0,
-            'block_params': []
+            'block_params': [],
+            'original_img': cp.asnumpy(original_img)  # 新增：保存原始圖像
         }
         
         stage_payload = 0
@@ -199,8 +200,14 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
         else:
             rotated_img = current_img
         
+        # 保存旋轉後的圖像 (新增)
+        stage_info['rotated_img'] = rotated_img
+        
         # 分割圖像
         sub_images = split_image_flexible(rotated_img, split_size, block_base=True)
+        
+        # 保存累計的預測圖像
+        all_sub_preds = []
         
         # 處理每個子圖像
         for i, sub_img in enumerate(sub_images):
@@ -239,18 +246,28 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
                         sub_img, sub_data, local_el, target_bpp, target_psnr, embedding
                     )
             else:
+                # MED 和 GAP 方法不需要權重
                 weights = None
             
-            # 執行數據嵌入
-            embedded_sub, payload = multi_pass_embedding(
+            # 執行數據嵌入 - 注意返回值增加了預測圖像
+            embedded_sub, payload, pred_sub = multi_pass_embedding(
                 sub_img,
                 sub_data,
                 local_el,
                 weights,
                 embedding,
                 prediction_method=prediction_method,
-                remaining_target=current_target
+                remaining_target=remaining_target
             )
+            
+            # 保存預測圖像
+            all_sub_preds.append(pred_sub)
+            
+            # 如果是第一個子圖像，保存作為示例
+            if i == 0:
+                stage_info['sample_original_sub'] = cp.asnumpy(sub_img)
+                stage_info['sample_pred_sub'] = pred_sub
+                stage_info['sample_embedded_sub'] = cp.asnumpy(embedded_sub)
             
             # 更新剩餘目標量
             if remaining_target is not None:
@@ -282,7 +299,10 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
                 'ssim': float(sub_ssim),
                 'rotation': stage_rotation,
                 'hist_corr': float(sub_hist_corr),
-                'prediction_method': prediction_method.value
+                'prediction_method': prediction_method.value,
+                'original_img': sub_img_np,         # 新增
+                'pred_img': pred_sub,               # 新增
+                'embedded_img': embedded_sub_np     # 新增
             }
             stage_info['sub_images'].append(block_info)
             stage_info['block_params'].append(block_info)
@@ -290,9 +310,29 @@ def pee_process_with_rotation_cuda(img, total_embeddings, ratio_of_ones, use_dif
         # 合併處理後的子圖像
         stage_img = merge_image_flexible(embedded_sub_images, split_size, block_base=True)
         
+        # 嘗試合併預測圖像 (如果可能)
+        if all_sub_preds:
+            try:
+                pred_img_merged = merge_image_flexible([cp.asarray(p) for p in all_sub_preds], 
+                                                     split_size, block_base=True)
+                stage_info['pred_img'] = cp.asnumpy(pred_img_merged)
+            except Exception as e:
+                print(f"Warning: Could not merge prediction images: {e}")
+                # 如果不能合併，使用第一個子圖像的預測作為示例
+                if 'sample_pred_sub' in stage_info:
+                    stage_info['pred_img'] = stage_info['sample_pred_sub']
+        
         # 將圖像旋轉回原始方向
         if stage_rotation != 0:
             stage_img = cp.rot90(stage_img, k=-stage_rotation // 90)
+            # 如果有合併的預測圖像，也需要旋轉回來
+            if 'pred_img' in stage_info:
+                if isinstance(stage_info['pred_img'], cp.ndarray):
+                    stage_info['pred_img'] = cp.asnumpy(cp.rot90(cp.asarray(stage_info['pred_img']), 
+                                                              k=-stage_rotation // 90))
+                else:
+                    stage_info['pred_img'] = np.rot90(stage_info['pred_img'], 
+                                                     k=-stage_rotation // 90)
         
         stage_info['stage_img'] = stage_img
         

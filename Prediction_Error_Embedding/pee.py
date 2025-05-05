@@ -291,7 +291,7 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
     Returns:
     --------
     tuple
-        (embedded_img, payload)
+        (embedded_img, payload, pred_img)
     """
     # 數據類型轉換
     if isinstance(img, cp.ndarray):
@@ -308,7 +308,6 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
         # 如果剩餘容量非常小
         if remaining_target[0] <= len(data) * 0.1 and remaining_target[0] > 0:
             precise_embedding = True
-            # print(f"Using precise embedding for last {remaining_target[0]} bits")
     
     # 限制數據量 - 使用可變容器中的值
     current_target = None
@@ -316,8 +315,8 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
         # 檢查是否還有剩餘容量
         if remaining_target[0] <= 0:
             # 已達到目標，直接返回原圖並且payload為0
-            return img, 0
-        
+            return img, 0, img  # 注意：在這裡預測圖像就是原圖
+            
         # 根據精確模式的不同策略設置目標
         if precise_embedding:
             # 精確模式：嘗試嵌入恰好所需的位元
@@ -336,6 +335,14 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
     
     # 使用統一的預測函數接口
     pred_img = predict_image_cuda(d_img, prediction_method, weights)
+    
+    # 保存預測圖像的副本 (修復部分：檢查類型)
+    # 安全地處理不同類型的預測圖像
+    if hasattr(pred_img, 'copy_to_host'):
+        pred_img_copy = pred_img.copy_to_host()
+    else:
+        # 如果 pred_img 已經是 numpy 數組，直接使用它
+        pred_img_copy = pred_img
     
     height, width = d_img.shape
     threads_per_block = (16, 16)
@@ -385,7 +392,7 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
             remaining_target[0] -= actual_payload
             payload = actual_payload
             
-        return embedded, payload
+        return embedded, payload, pred_img_copy
     
     # 對於Stage 0，使用多次嵌入來增加容量
     if stage == 0:
@@ -446,6 +453,12 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
             
             # 更新預測圖像
             pred_img = predict_image_cuda(d_img, prediction_method, weights)
+            
+            # 更新預測圖像副本 (修復部分)
+            if hasattr(pred_img, 'copy_to_host'):
+                pred_img_copy = pred_img.copy_to_host()
+            else:
+                pred_img_copy = pred_img
         
         embedded = d_embedded.copy_to_host()
         payload = total_payload
@@ -493,7 +506,7 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
     if current_target is not None:
         payload = min(payload, current_target)
     
-    return embedded, payload
+    return embedded, payload, pred_img_copy
 
 @cuda.jit
 def rhombus_embedding_kernel(img, pred_img, data, embedded, payload, height, width, stage):

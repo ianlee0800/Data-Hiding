@@ -713,3 +713,225 @@ def create_color_channel_comparison(original_img, embedded_img, save_path):
     cv2.imwrite(save_path, comparison)
     
     return comparison
+
+# 在visualization.py中添加以下函數
+# 放在文件的最後，保持與現有函數的風格一致
+
+def visualize_specific_quadtree_blocks(block_info, img_shape, specific_size, save_path):
+    """
+    創建僅顯示特定大小區塊的quadtree視覺化，其他大小區塊顯示為黑色
+    
+    Parameters:
+    -----------
+    block_info : dict
+        包含區塊資訊的字典，格式為 {'size': {'blocks': [{'position': (y, x), 'size': size}, ...]}}
+    img_shape : tuple
+        原圖尺寸 (height, width)
+    specific_size : int
+        要特別顯示的區塊大小（例如 16, 32, 64, 128, 256, 512）
+    save_path : str
+        儲存路徑
+        
+    Returns:
+    --------
+    numpy.ndarray
+        特定區塊大小視覺化圖像
+    """
+    # 創建空白圖像 (黑色背景，便於突出目標區塊)
+    height, width = img_shape
+    visualization = np.zeros((height, width, 3), dtype=np.uint8)  # 黑色背景
+    
+    # 為特定大小的區塊定義顏色 - 使用鮮明的顏色以突出顯示
+    highlight_color = (0, 255, 255)  # 黃色
+    
+    # 檢查是否有指定大小的區塊
+    size_str = str(specific_size)
+    if size_str in block_info:
+        blocks = block_info[size_str]['blocks']
+        
+        # 繪製特定大小的區塊
+        for block in blocks:
+            y, x = block['position']
+            cv2.rectangle(visualization, (x, y), (x + specific_size, y + specific_size), 
+                         highlight_color, -1)  # 填充區塊
+            cv2.rectangle(visualization, (x, y), (x + specific_size, y + specific_size), 
+                         (255, 255, 255), 1)  # 白色邊框
+    
+    # 添加圖像標題和圖例
+    title = f"Blocks of Size {specific_size}x{specific_size}"
+    cv2.putText(visualization, title, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
+               1, (255, 255, 255), 2)
+    
+    # 顯示區塊數量
+    blocks_count = len(block_info[size_str]['blocks']) if size_str in block_info else 0
+    count_text = f"Count: {blocks_count}"
+    cv2.putText(visualization, count_text, (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 
+               0.8, (255, 255, 255), 2)
+    
+    # 儲存圖像
+    cv2.imwrite(save_path, visualization)
+    
+    return visualization
+
+def create_all_quadtree_block_visualizations(block_info, img_shape, output_dir, stage_num):
+    """
+    為所有區塊大小創建單獨的視覺化圖像
+    
+    Parameters:
+    -----------
+    block_info : dict
+        包含區塊資訊的字典
+    img_shape : tuple
+        原圖尺寸 (height, width)
+    output_dir : str
+        輸出目錄
+    stage_num : int
+        階段編號
+    
+    Returns:
+    --------
+    dict
+        各區塊大小圖像的路徑字典
+    """
+    # 確保輸出目錄存在
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # 標準區塊大小列表
+    block_sizes = [16, 32, 64, 128, 256, 512, 1024]
+    
+    # 儲存各圖像路徑
+    visualization_paths = {}
+    
+    # 為每個出現的區塊大小創建視覺化
+    for size in block_sizes:
+        size_str = str(size)
+        if size_str in block_info and len(block_info[size_str]['blocks']) > 0:
+            save_path = f"{output_dir}/stage_{stage_num}_blocks_{size}x{size}.png"
+            visualize_specific_quadtree_blocks(block_info, img_shape, size, save_path)
+            visualization_paths[size] = save_path
+    
+    # 額外創建一個所有區塊的合併視覺化
+    combined_path = f"{output_dir}/stage_{stage_num}_all_blocks.png"
+    all_blocks_vis = visualize_quadtree(block_info, img_shape)
+    cv2.imwrite(combined_path, all_blocks_vis)
+    visualization_paths['all'] = combined_path
+    
+    return visualization_paths
+
+def create_difference_histograms(original_img, pred_img, embedded_img, save_dir, method_name, stage_num):
+    """
+    創建三種差異直方圖視覺化：
+    1. 嵌入前的預測誤差直方圖
+    2. 移位後的預測誤差直方圖 (模擬直方圖移位過程)
+    3. 嵌入後的預測誤差直方圖
+    
+    Parameters:
+    -----------
+    original_img : numpy.ndarray
+        原始圖像
+    pred_img : numpy.ndarray
+        預測圖像
+    embedded_img : numpy.ndarray
+        嵌入後的圖像
+    save_dir : str
+        儲存目錄
+    method_name : str
+        使用的方法名稱 (rotation, split, quadtree)
+    stage_num : int
+        階段編號
+        
+    Returns:
+    --------
+    tuple
+        (before_path, shifted_path, after_path, comparison_path) 四個直方圖圖像的路徑
+    """
+    # 確保輸入是 numpy 數組
+    if not isinstance(original_img, np.ndarray):
+        original_img = np.array(original_img)
+    if not isinstance(pred_img, np.ndarray):
+        pred_img = np.array(pred_img)
+    if not isinstance(embedded_img, np.ndarray):
+        embedded_img = np.array(embedded_img)
+    
+    # 確保輸出目錄存在
+    hist_dir = os.path.join(save_dir, "difference_histograms")
+    os.makedirs(hist_dir, exist_ok=True)
+    
+    # 計算預測誤差 (before embedding)
+    pred_error = original_img.astype(np.int16) - pred_img.astype(np.int16)
+    
+    # 計算嵌入後的誤差 (after embedding)
+    embedded_error = embedded_img.astype(np.int16) - pred_img.astype(np.int16)
+    
+    # 模擬直方圖移位過程 (histogram shifting simulation)
+    # 我們假設所有正值誤差向右移動1個單位，負值不變 (簡化模型)
+    shifted_error = pred_error.copy()
+    shifted_error[pred_error > 0] += 1
+    
+    # 設定直方圖範圍，以確保三個直方圖使用相同的x軸
+    error_min = min(pred_error.min(), shifted_error.min(), embedded_error.min())
+    error_max = max(pred_error.max(), shifted_error.max(), embedded_error.max())
+    
+    # 為了更好的視覺效果，將範圍限制在合理區間內
+    hist_range = (max(-50, error_min), min(50, error_max))
+    bins = hist_range[1] - hist_range[0] + 1
+    
+    # 創建 "Before Embedding" 直方圖
+    plt.figure(figsize=(10, 6))
+    plt.hist(pred_error.flatten(), bins=bins, range=hist_range, 
+             alpha=0.7, color='blue', density=True)
+    plt.axvline(x=0, color='red', linestyle='--', alpha=0.7)
+    plt.title(f"Prediction Error Histogram Before Embedding\nMethod: {method_name.capitalize()}, Stage: {stage_num}")
+    plt.xlabel("Prediction Error Value")
+    plt.ylabel("Normalized Frequency")
+    plt.grid(True, linestyle='--', alpha=0.5)
+    before_path = os.path.join(hist_dir, f"{method_name}_stage{stage_num}_error_before.png")
+    plt.savefig(before_path)
+    plt.close()
+    
+    # 創建 "Shifted" 直方圖
+    plt.figure(figsize=(10, 6))
+    plt.hist(shifted_error.flatten(), bins=bins, range=hist_range, 
+             alpha=0.7, color='green', density=True)
+    plt.axvline(x=0, color='red', linestyle='--', alpha=0.7)
+    plt.title(f"Prediction Error Histogram After Shifting\nMethod: {method_name.capitalize()}, Stage: {stage_num}")
+    plt.xlabel("Prediction Error Value")
+    plt.ylabel("Normalized Frequency")
+    plt.grid(True, linestyle='--', alpha=0.5)
+    shifted_path = os.path.join(hist_dir, f"{method_name}_stage{stage_num}_error_shifted.png")
+    plt.savefig(shifted_path)
+    plt.close()
+    
+    # 創建 "After Embedding" 直方圖
+    plt.figure(figsize=(10, 6))
+    plt.hist(embedded_error.flatten(), bins=bins, range=hist_range, 
+             alpha=0.7, color='purple', density=True)
+    plt.axvline(x=0, color='red', linestyle='--', alpha=0.7)
+    plt.title(f"Prediction Error Histogram After Embedding\nMethod: {method_name.capitalize()}, Stage: {stage_num}")
+    plt.xlabel("Prediction Error Value")
+    plt.ylabel("Normalized Frequency")
+    plt.grid(True, linestyle='--', alpha=0.5)
+    after_path = os.path.join(hist_dir, f"{method_name}_stage{stage_num}_error_after.png")
+    plt.savefig(after_path)
+    plt.close()
+    
+    # 創建三個直方圖的對比圖
+    plt.figure(figsize=(15, 8))
+    plt.hist(pred_error.flatten(), bins=bins, range=hist_range, 
+             alpha=0.5, color='blue', density=True, label="Before Embedding")
+    plt.hist(shifted_error.flatten(), bins=bins, range=hist_range, 
+             alpha=0.5, color='green', density=True, label="After Shifting")
+    plt.hist(embedded_error.flatten(), bins=bins, range=hist_range, 
+             alpha=0.5, color='purple', density=True, label="After Embedding")
+    plt.axvline(x=0, color='red', linestyle='--', alpha=0.7)
+    plt.title(f"Prediction Error Histogram Comparison\nMethod: {method_name.capitalize()}, Stage: {stage_num}")
+    plt.xlabel("Prediction Error Value")
+    plt.ylabel("Normalized Frequency")
+    plt.grid(True, linestyle='--', alpha=0.5)
+    plt.legend()
+    comparison_path = os.path.join(hist_dir, f"{method_name}_stage{stage_num}_error_comparison.png")
+    plt.savefig(comparison_path)
+    plt.close()
+    
+    # 返回四個圖像的路徑，方便後續使用
+    return before_path, shifted_path, after_path, comparison_path

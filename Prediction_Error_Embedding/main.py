@@ -72,11 +72,11 @@ def main():
     # 基本參數設置
     imgName = "Male"           # 圖像名稱
     filetype = "tiff"         # 圖像檔案類型
-    total_embeddings = 1      # 總嵌入次數
+    total_embeddings = 5      # 總嵌入次數
     
     # 各預測器的ratio_of_ones設置
     predictor_ratios = {
-        "PROPOSED": 1,      # proposed預測器的ratio_of_ones
+        "PROPOSED": 0.5,      # proposed預測器的ratio_of_ones
         "MED": 1.0,           # MED預測器的ratio_of_ones
         "GAP": 0.7,           # GAP預測器的ratio_of_ones
         "RHOMBUS": 0.9        # RHOMBUS預測器的ratio_of_ones
@@ -86,7 +86,7 @@ def main():
     use_different_weights = False 
     
     # 測量方式
-    use_precise_measurement = True     # True: 使用精確測量模式, False: 使用近似模式
+    use_precise_measurement = False     # True: 使用精確測量模式, False: 使用近似模式
     use_method_comparison = False     # True: 比較不同方法, False: 不比較
     
     # 精確測量參數
