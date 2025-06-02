@@ -103,14 +103,14 @@ def main():
     prediction_method_str = "PROPOSED"
     
     # 方法選擇
-    method = "quadtree"          # 可選："rotation", "split", "quadtree"
+    method = "rotation"          # 可選："rotation", "split", "quadtree"
     
     # 方法比較參數（僅當use_method_comparison=True時有效）
     methods_to_compare = ["rotation", "quadtree"]  # 要比較的方法
     comparison_predictor = "proposed"                       # 比較使用的預測器
     
     # 各方法共用參數
-    split_size = 64            # 用於 rotation 和 split 方法
+    split_size = 2            # 用於 rotation 和 split 方法
     block_base = False        # 用於 split 方法
     
     # quad tree 特定參數
@@ -494,17 +494,26 @@ def main():
                                       (cp.asnumpy(stage['pred_img']) if isinstance(stage['pred_img'], cp.ndarray) else stage['pred_img'])
                         embedded_for_hist = cp.asnumpy(stage['stage_img']) if isinstance(stage['stage_img'], cp.ndarray) else stage['stage_img']
                         
-                        # 創建差異直方圖
+                        # 獲取平均EL值（如果可用）
+                        avg_el = None
+                        if 'block_params' in stage and len(stage['block_params']) > 0:
+                            # 從block_params收集EL值
+                            el_values = [block.get('EL', 5) for block in stage['block_params'] if 'EL' in block]
+                            if el_values:
+                                avg_el = int(sum(el_values) / len(el_values))
+                        
+                        # 創建差異直方圖，傳遞EL值
                         diff_hist_paths = create_difference_histograms(
                             original_for_hist,
                             pred_for_hist,
                             embedded_for_hist,
                             diff_hist_dir,
                             method,  # 方法名稱
-                            i        # 階段編號
+                            i,       # 階段編號
+                            local_el=avg_el  # 傳遞平均EL值
                         )
                         if verbose:
-                            print(f"  Created difference histograms for stage {i}")
+                            print(f"  Created difference histograms for stage {i}, using EL={avg_el}")
                     
                     # 根據方法類型處理特定圖像儲存
                     if method == "rotation" and is_grayscale_img:
@@ -672,6 +681,9 @@ def main():
                                         'pred_img' in sample_block and 
                                         'embedded_img' in sample_block):
                                         
+                                        # 獲取此區塊的EL值
+                                        block_el = sample_block.get('EL', 5)
+                                        
                                         # 創建此區塊的差異直方圖
                                         try:
                                             block_diff_hist_paths = create_difference_histograms(
@@ -680,10 +692,11 @@ def main():
                                                 sample_block['embedded_img'],
                                                 block_hist_dir,
                                                 f"{method}_block{size_str}",  # 方法和區塊大小
-                                                i  # 階段編號
+                                                i,  # 階段編號
+                                                local_el=block_el  # 使用區塊實際EL值
                                             )
                                             if verbose:
-                                                print(f"  Created difference histograms for stage {i}, block size {size_str}")
+                                                print(f"  Created difference histograms for stage {i}, block size {size_str}, using EL={block_el}")
                                         except Exception as e:
                                             print(f"Warning: Could not create block difference histograms: {e}")
                 
@@ -788,16 +801,26 @@ def main():
                     try:
                         final_pred_img = pee_stages[-1]['pred_img']
                         diff_hist_dir = f"{histogram_dir}/difference_histograms"
+                        
+                        # 獲取最終階段的平均EL值（如果可用）
+                        final_avg_el = None
+                        if 'block_params' in pee_stages[-1] and len(pee_stages[-1]['block_params']) > 0:
+                            # 從block_params收集EL值
+                            final_el_values = [block.get('EL', 5) for block in pee_stages[-1]['block_params'] if 'EL' in block]
+                            if final_el_values:
+                                final_avg_el = int(sum(final_el_values) / len(final_el_values))
+                        
                         create_difference_histograms(
                             cp.asnumpy(origImg) if isinstance(origImg, cp.ndarray) else origImg,
                             final_pred_img,
                             final_pee_img,
                             diff_hist_dir,
                             method,  # 方法名稱
-                            "final"  # 使用 "final" 作為標識符
+                            "final",  # 使用 "final" 作為標識符
+                            local_el=final_avg_el  # 傳遞平均EL值
                         )
                         if verbose:
-                            print(f"  Created final difference histograms")
+                            print(f"  Created final difference histograms using EL={final_avg_el}")
                     except Exception as e:
                         print(f"Warning: Could not create final difference histograms: {e}")
             

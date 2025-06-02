@@ -786,28 +786,10 @@ def visualize_specific_quadtree_blocks(block_info, original_img, specific_size, 
                 # 右邊框
                 visualization[y:y+specific_size, x+specific_size-border_width:x+specific_size] = 255
     
-    # 添加文字說明
-    if is_color:
-        # 彩色圖像需要轉換為可添加文字的格式
-        visualization_with_text = visualization.copy()
-    else:
-        # 灰階圖像轉換為彩色以便添加彩色文字
-        visualization_with_text = cv2.cvtColor(visualization, cv2.COLOR_GRAY2BGR)
+    # Directly save the visualization without adding text
+    cv2.imwrite(save_path, visualization)
     
-    # 添加圖像標題和圖例
-    title = f"Blocks of Size {specific_size}x{specific_size}"
-    cv2.putText(visualization_with_text, title, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 
-               1, (255, 255, 255), 2)
-    
-    # 顯示區塊數量
-    count_text = f"Count: {blocks_count}"
-    cv2.putText(visualization_with_text, count_text, (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 
-               0.8, (255, 255, 255), 2)
-    
-    # 儲存圖像
-    cv2.imwrite(save_path, visualization_with_text)
-    
-    # 返回不帶文字的原始可視化（如果需要進一步處理）
+    # Return the visualization
     return visualization
 
 def create_all_quadtree_block_visualizations(block_info, original_img, output_dir, stage_num):
@@ -855,7 +837,7 @@ def create_all_quadtree_block_visualizations(block_info, original_img, output_di
     
     return visualization_paths
 
-def create_difference_histograms(original_img, pred_img, embedded_img, save_dir, method_name, stage_num):
+def create_difference_histograms(original_img, pred_img, embedded_img, save_dir, method_name, stage_num, local_el=None):
     """
     創建三種差異直方圖視覺化：
     1. 嵌入前的預測誤差直方圖
@@ -874,8 +856,10 @@ def create_difference_histograms(original_img, pred_img, embedded_img, save_dir,
         儲存目錄
     method_name : str
         使用的方法名稱 (rotation, split, quadtree)
-    stage_num : int
+    stage_num : int or str
         階段編號
+    local_el : int or numpy.ndarray, optional
+        EL值 (用於直方圖移位模擬)，可以是單一值或像素位置的EL陣列
         
     Returns:
     --------
@@ -900,10 +884,36 @@ def create_difference_histograms(original_img, pred_img, embedded_img, save_dir,
     # 計算嵌入後的誤差 (after embedding)
     embedded_error = embedded_img.astype(np.int16) - pred_img.astype(np.int16)
     
-    # 模擬直方圖移位過程 (histogram shifting simulation)
-    # 我們假設所有正值誤差向右移動1個單位，負值不變 (簡化模型)
+    # 改進的直方圖移位模擬 - 根據實際EL值
     shifted_error = pred_error.copy()
-    shifted_error[pred_error > 0] += 1
+    
+    # 決定使用的最大EL值
+    if local_el is None:
+        # 如果沒有提供EL值，使用預設值5
+        max_el = 5
+    elif isinstance(local_el, np.ndarray):
+        # 如果是陣列，使用平均值
+        max_el = int(np.mean(local_el))
+    else:
+        # 使用提供的單一值
+        max_el = int(local_el)
+    
+    # 記錄使用的EL值（用於標題）
+    el_text = f"EL={max_el}"
+    
+    # 執行更精確的直方圖移位模擬
+    # 正值誤差部分: 根據EL範圍移位
+    for i in range(max_el):
+        # 將差值為i的像素向右移動至i+1
+        shifted_error[pred_error == i] = i + 1
+    
+    # 負值誤差部分: 類似處理，但可選
+    # 注意：根據實際算法，是否移動負值誤差要看具體實現
+    # 這裡提供一個選項，預設不移動
+    shift_negative = False
+    if shift_negative:
+        for i in range(1, max_el+1):
+            shifted_error[pred_error == -i] = -(i + 1)
     
     # 設定直方圖範圍，以確保三個直方圖使用相同的x軸
     error_min = min(pred_error.min(), shifted_error.min(), embedded_error.min())
@@ -931,7 +941,7 @@ def create_difference_histograms(original_img, pred_img, embedded_img, save_dir,
     plt.hist(shifted_error.flatten(), bins=bins, range=hist_range, 
              alpha=0.7, color='green', density=True)
     plt.axvline(x=0, color='red', linestyle='--', alpha=0.7)
-    plt.title(f"Prediction Error Histogram After Shifting\nMethod: {method_name.capitalize()}, Stage: {stage_num}")
+    plt.title(f"Prediction Error Histogram After Shifting\nMethod: {method_name.capitalize()}, Stage: {stage_num}, {el_text}")
     plt.xlabel("Prediction Error Value")
     plt.ylabel("Normalized Frequency")
     plt.grid(True, linestyle='--', alpha=0.5)
@@ -961,7 +971,7 @@ def create_difference_histograms(original_img, pred_img, embedded_img, save_dir,
     plt.hist(embedded_error.flatten(), bins=bins, range=hist_range, 
              alpha=0.5, color='purple', density=True, label="After Embedding")
     plt.axvline(x=0, color='red', linestyle='--', alpha=0.7)
-    plt.title(f"Prediction Error Histogram Comparison\nMethod: {method_name.capitalize()}, Stage: {stage_num}")
+    plt.title(f"Prediction Error Histogram Comparison\nMethod: {method_name.capitalize()}, Stage: {stage_num}, {el_text}")
     plt.xlabel("Prediction Error Value")
     plt.ylabel("Normalized Frequency")
     plt.grid(True, linestyle='--', alpha=0.5)
