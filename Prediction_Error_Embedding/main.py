@@ -53,6 +53,7 @@ def ensure_dir(file_path):
     if not os.path.exists(directory):
         os.makedirs(directory)
 
+
 def main():
     """
     主函數，負責整個數據隱藏過程的控制和執行
@@ -70,11 +71,14 @@ def main():
     10. 新增比較不同方法的功能 (method_comparison)
     11. 新增針對quadtree方法呈現各區塊大小的獨立可視化
     12. 新增各方法的預測誤差直方圖(before embedding, shifted, after embedding)
+    13. 完整的彩色圖像rotation方法支援和視覺化
+    14. 💡 新增Split方法旋轉效果完整可視化
     """
+    
     # ==== 參數設置（直接在代碼中調整） ====
     
     # 基本參數設置
-    imgName = "Male"           # 圖像名稱
+    imgName = "F16"           # 圖像名稱
     filetype = "tiff"         # 圖像檔案類型
     total_embeddings = 5      # 總嵌入次數
     
@@ -103,7 +107,7 @@ def main():
     prediction_method_str = "PROPOSED"
     
     # 方法選擇
-    method = "rotation"          # 可選："rotation", "split", "quadtree"
+    method = "split"          # 可選："rotation", "split", "quadtree"
     
     # 方法比較參數（僅當use_method_comparison=True時有效）
     methods_to_compare = ["rotation", "quadtree"]  # 要比較的方法
@@ -236,7 +240,6 @@ def main():
         os.makedirs(f"{histogram_dir}/difference_histograms", exist_ok=True)  # 新增差異直方圖目錄
     elif method == "split":
         os.makedirs(f"{image_dir}/split_visualization", exist_ok=True)
-        os.makedirs(f"{image_dir}/subimages", exist_ok=True)
         os.makedirs(f"{histogram_dir}/difference_histograms", exist_ok=True)  # 新增差異直方圖目錄
     elif method == "quadtree":
         os.makedirs(f"{image_dir}/quadtree_visualization", exist_ok=True)
@@ -363,6 +366,41 @@ def main():
                     output_dir="./Prediction_Error_Embedding/outcome"  # Pass the output directory
                 )
 
+            # 如果是rotation方法且是proposed預測器，生成論文圖像
+            if method == "rotation" and is_proposed:
+                print("Generating rotation method thesis figures...")
+                try:
+                    if is_grayscale_img:
+                        # 灰階圖像
+                        from visualization import create_rotation_method_flowchart, create_rotation_prediction_error_analysis
+                        
+                        flowchart_path = create_rotation_method_flowchart(
+                            origImg, imgName, method, prediction_method.value, base_dir
+                        )
+                        print(f"Rotation flowchart saved: {flowchart_path}")
+                        
+                        error_analysis_path = create_rotation_prediction_error_analysis(
+                            origImg, imgName, method, prediction_method.value, base_dir
+                        )
+                        print(f"Prediction error analysis saved: {error_analysis_path}")
+                        
+                    else:
+                        # 彩色圖像
+                        from visualization import create_rotation_method_flowchart_color, create_rotation_prediction_error_analysis_color
+                        
+                        flowchart_path = create_rotation_method_flowchart_color(
+                            origImg, imgName, method, prediction_method.value, base_dir
+                        )
+                        print(f"Color rotation flowchart saved: {flowchart_path}")
+                        
+                        error_analysis_path = create_rotation_prediction_error_analysis_color(
+                            origImg, imgName, method, prediction_method.value, base_dir
+                        )
+                        print(f"Color prediction error analysis saved: {error_analysis_path}")
+                    
+                except Exception as e:
+                    print(f"Warning: Could not generate rotation method figures: {e}")
+
             # 建立並列印 PEE 資訊表格
             total_pixels = origImg.size
             pee_table = create_pee_info_table(pee_stages, use_different_weights, total_pixels, 
@@ -422,6 +460,41 @@ def main():
                         pee_stages, f"{plots_dir}/channel_metrics_comparison.png",
                         f"Channel Metrics Comparison for {imgName}"
                     )
+                
+                # 為彩色圖像創建額外的視覺化內容
+                if not is_grayscale_img:
+                    # 為每個階段創建彩色視覺化
+                    for i, stage in enumerate(pee_stages):
+                        if 'stage_img' in stage:
+                            stage_img = stage['stage_img']
+                            
+                            # 創建彩色熱圖
+                            heatmap_path = f"{image_dir}/stage_{i}_color_heatmap.png"
+                            create_color_heatmap(origImg, stage_img, heatmap_path)
+                            
+                            # 創建通道對比圖
+                            channel_path = f"{image_dir}/stage_{i}_channel_comparison.png"
+                            create_color_channel_comparison(origImg, stage_img, channel_path)
+                            
+                            if verbose:
+                                print(f"  Created color visualizations for stage {i}")
+                    
+                    # 創建最終彩色視覺化
+                    final_heatmap_path = f"{image_dir}/final_color_heatmap.png"
+                    create_color_heatmap(origImg, final_pee_img, final_heatmap_path)
+                    
+                    final_channel_path = f"{image_dir}/final_channel_comparison.png"
+                    create_color_channel_comparison(origImg, final_pee_img, final_channel_path)
+                    
+                    # 創建彩色直方圖
+                    for i, stage in enumerate(pee_stages):
+                        if 'stage_img' in stage:
+                            stage_img = stage['stage_img']
+                            visualize_color_histograms(
+                                stage_img, 
+                                f"{histogram_dir}/stage_{i}_color_histogram.png",
+                                f"Color Histogram after PEE Stage {i}"
+                            )
                 
                 if is_grayscale_img:
                     # 創建直方圖動畫 (僅適用於灰階圖像)
@@ -752,6 +825,186 @@ def main():
                                     print(f"  Created blue channel block size visualizations for stage {i}")
                             except Exception as e:
                                 print(f"Warning: Could not create blue channel block visualizations: {e}")
+
+            # 💡 新增：Split方法的旋轉效果視覺化
+            if method == "split" and is_proposed:
+                print("Generating Split method rotation effect visualizations...")
+                
+                try:
+                    # 導入可視化函數
+                    from visualization import (
+                        save_split_rotation_effects,
+                        create_split_rotation_effect_grayscale, 
+                        create_split_rotation_effect_color,
+                        create_split_comparison_simple
+                    )
+                    
+                    # 生成所有階段的旋轉效果視覺化
+                    print("  Creating comprehensive rotation effects visualization...")
+                    save_split_rotation_effects(
+                        pee_stages=pee_stages,
+                        method=method,
+                        imgName=imgName,
+                        output_dir=base_dir,
+                        is_color_image=not is_grayscale_img
+                    )
+                    
+                    # 為特定階段生成詳細的比較圖
+                    if len(pee_stages) > 0:
+                        print("  Creating detailed rotation effect visualizations...")
+                        
+                        # 為第一階段生成詳細視覺化
+                        first_stage = pee_stages[0]
+                        
+                        if is_grayscale_img and 'rotated_sub_images' in first_stage:
+                            print("    Processing grayscale rotation effects...")
+                            effect_path = f"{image_dir}/split_first_stage_rotation_effect.png"
+                            
+                            # 創建兩種類型的圖像：合成圖像和拼貼圖像
+                            merged_img, tiled_img = create_split_rotation_effect_grayscale(
+                                sub_images=first_stage['rotated_sub_images'],
+                                rotations=first_stage['rotations'], 
+                                split_size=first_stage['split_size'],
+                                block_base=first_stage['block_base'],
+                                save_path=effect_path,
+                                stage_num=0
+                            )
+                            
+                            # 創建簡潔比較圖
+                            split_type = 'block' if first_stage['block_base'] else 'quarter'
+                            comparison_path = f"{image_dir}/split_first_stage_comparison_{split_type}.png"
+                            create_split_comparison_simple(
+                                original_img=cp.asnumpy(origImg) if isinstance(origImg, cp.ndarray) else origImg,
+                                merged_img=merged_img,
+                                tiled_img=tiled_img,
+                                save_path=comparison_path,
+                                split_type=split_type
+                            )
+                            
+                            print(f"    Saved grayscale rotation effects with {split_type}-based split")
+                            print(f"    Comparison image saved: {comparison_path}")
+                        
+                        elif not is_grayscale_img and 'channel_rotated_sub_images' in first_stage:
+                            print("    Processing color rotation effects...")
+                            effect_dir = f"{image_dir}/split_first_stage_color_effects"
+                            os.makedirs(effect_dir, exist_ok=True)
+                            
+                            # 創建彩色圖像的兩種類型效果
+                            created_results = create_split_rotation_effect_color(
+                                channel_sub_images=first_stage['channel_rotated_sub_images'],
+                                rotations=first_stage['rotations'],
+                                split_size=first_stage['split_size'], 
+                                block_base=first_stage['block_base'],
+                                save_dir=effect_dir,
+                                stage_num=0
+                            )
+                            
+                            split_type = 'block' if first_stage['block_base'] else 'quarter'
+                            print(f"    Created color rotation effects with {split_type}-based split")
+                            print(f"    Generated {len(created_results)} result images")
+                        
+                        # 如果有多個階段，也為最後一個階段生成視覺化
+                        if len(pee_stages) > 1:
+                            print("  Creating final stage rotation effect visualizations...")
+                            final_stage = pee_stages[-1]
+                            final_stage_num = len(pee_stages) - 1
+                            
+                            if is_grayscale_img and 'rotated_sub_images' in final_stage:
+                                final_effect_path = f"{image_dir}/split_final_stage_rotation_effect.png"
+                                final_merged_img, final_tiled_img = create_split_rotation_effect_grayscale(
+                                    sub_images=final_stage['rotated_sub_images'],
+                                    rotations=final_stage['rotations'],
+                                    split_size=final_stage['split_size'],
+                                    block_base=final_stage['block_base'],
+                                    save_path=final_effect_path,
+                                    stage_num=final_stage_num
+                                )
+                                
+                                # 創建最終階段比較圖
+                                split_type = 'block' if final_stage['block_base'] else 'quarter'
+                                final_comparison_path = f"{image_dir}/split_final_stage_comparison_{split_type}.png"
+                                create_split_comparison_simple(
+                                    original_img=cp.asnumpy(origImg) if isinstance(origImg, cp.ndarray) else origImg,
+                                    merged_img=final_merged_img,
+                                    tiled_img=final_tiled_img,
+                                    save_path=final_comparison_path,
+                                    split_type=split_type
+                                )
+                                
+                                print(f"    Saved final stage rotation effects with {split_type}-based split")
+                                print(f"    Final comparison image: {final_comparison_path}")
+                            
+                            elif not is_grayscale_img and 'channel_rotated_sub_images' in final_stage:
+                                final_effect_dir = f"{image_dir}/split_final_stage_color_effects"
+                                os.makedirs(final_effect_dir, exist_ok=True)
+                                
+                                final_created_results = create_split_rotation_effect_color(
+                                    channel_sub_images=final_stage['channel_rotated_sub_images'],
+                                    rotations=final_stage['rotations'],
+                                    split_size=final_stage['split_size'],
+                                    block_base=final_stage['block_base'],
+                                    save_dir=final_effect_dir,
+                                    stage_num=final_stage_num
+                                )
+                                
+                                split_type = 'block' if final_stage['block_base'] else 'quarter'
+                                print(f"    Created final color rotation effects with {split_type}-based split")
+                                print(f"    Generated {len(final_created_results)} final result images")
+                        
+                        # 簡化的旋轉信息總結文件（移除比較圖部分，因為已在上面生成）
+                        rotation_info_path = f"{image_dir}/split_rotation_info.txt"
+                        with open(rotation_info_path, 'w', encoding='utf-8') as f:
+                            f.write(f"Split Method Rotation Information for {imgName}\n")
+                            f.write("=" * 50 + "\n\n")
+                            f.write(f"Split Size: {split_size}x{split_size}\n")
+                            f.write(f"Split Type: {'Block-based' if block_base else 'Quarter-based'}\n")
+                            f.write(f"Image Type: {'Color' if not is_grayscale_img else 'Grayscale'}\n")
+                            f.write(f"Total Stages: {len(pee_stages)}\n\n")
+                            f.write("Generated Images for Each Stage:\n")
+                            f.write("1. Merged Image: Direct combination of rotated sub-images\n")
+                            f.write("2. Tiled Image: Grid layout of rotated sub-images\n")
+                            f.write("3. Comparison Image: Original vs Merged vs Tiled\n\n")
+                            
+                            for i, stage in enumerate(pee_stages):
+                                f.write(f"Stage {i} Rotation Information:\n")
+                                f.write("-" * 30 + "\n")
+                                if 'rotations' in stage:
+                                    rotations = stage['rotations']
+                                    f.write(f"Rotation angles: {rotations}\n")
+                                    
+                                    # 統計旋轉角度分布
+                                    from collections import Counter
+                                    rotation_counts = Counter(rotations)
+                                    f.write("Rotation distribution:\n")
+                                    for angle, count in sorted(rotation_counts.items()):
+                                        f.write(f"  {angle}°: {count} sub-images\n")
+                                
+                                f.write(f"Payload: {stage['payload']} bits\n")
+                                f.write(f"PSNR: {stage['psnr']:.2f} dB\n")
+                                f.write(f"SSIM: {stage['ssim']:.4f}\n")
+                                f.write("\n")
+                        
+                        print(f"    Saved rotation info summary: {rotation_info_path}")
+                    
+                    print("Split method rotation effect visualizations completed successfully!")
+                    print("Generated images:")
+                    print("  - Merged images: Direct combination of rotated sub-images")
+                    print("  - Tiled images: Grid layout showing individual rotated sub-images")
+                    print("  - Comparison images: Side-by-side comparison of original, merged, and tiled")
+                    
+                except ImportError as e:
+                    print(f"Warning: Could not import visualization functions: {e}")
+                    print("Please ensure the visualization module contains the required functions:")
+                    print("  - save_split_rotation_effects")
+                    print("  - create_split_rotation_effect_grayscale") 
+                    print("  - create_split_rotation_effect_color")
+                    print("  - create_split_comparison_simple")
+                    
+                except Exception as e:
+                    print(f"Warning: Could not generate Split rotation effect visualizations: {e}")
+                    import traceback
+                    if verbose:
+                        traceback.print_exc()
 
             # 儲存最終嵌入結果圖像
             final_img_path = f"{image_dir}/final_result.png"
