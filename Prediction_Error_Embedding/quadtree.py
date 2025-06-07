@@ -1001,19 +1001,6 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
                                        output_dir=None):
     """
     Process a color image using quadtree PEE method.
-    
-    This function splits a color image into its RGB channels, processes each channel
-    independently using the existing quadtree PEE method, and then recombines the
-    channels into a final color image.
-    
-    Parameters:
-    -----------
-    Same as pee_process_with_quadtree_cuda, but img is now a color image
-        
-    Returns:
-    --------
-    tuple
-        (final_color_img, total_payload, color_pee_stages)
     """
     import os
     import cv2
@@ -1023,7 +1010,6 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
     from common import cleanup_memory
     
     if prediction_method is None:
-        # Import PredictionMethod if not provided to maintain compatibility
         from image_processing import PredictionMethod
         prediction_method = PredictionMethod.PROPOSED
     
@@ -1040,13 +1026,30 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
     
     color_pee_stages = []
     
+    # 🔧 修改：改進目標容量分配邏輯
+    if target_payload_size > 0:
+        # 估算各通道容量（簡化版本）
+        total_pixels = img.shape[0] * img.shape[1]
+        estimated_capacity_per_channel = int(total_pixels * 0.4)  # 保守估計
+        
+        # 按比例分配，但考慮實際容量限制
+        base_target = target_payload_size // 3
+        blue_target = min(base_target, estimated_capacity_per_channel)
+        green_target = min(base_target, estimated_capacity_per_channel)  
+        red_target = target_payload_size - blue_target - green_target
+        
+        channel_targets = [blue_target, green_target, red_target]
+        print(f"Target payload allocation - Blue: {blue_target}, Green: {green_target}, Red: {red_target}")
+    else:
+        channel_targets = [-1, -1, -1]
+    
     # Process each channel separately
     print("\nProcessing blue channel...")
     final_b_img, b_payload, b_stages = pee_process_with_quadtree_cuda(
         b_channel, total_embeddings, ratio_of_ones, use_different_weights,
         min_block_size, variance_threshold, el_mode, rotation_mode,
         prediction_method=prediction_method,
-        target_payload_size=target_payload_size // 3 if target_payload_size > 0 else -1,
+        target_payload_size=channel_targets[0],
         max_block_size=max_block_size,
         imgName=f"{imgName}_blue" if imgName else None,
         output_dir=output_dir
@@ -1065,7 +1068,7 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
         g_channel, total_embeddings, ratio_of_ones, use_different_weights,
         min_block_size, variance_threshold, el_mode, rotation_mode,
         prediction_method=prediction_method,
-        target_payload_size=target_payload_size // 3 if target_payload_size > 0 else -1,
+        target_payload_size=channel_targets[1],
         max_block_size=max_block_size,
         imgName=f"{imgName}_green" if imgName else None,
         output_dir=output_dir
@@ -1084,7 +1087,7 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
         r_channel, total_embeddings, ratio_of_ones, use_different_weights,
         min_block_size, variance_threshold, el_mode, rotation_mode,
         prediction_method=prediction_method,
-        target_payload_size=target_payload_size // 3 if target_payload_size > 0 else -1,
+        target_payload_size=channel_targets[2],
         max_block_size=max_block_size,
         imgName=f"{imgName}_red" if imgName else None,
         output_dir=output_dir
@@ -1098,31 +1101,66 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
     # Combine channels back into a color image
     final_color_img = combine_color_channels(final_b_img, final_g_img, final_r_img)
     
-    # Create combined stages information for all 3 channels
+    # 🔧 修改：創建與灰階一致的階段信息結構
     for i in range(min(len(b_stages), len(g_stages), len(r_stages))):
         # Get stage info from each channel
         b_stage = b_stages[i]
         g_stage = g_stages[i]
         r_stage = r_stages[i]
         
-        # Initialize combined stage info
+        # 🔧 修改：確保與灰階圖像結構完全一致
         combined_stage = {
-            'embedding': b_stage['embedding'],  # All should be the same
+            'embedding': b_stage['embedding'],
             'payload': b_stage['payload'] + g_stage['payload'] + r_stage['payload'],
+            'bpp': (b_stage['bpp'] + g_stage['bpp'] + r_stage['bpp']) / 3,
+            'psnr': (b_stage['psnr'] + g_stage['psnr'] + r_stage['psnr']) / 3,
+            'ssim': (b_stage['ssim'] + g_stage['ssim'] + r_stage['ssim']) / 3,
+            'hist_corr': (b_stage['hist_corr'] + g_stage['hist_corr'] + r_stage['hist_corr']) / 3,
+            
+            # 🔧 新增：確保包含與灰階一致的必要欄位
+            'rotation_mode': b_stage.get('rotation_mode', rotation_mode),
+            'prediction_method': b_stage.get('prediction_method', prediction_method.value),
+            
+            # 🔧 修改：重構block_info為與灰階一致的結構
+            'block_info': {},  # 先初始化為空，下面填充
+            
+            # 彩色圖像特有的詳細信息（保持向後兼容）
             'channel_payloads': {
                 'blue': b_stage['payload'],
                 'green': g_stage['payload'],
                 'red': r_stage['payload']
             },
-            'bpp': (b_stage['bpp'] + g_stage['bpp'] + r_stage['bpp']) / 3,  # Average BPP
             'channel_metrics': {
                 'blue': {'psnr': b_stage['psnr'], 'ssim': b_stage['ssim'], 'hist_corr': b_stage['hist_corr']},
                 'green': {'psnr': g_stage['psnr'], 'ssim': g_stage['ssim'], 'hist_corr': g_stage['hist_corr']},
                 'red': {'psnr': r_stage['psnr'], 'ssim': r_stage['ssim'], 'hist_corr': r_stage['hist_corr']}
+            },
+            
+            # 保留原始通道block_info（用於詳細分析）
+            'channel_block_info': {
+                'blue': b_stage['block_info'],
+                'green': g_stage['block_info'],
+                'red': r_stage['block_info']
             }
         }
         
-        # Combine stage images if available
+        # 🔧 修改：合併block_info為與灰階一致的扁平結構
+        all_sizes = set(b_stage['block_info'].keys()) | set(g_stage['block_info'].keys()) | set(r_stage['block_info'].keys())
+        for size_str in all_sizes:
+            merged_blocks = []
+            
+            # 收集各通道的區塊，添加通道標識
+            for channel_name, channel_stage in [('blue', b_stage), ('green', g_stage), ('red', r_stage)]:
+                if size_str in channel_stage['block_info']:
+                    for block in channel_stage['block_info'][size_str]['blocks']:
+                        merged_block = block.copy()
+                        merged_block['channel'] = channel_name  # 添加通道識別
+                        merged_blocks.append(merged_block)
+            
+            if merged_blocks:
+                combined_stage['block_info'][size_str] = {'blocks': merged_blocks}
+        
+        # 🔧 新增：合併階段圖像
         if 'stage_img' in b_stage and 'stage_img' in g_stage and 'stage_img' in r_stage:
             b_stage_img = cp.asnumpy(b_stage['stage_img']) if isinstance(b_stage['stage_img'], cp.ndarray) else b_stage['stage_img']
             g_stage_img = cp.asnumpy(g_stage['stage_img']) if isinstance(g_stage['stage_img'], cp.ndarray) else g_stage['stage_img']
@@ -1130,23 +1168,39 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
             
             combined_stage['stage_img'] = combine_color_channels(b_stage_img, g_stage_img, r_stage_img)
         
-        # Calculate combined metrics directly from the combined image
-        if 'stage_img' in combined_stage:
-            # For simplicity, we'll use the channel averages
-            psnr = (b_stage['psnr'] + g_stage['psnr'] + r_stage['psnr']) / 3
-            ssim = (b_stage['ssim'] + g_stage['ssim'] + r_stage['ssim']) / 3
-            hist_corr = (b_stage['hist_corr'] + g_stage['hist_corr'] + r_stage['hist_corr']) / 3
-            
-            combined_stage['psnr'] = psnr
-            combined_stage['ssim'] = ssim
-            combined_stage['hist_corr'] = hist_corr
-            
-        # Save combined block info - store each channel's block_info separately
-        combined_stage['block_info'] = {
-            'blue': b_stage['block_info'],
-            'green': g_stage['block_info'],
-            'red': r_stage['block_info']
-        }
+        # 🔧 新增：合併旋轉視覺化圖像（如果存在）
+        if 'rotated_stage_img' in b_stage and 'rotated_stage_img' in g_stage and 'rotated_stage_img' in r_stage:
+            try:
+                b_rotated = cp.asnumpy(b_stage['rotated_stage_img']) if isinstance(b_stage['rotated_stage_img'], cp.ndarray) else b_stage['rotated_stage_img']
+                g_rotated = cp.asnumpy(g_stage['rotated_stage_img']) if isinstance(g_stage['rotated_stage_img'], cp.ndarray) else g_stage['rotated_stage_img']
+                r_rotated = cp.asnumpy(r_stage['rotated_stage_img']) if isinstance(r_stage['rotated_stage_img'], cp.ndarray) else r_stage['rotated_stage_img']
+                
+                combined_stage['rotated_stage_img'] = combine_color_channels(b_rotated, g_rotated, r_rotated)
+            except Exception as e:
+                print(f"Warning: Could not combine rotated stage images: {e}")
+        
+        # 🔧 新增：合併區塊視覺化（如果存在）
+        if all('rotated_block_visualization' in stage for stage in [b_stage, g_stage, r_stage]):
+            try:
+                # 取藍色通道的區塊視覺化作為基礎
+                combined_stage['rotated_block_visualization'] = b_stage['rotated_block_visualization']
+                
+                # 如果有彩色版本，則使用彩色版本
+                if 'rotated_block_visualization_color' in b_stage:
+                    combined_stage['rotated_block_visualization_color'] = b_stage['rotated_block_visualization_color']
+            except Exception as e:
+                print(f"Warning: Could not combine block visualizations: {e}")
+        
+        # 🔧 新增：添加區塊計數信息（與灰階一致）
+        if 'block_counts' in b_stage:
+            combined_block_counts = {}
+            for stage in [b_stage, g_stage, r_stage]:
+                if 'block_counts' in stage:
+                    for size_str, count in stage['block_counts'].items():
+                        if size_str not in combined_block_counts:
+                            combined_block_counts[size_str] = 0
+                        combined_block_counts[size_str] += count
+            combined_stage['block_counts'] = combined_block_counts
             
         # Add stage to combined stages
         color_pee_stages.append(combined_stage)

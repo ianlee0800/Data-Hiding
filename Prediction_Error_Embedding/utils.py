@@ -32,82 +32,69 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels,
                          split_size, quad_tree=False):
     """
     創建 PEE 資訊表格的完整函數 - 支援彩色圖像
-    
-    Parameters:
-    -----------
-    pee_stages : list
-        包含所有 PEE 階段資訊的列表
-    use_different_weights : bool
-        是否對每個子圖像使用不同的權重
-    total_pixels : int
-        圖像總像素數
-    split_size : int
-        分割大小
-    quad_tree : bool, optional
-        是否使用 quad tree 模式
-        
-    Returns:
-    --------
-    PrettyTable
-        格式化的表格，包含所有階段的詳細資訊
     """
     from prettytable import PrettyTable
     
     table = PrettyTable()
     
-    # 檢查是否為彩色圖像處理的階段資訊
+    # 🔧 修改：改進彩色圖像檢測邏輯
     is_color_image = False
-    if pee_stages and 'block_info' in pee_stages[0]:
+    if pee_stages and 'channel_payloads' in pee_stages[0]:
+        # 新的檢測方式：檢查是否有channel_payloads欄位
+        is_color_image = True
+    elif pee_stages and 'block_info' in pee_stages[0]:
+        # 舊的檢測方式：檢查block_info中是否有通道標識
         if isinstance(pee_stages[0]['block_info'], dict):
-            # 檢查是否有通道名稱作為鍵值
-            if any(key in ['blue', 'green', 'red'] for key in pee_stages[0]['block_info'].keys()):
-                is_color_image = True
+            for size_str, size_info in pee_stages[0]['block_info'].items():
+                if isinstance(size_info, dict) and 'blocks' in size_info:
+                    for block in size_info['blocks']:
+                        if 'channel' in block:
+                            is_color_image = True
+                            break
+                    if is_color_image:
+                        break
     
     if is_color_image:
         # 彩色圖像的表格欄位
         table.field_names = [
-            "Embedding", "Channel", "Block Size", "Block Count", "Payload", "BPP",
-            "PSNR", "SSIM", "Hist Corr", "Note"
+            "Embedding", "Total Payload", "BPP", "PSNR", "SSIM", "Hist Corr",
+            "Blue Payload", "Green Payload", "Red Payload", "Block Counts", "Note"
         ]
+        
+        # 🔧 修改：簡化彩色圖像的表格內容，重點顯示總體信息
+        for stage in pee_stages:
+            # 添加整體 stage 資訊
+            table.add_row([
+                stage['embedding'],
+                stage['payload'],
+                f"{stage['bpp']:.4f}",
+                f"{stage['psnr']:.2f}",
+                f"{stage['ssim']:.4f}",
+                f"{stage['hist_corr']:.4f}",
+                stage['channel_payloads']['blue'],
+                stage['channel_payloads']['green'], 
+                stage['channel_payloads']['red'],
+                sum(stage.get('block_counts', {}).values()) if 'block_counts' in stage else '-',
+                "Color Image"
+            ])
+            
+            # 添加分隔線
+            table.add_row(["-" * 5] * len(table.field_names))
+    
     elif quad_tree:
-        # Quad tree 模式的表格欄位
+        # Quad tree 模式的表格欄位（保持不變）
         table.field_names = [
             "Embedding", "Block Size", "Block Position", "Payload", "BPP",
             "PSNR", "SSIM", "Hist Corr", "Weights", "EL", "Note"
         ]
-    else:
-        # 標準模式的表格欄位
-        table.field_names = [
-            "Embedding", "Sub-image", "Payload", "BPP", "PSNR", "SSIM",
-            "Hist Corr", "Weights", "EL", "Rotation", "Note"
-        ]
-    
-    # 設置列寬以確保更好的可讀性
-    for field in table.field_names:
-        table.max_width[field] = 20
-    
-    for stage in pee_stages:
-        # 添加整體 stage 資訊
-        if is_color_image:
-            # 彩色圖像的整體資訊
-            table.add_row([
-                f"{stage['embedding']} (Overall)",
-                "All",
-                "-",
-                "-",
-                stage['payload'],
-                f"{stage['bpp']:.4f}",
-                f"{stage['psnr']:.2f}",
-                f"{stage['ssim']:.4f}",
-                f"{stage['hist_corr']:.4f}",
-                "Stage Summary"
-            ])
-        elif quad_tree:
-            # Quad tree 模式的整體資訊
+        
+        # 處理 quad tree 模式的區塊資訊（保持原邏輯）
+        for stage in pee_stages:
+            # 添加整體 stage 資訊
             table.add_row([
                 f"{stage['embedding']} (Overall)",
                 "-",
-                "-",
+                "-", 
                 stage['payload'],
                 f"{stage['bpp']:.4f}",
                 f"{stage['psnr']:.2f}",
@@ -117,69 +104,10 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels,
                 "-",
                 "Stage Summary"
             ])
-        else:
-            # 標準模式的整體資訊
-            table.add_row([
-                f"{stage['embedding']} (Overall)",
-                "-",
-                stage['payload'],
-                f"{stage['bpp']:.4f}",
-                f"{stage['psnr']:.2f}",
-                f"{stage['ssim']:.4f}",
-                f"{stage['hist_corr']:.4f}",
-                "-",
-                "-",
-                "-",
-                "Stage Summary"
-            ])
-        
-        # 添加分隔線
-        table.add_row(["-" * 5] * len(table.field_names))
-        
-        if is_color_image:
-            # 處理彩色圖像的通道資訊
-            for channel in ['blue', 'green', 'red']:
-                if channel in stage['block_info']:
-                    channel_info = stage['block_info'][channel]
-                    channel_metrics = stage['channel_metrics'][channel]
-                    
-                    # 首先添加通道的摘要行
-                    table.add_row([
-                        stage['embedding'],
-                        channel.capitalize(),
-                        "All Sizes",
-                        "-",
-                        stage['channel_payloads'][channel],
-                        "-",
-                        f"{channel_metrics['psnr']:.2f}",
-                        f"{channel_metrics['ssim']:.4f}",
-                        f"{channel_metrics['hist_corr']:.4f}",
-                        "Channel Summary"
-                    ])
-                    
-                    # 然後添加每個大小區塊的資訊
-                    for size_str in sorted(channel_info.keys(), key=int, reverse=True):
-                        blocks = channel_info[size_str]['blocks']
-                        block_count = len(blocks)
-                        
-                        if block_count > 0:
-                            table.add_row([
-                                "",
-                                "",
-                                f"{size_str}x{size_str}",
-                                block_count,
-                                "-",  # 沒有每個大小區塊的載荷資訊
-                                "-",
-                                "-",
-                                "-",
-                                "-",
-                                ""
-                            ])
-                    
-                    # 添加分隔線
-                    table.add_row(["-" * 5] * len(table.field_names))
-        
-        elif quad_tree:
+            
+            # 添加分隔線
+            table.add_row(["-" * 5] * len(table.field_names))
+            
             # 處理 quad tree 模式的區塊資訊
             for size_str in sorted(stage['block_info'].keys(), key=int, reverse=True):
                 blocks = stage['block_info'][size_str]['blocks']
@@ -206,9 +134,38 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels,
                         block.get('EL', '-'),
                         "Different weights" if use_different_weights else ""
                     ])
-        # When handling block_params for non-quadtree methods:
-        else:
-            # Process standard mode block information
+            
+            # 添加分隔線
+            table.add_row(["-" * 5] * len(table.field_names))
+            
+    else:
+        # 標準模式的表格欄位（保持不變）
+        table.field_names = [
+            "Embedding", "Sub-image", "Payload", "BPP", "PSNR", "SSIM",
+            "Hist Corr", "Weights", "EL", "Rotation", "Note"
+        ]
+        
+        # 處理標準模式（保持原邏輯）
+        for stage in pee_stages:
+            # 添加整體 stage 資訊
+            table.add_row([
+                f"{stage['embedding']} (Overall)",
+                "-",
+                stage['payload'],
+                f"{stage['bpp']:.4f}",
+                f"{stage['psnr']:.2f}",
+                f"{stage['ssim']:.4f}",
+                f"{stage['hist_corr']:.4f}",
+                "-",
+                "-",
+                "-",
+                "Stage Summary"
+            ])
+            
+            # 添加分隔線
+            table.add_row(["-" * 5] * len(table.field_names))
+            
+            # 處理標準模式的區塊資訊
             total_blocks = split_size * split_size
             sub_image_pixels = total_pixels // total_blocks
             

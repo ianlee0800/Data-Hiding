@@ -2,7 +2,7 @@ Split Method Rotation Information for F16
 ==================================================
 
 Split Size: 2x2
-Split Type: Quarter-based
+Split Type: Block-based
 Image Type: Color
 Total Stages: 5
 
@@ -13,54 +13,56 @@ Generated Images for Each Stage:
 
 Stage 0 Rotation Information:
 ------------------------------
-Rotation angles: [90, 180, 270, 90]
+Rotation angles: [0, 270, 270, 90]
 Rotation distribution:
-  90°: 2 sub-images
-  180°: 1 sub-images
-  270°: 1 sub-images
-Payload: 405705 bits
-PSNR: 54.64 dB
-SSIM: 0.9978
+  0°: 1 sub-images
+  90°: 1 sub-images
+  270°: 2 sub-images
+Payload: 466691 bits
+PSNR: 53.37 dB
+SSIM: 0.9982
 
 Stage 1 Rotation Information:
 ------------------------------
-Rotation angles: [90, 90, 270, 0]
+Rotation angles: [0, 90, 90, 270]
 Rotation distribution:
   0°: 1 sub-images
   90°: 2 sub-images
   270°: 1 sub-images
-Payload: 207309 bits
-PSNR: 57.26 dB
-SSIM: 0.9987
+Payload: 260299 bits
+PSNR: 55.87 dB
+SSIM: 0.9985
 
 Stage 2 Rotation Information:
 ------------------------------
-Rotation angles: [0, 180, 180, 0]
+Rotation angles: [90, 270, 270, 180]
 Rotation distribution:
-  0°: 2 sub-images
-  180°: 2 sub-images
-Payload: 123291 bits
-PSNR: 58.69 dB
-SSIM: 0.9991
+  90°: 1 sub-images
+  180°: 1 sub-images
+  270°: 2 sub-images
+Payload: 138161 bits
+PSNR: 56.93 dB
+SSIM: 0.9989
 
 Stage 3 Rotation Information:
 ------------------------------
-Rotation angles: [270, 270, 0, 0]
+Rotation angles: [90, 0, 0, 0]
 Rotation distribution:
-  0°: 2 sub-images
-  270°: 2 sub-images
-Payload: 109554 bits
-PSNR: 59.44 dB
-SSIM: 0.9993
+  0°: 3 sub-images
+  90°: 1 sub-images
+Payload: 118224 bits
+PSNR: 60.61 dB
+SSIM: 0.9994
 
 Stage 4 Rotation Information:
 ------------------------------
-Rotation angles: [0, 180, 90, 0]
+Rotation angles: [180, 90, 270, 0]
 Rotation distribution:
-  0°: 2 sub-images
+  0°: 1 sub-images
   90°: 1 sub-images
   180°: 1 sub-images
-Payload: 100020 bits
+  270°: 1 sub-images
+Payload: 116414 bits
 PSNR: inf dB
-SSIM: 0.9997
+SSIM: 0.9996
 

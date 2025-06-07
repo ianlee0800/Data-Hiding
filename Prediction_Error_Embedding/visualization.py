@@ -1477,7 +1477,7 @@ def compute_prediction_error(img, weights):
 
 def create_split_rotation_effect_grayscale(sub_images, rotations, split_size, block_base, save_path, stage_num=None):
     """
-    創建灰階圖像Split方法的旋轉效果視覺化（無文字標注版本）
+    創建灰階圖像Split方法的旋轉效果視覺化（修復版本）
     
     Parameters:
     -----------
@@ -1500,43 +1500,106 @@ def create_split_rotation_effect_grayscale(sub_images, rotations, split_size, bl
         (merged_image, tiled_image) 合成圖像和拼貼圖像
     """
     import cupy as cp
+    import numpy as np
+    import cv2
+    import os
     
     # 確保目錄存在
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     
+    # 檢查輸入數據
+    if not sub_images or len(sub_images) == 0:
+        print("ERROR: No sub_images provided to create_split_rotation_effect_grayscale")
+        return None, None
+    
+    print(f"Processing {len(sub_images)} sub-images for grayscale rotation effect")
+    
     # 轉換CuPy數組為NumPy數組
     numpy_sub_images = []
-    for sub_img in sub_images:
+    for i, sub_img in enumerate(sub_images):
         if isinstance(sub_img, cp.ndarray):
-            numpy_sub_images.append(cp.asnumpy(sub_img))
+            numpy_sub_img = cp.asnumpy(sub_img)
         else:
-            numpy_sub_images.append(np.array(sub_img))
+            numpy_sub_img = np.array(sub_img)
+        
+        # 確保是uint8類型
+        if numpy_sub_img.dtype != np.uint8:
+            numpy_sub_img = numpy_sub_img.astype(np.uint8)
+        
+        numpy_sub_images.append(numpy_sub_img)
+        print(f"  Sub-image {i}: shape={numpy_sub_img.shape}, dtype={numpy_sub_img.dtype}")
     
-    # 1. 創建直接合成的圖像（沒旋轉回0度的子圖像直接合成）
-    if isinstance(sub_images[0], cp.ndarray):
-        merged_effect_img = merge_image_flexible(sub_images, split_size, block_base)
-        merged_effect_img = cp.asnumpy(merged_effect_img)
-    else:
-        cupy_sub_images = [cp.asarray(sub_img) for sub_img in numpy_sub_images]
-        merged_effect_img = merge_image_flexible(cupy_sub_images, split_size, block_base)
-        merged_effect_img = cp.asnumpy(merged_effect_img)
+    try:
+        # 1. 創建直接合成的圖像（沒旋轉回0度的子圖像直接合成）
+        if isinstance(sub_images[0], cp.ndarray):
+            merged_effect_img = merge_image_flexible(sub_images, split_size, block_base)
+            merged_effect_img = cp.asnumpy(merged_effect_img)
+        else:
+            cupy_sub_images = [cp.asarray(sub_img) for sub_img in numpy_sub_images]
+            merged_effect_img = merge_image_flexible(cupy_sub_images, split_size, block_base)
+            merged_effect_img = cp.asnumpy(merged_effect_img)
+        
+        # 確保合成圖像是正確的數據類型
+        if merged_effect_img.dtype != np.uint8:
+            merged_effect_img = merged_effect_img.astype(np.uint8)
+        
+        print(f"Merged image: shape={merged_effect_img.shape}, dtype={merged_effect_img.dtype}")
+        
+    except Exception as e:
+        print(f"ERROR creating merged image: {e}")
+        return None, None
     
-    # 2. 創建拼貼畫方式的圖像（所有子圖像排列成網格）
-    tiled_image = create_tiled_subimages(numpy_sub_images, split_size)
+    try:
+        # 2. 創建拼貼畫方式的圖像（所有子圖像排列成網格）
+        tiled_image = create_tiled_subimages(numpy_sub_images, split_size)
+        
+        # 確保拼貼圖像是正確的數據類型
+        if tiled_image.dtype != np.uint8:
+            tiled_image = tiled_image.astype(np.uint8)
+        
+        print(f"Tiled image: shape={tiled_image.shape}, dtype={tiled_image.dtype}")
+        
+    except Exception as e:
+        print(f"ERROR creating tiled image: {e}")
+        return merged_effect_img, None
     
     # 生成保存路徑
     base_path = save_path.replace('.png', '')
     split_type = 'block' if block_base else 'quarter'
     
-    # 保存兩種類型的圖像（無文字標注）
+    # 保存兩種類型的圖像
     merged_path = f"{base_path}_{split_type}_merged.png"
     tiled_path = f"{base_path}_{split_type}_tiled.png"
     
-    cv2.imwrite(merged_path, merged_effect_img)
-    cv2.imwrite(tiled_path, tiled_image)
+    # 實際保存圖像並檢查結果
+    try:
+        success_merged = cv2.imwrite(merged_path, merged_effect_img)
+        if success_merged:
+            print(f"✓ Split rotation merged image saved: {merged_path}")
+        else:
+            print(f"✗ Failed to save merged image: {merged_path}")
+    except Exception as e:
+        print(f"✗ Exception saving merged image: {e}")
+        success_merged = False
     
-    print(f"Split rotation merged image saved: {merged_path}")
-    print(f"Split rotation tiled image saved: {tiled_path}")
+    try:
+        success_tiled = cv2.imwrite(tiled_path, tiled_image)
+        if success_tiled:
+            print(f"✓ Split rotation tiled image saved: {tiled_path}")
+        else:
+            print(f"✗ Failed to save tiled image: {tiled_path}")
+    except Exception as e:
+        print(f"✗ Exception saving tiled image: {e}")
+        success_tiled = False
+    
+    # 檢查文件是否真的存在
+    if success_merged and os.path.exists(merged_path):
+        file_size = os.path.getsize(merged_path)
+        print(f"  Merged file exists, size: {file_size} bytes")
+    
+    if success_tiled and os.path.exists(tiled_path):
+        file_size = os.path.getsize(tiled_path)
+        print(f"  Tiled file exists, size: {file_size} bytes")
     
     return merged_effect_img, tiled_image
 
@@ -1609,7 +1672,6 @@ def create_split_rotation_effect_color(channel_sub_images, rotations, split_size
             channel_tiled_gray = create_tiled_subimages(numpy_sub_images, split_size)
             
             # 3. 關鍵步驟：轉換為對應顏色的彩色圖像
-
             channel_merged_colored = convert_single_channel_to_color(channel_merged_gray, ch_name)
             channel_tiled_colored = convert_single_channel_to_color(channel_tiled_gray, ch_name)
             
@@ -1617,18 +1679,29 @@ def create_split_rotation_effect_color(channel_sub_images, rotations, split_size
             merged_channels_gray.append(channel_merged_gray)
             tiled_channels_gray.append(channel_tiled_gray)
             
-            # 4. 關鍵步驟：保存彩色版本的單通道結果
+            # 4. 關鍵修復：實際保存彩色版本的單通道結果
             channel_merged_path = os.path.join(save_dir, f"{ch_name}_channel_{split_type}_merged.png")
             channel_tiled_path = os.path.join(save_dir, f"{ch_name}_channel_{split_type}_tiled.png")
+            
+            # 實際保存圖像（這是之前缺少的部分）
+            success_merged = cv2.imwrite(channel_merged_path, channel_merged_colored)
+            success_tiled = cv2.imwrite(channel_tiled_path, channel_tiled_colored)
+            
+            # 檢查保存是否成功
+            if success_merged:
+                print(f"{ch_name.capitalize()} channel colored merged saved: {channel_merged_path}")
+            else:
+                print(f"Failed to save {ch_name} channel merged image: {channel_merged_path}")
+                
+            if success_tiled:
+                print(f"{ch_name.capitalize()} channel colored tiled saved: {channel_tiled_path}")
+            else:
+                print(f"Failed to save {ch_name} channel tiled image: {channel_tiled_path}")
             
             # 存儲結果
             channel_results[f'{ch_name}_merged'] = channel_merged_colored
             channel_results[f'{ch_name}_tiled'] = channel_tiled_colored
             
-            print(f"{ch_name.capitalize()} channel colored merged saved: {channel_merged_path}")
-            print(f"{ch_name.capitalize()} channel colored tiled saved: {channel_tiled_path}")
-            
-            # 額外的調試信息
         else:
             print(f"WARNING: {ch_name} channel not found in channel_sub_images")
     
@@ -1649,15 +1722,28 @@ def create_split_rotation_effect_color(channel_sub_images, rotations, split_size
             tiled_channels_gray[2]    # red
         )
         
-        # 保存彩色合成結果
+        # 關鍵修復：實際保存彩色合成結果
         color_merged_path = os.path.join(save_dir, f"color_{split_type}_merged.png")
         color_tiled_path = os.path.join(save_dir, f"color_{split_type}_tiled.png")
+        
+        # 實際保存圖像（這是之前缺少的部分）
+        success_color_merged = cv2.imwrite(color_merged_path, color_merged)
+        success_color_tiled = cv2.imwrite(color_tiled_path, color_tiled)
+        
+        # 檢查保存是否成功
+        if success_color_merged:
+            print(f"Color merged image saved: {color_merged_path}")
+        else:
+            print(f"Failed to save color merged image: {color_merged_path}")
+            
+        if success_color_tiled:
+            print(f"Color tiled image saved: {color_tiled_path}")
+        else:
+            print(f"Failed to save color tiled image: {color_tiled_path}")
         
         channel_results['color_merged'] = color_merged
         channel_results['color_tiled'] = color_tiled
         
-        print(f"Color merged image saved: {color_merged_path}")
-        print(f"Color tiled image saved: {color_tiled_path}")
     else:
         print(f"WARNING: Expected 3 channels but got {len(merged_channels_gray)}")
     

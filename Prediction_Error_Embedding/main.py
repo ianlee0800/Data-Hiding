@@ -78,7 +78,7 @@ def main():
     # ==== 參數設置（直接在代碼中調整） ====
     
     # 基本參數設置
-    imgName = "F16"           # 圖像名稱
+    imgName = "Male"           # 圖像名稱
     filetype = "tiff"         # 圖像檔案類型
     total_embeddings = 5      # 總嵌入次數
     
@@ -115,7 +115,7 @@ def main():
     
     # 各方法共用參數
     split_size = 2            # 用於 rotation 和 split 方法
-    block_base = False        # 用於 split 方法
+    block_base = True        # 用於 split 方法
     
     # quad tree 特定參數
     quad_tree_params = {
