@@ -474,33 +474,26 @@ def predict_image_cuda(img, prediction_method, weights=None):
 
 def add_grid_lines(img, block_info):
     """
-    為 quadtree 分割結果添加格線
+    為 quadtree 分割結果添加格線（無文字標註版本）
     
     Parameters:
     -----------
     img : numpy.ndarray
         原始圖像
     block_info : dict
-        包含各區塊資訊的字典，格式如：
-        {
-            '256': {'blocks': [{'position': (y,x), 'size': 256}, ...]},
-            '128': {'blocks': [...]},
-            '64': {'blocks': [...]},
-            '32': {'blocks': [...]},
-            '16': {'blocks': [...]}
-        }
-    
+        包含各區塊資訊的字典
+        
     Returns:
     --------
     numpy.ndarray
-        添加格線後的圖像
+        添加格線後的圖像（純視覺化，無文字）
     """
     grid_img = img.copy()
     grid_color = 128  # 使用中灰色作為格線顏色
     
-    # 對不同大小的區塊使用不同的格線寬度，注意使用整數作為鍵值
+    # 對不同大小的區塊使用不同的格線寬度
     line_widths = {
-        1024: 4,  # 添加 1024 的線寬
+        1024: 4,
         512: 3,
         256: 3,
         128: 2,
@@ -511,23 +504,20 @@ def add_grid_lines(img, block_info):
     
     # 從大到小處理各個區塊
     for size_str in sorted(block_info.keys(), key=lambda x: int(x), reverse=True):
-        size = int(size_str)  # 將字符串轉換為整數
-        
-        # 使用 get 方法提供預設值，如果找不到特定尺寸
-        line_width = line_widths.get(size, 1)  # 如果找不到對應的線寬，預設使用 1
-        
+        size = int(size_str)
+        line_width = line_widths.get(size, 1)
         blocks = block_info[size_str]['blocks']
         
         for block in blocks:
             y, x = block['position']
             block_size = block['size']
             
-            # 繪製水平線
+            # 繪製水平線（無文字標註）
             for i in range(line_width):
                 grid_img[y+i:y+i+1, x:x+block_size] = grid_color  # 上邊界
                 grid_img[y+block_size-i-1:y+block_size-i, x:x+block_size] = grid_color  # 下邊界
             
-            # 繪製垂直線
+            # 繪製垂直線（無文字標註）
             for i in range(line_width):
                 grid_img[y:y+block_size, x+i:x+i+1] = grid_color  # 左邊界
                 grid_img[y:y+block_size, x+block_size-i-1:x+block_size-i] = grid_color  # 右邊界

@@ -73,12 +73,13 @@ def main():
     12. 新增各方法的預測誤差直方圖(before embedding, shifted, after embedding)
     13. 完整的彩色圖像rotation方法支援和視覺化
     14. 💡 新增Split方法旋轉效果完整可視化
+    15. 🔧 新增quadtree方法的彩色圖像完整支援和視覺化
     """
     
     # ==== 參數設置（直接在代碼中調整） ====
     
     # 基本參數設置
-    imgName = "Male"           # 圖像名稱
+    imgName = "F16"           # 圖像名稱
     filetype = "tiff"         # 圖像檔案類型
     total_embeddings = 5      # 總嵌入次數
     
@@ -107,7 +108,7 @@ def main():
     prediction_method_str = "PROPOSED"
     
     # 方法選擇
-    method = "split"          # 可選："rotation", "split", "quadtree"
+    method = "quadtree"          # 可選："rotation", "split", "quadtree"
     
     # 方法比較參數（僅當use_method_comparison=True時有效）
     methods_to_compare = ["rotation", "quadtree"]  # 要比較的方法
@@ -246,6 +247,8 @@ def main():
         os.makedirs(f"{image_dir}/with_grid", exist_ok=True)
         os.makedirs(f"{image_dir}/rotated_blocks", exist_ok=True)
         os.makedirs(f"{image_dir}/block_size_visualizations", exist_ok=True)  # 新增區塊大小可視化目錄
+        os.makedirs(f"{image_dir}/block_visualizations", exist_ok=True)  # 🔧 新增各通道區塊視覺化目錄
+        os.makedirs(f"{image_dir}/heatmaps", exist_ok=True)  # 🔧 新增熱圖目錄
         os.makedirs(f"{plots_dir}/block_distribution", exist_ok=True)
         os.makedirs(f"{histogram_dir}/difference_histograms", exist_ok=True)  # 新增差異直方圖目錄
         os.makedirs(f"{histogram_dir}/block_histograms", exist_ok=True)      # 新增區塊直方圖目錄
@@ -454,13 +457,6 @@ def main():
                     f"Metrics Comparison Across Stages for {imgName}"
                 )
                 
-                # 為彩色圖像創建通道比較圖表
-                if not is_grayscale_img and 'channel_metrics' in pee_stages[0]:
-                    visualize_color_metrics_comparison(
-                        pee_stages, f"{plots_dir}/channel_metrics_comparison.png",
-                        f"Channel Metrics Comparison for {imgName}"
-                    )
-                
                 # 為彩色圖像創建額外的視覺化內容
                 if not is_grayscale_img:
                     # 為每個階段創建彩色視覺化
@@ -626,6 +622,129 @@ def main():
                                     
                     elif method == "quadtree":
                         # Quadtree 方法特有項目 (彩色和灰階都可)
+                        
+                        # 🔧 新增：彩色圖像的特殊處理（在原有的階段循環中）
+                        if not is_grayscale_img:
+                            # 為彩色圖像創建額外的視覺化內容
+                            # 創建彩色直方圖
+                            visualize_color_histograms(
+                                stage_img, 
+                                f"{histogram_dir}/stage_{i}_color_histogram.png",
+                                f"Color Histogram after PEE Stage {i}"
+                            )
+                            
+                            # 創建彩色熱圖
+                            heatmap_path = f"{image_dir}/heatmaps/stage_{i}_color_heatmap.png"
+                            create_color_heatmap(origImg, stage_img, heatmap_path)
+                            
+                            # 創建通道對比圖
+                            channel_path = f"{image_dir}/stage_{i}_channel_comparison.png"
+                            create_color_channel_comparison(origImg, stage_img, channel_path)
+                            
+                            # 🔧 新增：quadtree特有的彩色視覺化
+                            if 'channel_block_info' in stage:
+                                # 為各通道創建區塊視覺化
+                                for ch_name in ['blue', 'green', 'red']:
+                                    if ch_name in stage['channel_block_info']:
+                                        ch_block_info = stage['channel_block_info'][ch_name]
+                                        
+                                        # 獲取對應通道的圖像
+                                        if ch_name == 'blue':
+                                            ch_img = cv2.split(stage_img)[0]
+                                        elif ch_name == 'green':
+                                            ch_img = cv2.split(stage_img)[1]
+                                        elif ch_name == 'red':
+                                            ch_img = cv2.split(stage_img)[2]
+                                        
+                                        # 創建帶格線的通道圖像
+                                        try:
+                                            grid_image = add_grid_lines(ch_img.copy(), ch_block_info)
+                                            grid_path = f"{image_dir}/with_grid/stage_{i}_{ch_name}_channel_grid.png"
+                                            save_image(grid_image, grid_path)
+                                        except Exception as e:
+                                            if verbose:
+                                                print(f"Warning: Could not create {ch_name} channel grid: {e}")
+                                        
+                                        # 創建通道的quadtree視覺化
+                                        try:
+                                            ch_quadtree_viz = visualize_quadtree(ch_block_info, ch_img.shape)
+                                            viz_path = f"{image_dir}/quadtree_visualization/stage_{i}_{ch_name}_quadtree.png"
+                                            save_image(ch_quadtree_viz, viz_path)
+                                        except Exception as e:
+                                            if verbose:
+                                                print(f"Warning: Could not create {ch_name} quadtree visualization: {e}")
+                                        
+                                        # 創建通道區塊大小分布統計
+                                        try:
+                                            create_block_size_distribution_chart(
+                                                ch_block_info, 
+                                                f"{plots_dir}/block_distribution/stage_{i}_{ch_name}_distribution.png",
+                                                i, ch_name
+                                            )
+                                        except Exception as e:
+                                            if verbose:
+                                                print(f"Warning: Could not create {ch_name} block distribution chart: {e}")
+                            
+                            # 🔧 新增：創建各通道區塊大小獨立可視化
+                            if 'channel_block_info' in stage:
+                                for ch_name in ['blue', 'green', 'red']:
+                                    if ch_name in stage['channel_block_info']:
+                                        ch_blocks_viz_dir = f"{image_dir}/block_visualizations/{ch_name}"
+                                        os.makedirs(ch_blocks_viz_dir, exist_ok=True)
+                                        
+                                        # 獲取對應通道的圖像
+                                        ch_orig_img = cv2.split(origImg)[['blue', 'green', 'red'].index(ch_name)]
+                                        
+                                        try:
+                                            ch_viz_paths = create_all_quadtree_block_visualizations(
+                                                stage['channel_block_info'][ch_name],
+                                                ch_orig_img,
+                                                ch_blocks_viz_dir,
+                                                i
+                                            )
+                                            if verbose:
+                                                print(f"  Created {ch_name} channel block size visualizations for stage {i}")
+                                        except Exception as e:
+                                            if verbose:
+                                                print(f"Warning: Could not create {ch_name} channel block visualizations: {e}")
+                            
+                            # 🔧 新增：創建彩色圖像的區塊級別差異直方圖
+                            if 'channel_block_info' in stage:
+                                # 為每個通道創建區塊直方圖
+                                for ch_name in ['blue', 'green', 'red']:
+                                    if ch_name in stage['channel_block_info']:
+                                        ch_block_hist_dir = f"{histogram_dir}/block_histograms/{ch_name}"
+                                        os.makedirs(ch_block_hist_dir, exist_ok=True)
+                                        
+                                        ch_block_info = stage['channel_block_info'][ch_name]
+                                        
+                                        # 處理每種大小的第一個區塊作為樣本
+                                        for size_str in ch_block_info:
+                                            blocks = ch_block_info[size_str]['blocks']
+                                            if blocks:
+                                                sample_block = blocks[0]
+                                                if ('original_img' in sample_block and 
+                                                    'pred_img' in sample_block and 
+                                                    'embedded_img' in sample_block):
+                                                    
+                                                    block_el = sample_block.get('EL', 5)
+                                                    
+                                                    try:
+                                                        block_diff_hist_paths = create_difference_histograms(
+                                                            sample_block['original_img'],
+                                                            sample_block['pred_img'],
+                                                            sample_block['embedded_img'],
+                                                            ch_block_hist_dir,
+                                                            f"{method}_{ch_name}_block{size_str}",
+                                                            i,
+                                                            local_el=block_el
+                                                        )
+                                                        if verbose:
+                                                            print(f"  Created {ch_name} channel difference histograms for stage {i}, block size {size_str}")
+                                                    except Exception as e:
+                                                        if verbose:
+                                                            print(f"Warning: Could not create {ch_name} channel block histograms: {e}")
+                        
                         # 創建帶格線的結果圖像
                         if 'block_info' in stage:
                             if is_grayscale_img:
@@ -1006,6 +1125,35 @@ def main():
                     if verbose:
                         traceback.print_exc()
 
+            # 🔧 新增：最終彩色圖像處理（針對quadtree方法）
+            if method == "quadtree" and not is_grayscale_img and is_proposed:
+                # 創建最終彩色視覺化
+                final_heatmap_path = f"{image_dir}/heatmaps/final_color_heatmap.png"
+                create_color_heatmap(origImg, final_pee_img, final_heatmap_path)
+                
+                final_channel_path = f"{image_dir}/final_channel_comparison.png"
+                create_color_channel_comparison(origImg, final_pee_img, final_channel_path)
+                
+                # 創建最終彩色直方圖
+                visualize_color_histograms(
+                    final_pee_img, 
+                    f"{histogram_dir}/final_color_histogram.png",
+                    f"Final Color Histogram after All PEE Stages"
+                )
+                
+                # 🔧 新增：創建最終彩色quadtree格線視覺化
+                if 'channel_block_info' in pee_stages[-1]:
+                    for ch_name in ['blue', 'green', 'red']:
+                        if ch_name in pee_stages[-1]['channel_block_info']:
+                            ch_final_img = cv2.split(final_pee_img)[['blue', 'green', 'red'].index(ch_name)]
+                            try:
+                                final_grid_path = f"{image_dir}/with_grid/final_{ch_name}_channel_grid.png"
+                                final_ch_grid = add_grid_lines(ch_final_img.copy(), pee_stages[-1]['channel_block_info'][ch_name])
+                                save_image(final_ch_grid, final_grid_path)
+                            except Exception as e:
+                                if verbose:
+                                    print(f"Warning: Could not create final {ch_name} channel grid: {e}")
+
             # 儲存最終嵌入結果圖像
             final_img_path = f"{image_dir}/final_result.png"
             if is_grayscale_img:
@@ -1164,6 +1312,7 @@ def main():
             # 計算並輸出最終結果
             final_bpp = total_payload / total_pixels
             
+            # 🔧 新增：在彩色圖像的指標計算部分（替換現有的彩色指標計算）
             # 根據圖像類型計算最終品質指標
             if is_grayscale_img:
                 final_psnr = calculate_psnr(origImg, final_pee_img)
@@ -1173,6 +1322,12 @@ def main():
                 final_hist_corr = histogram_correlation(hist_orig, hist_final)
             else:
                 final_psnr, final_ssim, final_hist_corr = calculate_color_metrics(origImg, final_pee_img)
+                
+                # 🔧 新增：輸出各通道的最終指標
+                if 'channel_metrics' in pee_stages[-1]:
+                    print("\nFinal Channel Metrics:")
+                    for ch_name, metrics in pee_stages[-1]['channel_metrics'].items():
+                        print(f"  {ch_name.capitalize()}: PSNR={metrics['psnr']:.2f}, SSIM={metrics['ssim']:.4f}, Hist_Corr={metrics['hist_corr']:.4f}")
 
             print("\nFinal Results:")
             print(f"Image Type: {'Grayscale' if is_grayscale_img else 'Color'}")
@@ -1190,6 +1345,15 @@ def main():
                 print("\nFinal Channel Metrics:")
                 for channel, metrics in pee_stages[-1]['channel_metrics'].items():
                     print(f"  {channel.capitalize()}: PSNR={metrics['psnr']:.2f}, SSIM={metrics['ssim']:.4f}, Hist_Corr={metrics['hist_corr']:.4f}")
+
+            # 🔧 新增：為彩色圖像創建通道比較圖表（在指標比較圖表創建部分）
+            if is_proposed:
+                # 為彩色圖像創建通道比較圖表
+                if not is_grayscale_img and 'channel_metrics' in pee_stages[0]:
+                    visualize_color_metrics_comparison(
+                        pee_stages, f"{plots_dir}/channel_metrics_comparison.png",
+                        f"Channel Metrics Comparison for {imgName}"
+                    )
 
             # 更新最終結果儲存
             final_results = {

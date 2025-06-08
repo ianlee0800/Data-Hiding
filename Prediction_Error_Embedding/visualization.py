@@ -10,7 +10,9 @@ import numpy as np
 import matplotlib.pyplot as plt
 import cv2
 import cupy as cp
+import matplotlib.patches as patches
 
+from matplotlib.patches import FancyBboxPatch
 from color import combine_color_channels
 from common import calculate_psnr, calculate_ssim, histogram_correlation
 from image_processing import save_image, generate_histogram, merge_image_flexible
@@ -64,7 +66,7 @@ def visualize_split(img, split_size, block_base=False):
 
 def visualize_quadtree(block_info, img_shape):
     """
-    創建 quadtree 分割視覺化，使用不同顏色標示不同大小的區塊
+    創建 quadtree 分割視覺化，使用不同顏色標示不同大小的區塊（無文字標註）
     
     Parameters:
     -----------
@@ -76,7 +78,7 @@ def visualize_quadtree(block_info, img_shape):
     Returns:
     --------
     numpy.ndarray
-        Quadtree 分割視覺化圖像
+        Quadtree 分割視覺化圖像（純視覺化，無文字）
     """
     # 創建空白圖像
     height, width = img_shape
@@ -84,6 +86,7 @@ def visualize_quadtree(block_info, img_shape):
     
     # 為不同大小的區塊定義不同顏色
     colors = {
+        1024: (220, 220, 220),  # 更淺的灰色
         512: (200, 200, 200),   # 淺灰色
         256: (100, 100, 200),   # 淺藍色
         128: (100, 200, 100),   # 淺綠色
@@ -96,7 +99,7 @@ def visualize_quadtree(block_info, img_shape):
     for size_str in sorted(block_info.keys(), key=int, reverse=True):
         size = int(size_str)
         blocks = block_info[size_str]['blocks']
-        color = colors.get(size, (150, 150, 150))  # 如果沒有定義顏色，使用灰色
+        color = colors.get(size, (150, 150, 150))
         
         for block in blocks:
             y, x = block['position']
@@ -107,7 +110,7 @@ def visualize_quadtree(block_info, img_shape):
 
 def save_comparison_image(img1, img2, save_path, labels=None):
     """
-    將兩張圖像水平拼接並儲存，用於比較
+    將兩張圖像水平拼接並儲存，用於比較（無文字標註版本）
     
     Parameters:
     -----------
@@ -118,50 +121,41 @@ def save_comparison_image(img1, img2, save_path, labels=None):
     save_path : str
         儲存路徑
     labels : tuple, optional
-        圖像標籤，格式為 (label1, label2)
+        圖像標籤（忽略，保持API兼容性）
     """
     # 確保兩張圖像有相同高度
-    h1, w1 = img1.shape
-    h2, w2 = img2.shape
+    h1, w1 = img1.shape[:2]
+    h2, w2 = img2.shape[:2]
     
     if h1 != h2:
         # 調整高度
         max_h = max(h1, h2)
         if h1 < max_h:
-            img1 = np.pad(img1, ((0, max_h - h1), (0, 0)), mode='constant', constant_values=0)
+            if len(img1.shape) == 3:
+                img1 = np.pad(img1, ((0, max_h - h1), (0, 0), (0, 0)), mode='constant', constant_values=0)
+            else:
+                img1 = np.pad(img1, ((0, max_h - h1), (0, 0)), mode='constant', constant_values=0)
         else:
-            img2 = np.pad(img2, ((0, max_h - h2), (0, 0)), mode='constant', constant_values=0)
+            if len(img2.shape) == 3:
+                img2 = np.pad(img2, ((0, max_h - h2), (0, 0), (0, 0)), mode='constant', constant_values=0)
+            else:
+                img2 = np.pad(img2, ((0, max_h - h2), (0, 0)), mode='constant', constant_values=0)
     
     # 在中間加入分隔線
-    separator = np.ones((max(h1, h2), 5), dtype=np.uint8) * 128  # 灰色分隔線
+    if len(img1.shape) == 3:  # 彩色圖像
+        separator = np.ones((max(h1, h2), 5, 3), dtype=np.uint8) * 128
+    else:  # 灰度圖像
+        separator = np.ones((max(h1, h2), 5), dtype=np.uint8) * 128
     
-    # 水平拼接圖像
+    # 水平拼接圖像（無文字標註）
     comparison = np.hstack((img1, separator, img2))
     
-    # 如果有提供標籤，添加文字
-    if labels:
-        # 轉換為彩色圖像以便添加彩色文字
-        comparison_rgb = cv2.cvtColor(comparison, cv2.COLOR_GRAY2RGB)
-        font = cv2.FONT_HERSHEY_SIMPLEX
-        font_scale = 0.8
-        font_color = (0, 0, 255)  # 紅色
-        font_thickness = 2
-        
-        # 添加第一個標籤
-        cv2.putText(comparison_rgb, labels[0], (10, 30), font, font_scale, font_color, font_thickness)
-        
-        # 添加第二個標籤
-        cv2.putText(comparison_rgb, labels[1], (w1 + 15, 30), font, font_scale, font_color, font_thickness)
-        
-        # 儲存彩色圖像
-        cv2.imwrite(save_path, comparison_rgb)
-    else:
-        # 儲存灰階圖像
-        cv2.imwrite(save_path, comparison)
+    # 直接儲存，不添加任何文字
+    cv2.imwrite(save_path, comparison)
 
-def create_block_size_distribution_chart(block_info, save_path, stage_num):
+def create_block_size_distribution_chart(block_info, save_path, stage_num, channel_name=None):
     """
-    創建區塊大小分布統計圖
+    創建區塊大小分布統計圖（支持通道名稱）
     
     Parameters:
     -----------
@@ -171,6 +165,8 @@ def create_block_size_distribution_chart(block_info, save_path, stage_num):
         儲存路徑
     stage_num : int
         階段編號
+    channel_name : str, optional
+        通道名稱（如果是彩色圖像的特定通道）
     """
     plt.figure(figsize=(10, 6))
     sizes = []
@@ -191,7 +187,13 @@ def create_block_size_distribution_chart(block_info, save_path, stage_num):
     plt.bar(sorted_sizes, sorted_counts, color='skyblue')
     plt.xlabel('Block Size')
     plt.ylabel('Count')
-    plt.title(f'Block Size Distribution in Stage {stage_num}')
+    
+    # 🔧 修改：根據是否有通道名稱調整標題
+    if channel_name:
+        plt.title(f'Block Size Distribution in Stage {stage_num} ({channel_name.capitalize()} Channel)')
+    else:
+        plt.title(f'Block Size Distribution in Stage {stage_num}')
+    
     plt.xticks(rotation=45)
     plt.tight_layout()
     plt.savefig(save_path)
@@ -490,8 +492,6 @@ def visualize_color_histograms(img, save_path, title="Color Image Histograms"):
     title : str, optional
         Main title for the histogram plot
     """
-    import matplotlib.pyplot as plt
-    import cv2
     
     # Split channels
     b, g, r = cv2.split(img)
@@ -543,8 +543,6 @@ def create_color_heatmap(original_img, embedded_img, save_path, intensity_scale=
     intensity_scale : float, optional
         Scale factor for difference visualization (default: 1.0)
     """
-    import numpy as np
-    import cv2
     
     # Calculate absolute difference for each channel
     b_diff = np.abs(embedded_img[:,:,0].astype(np.float32) - original_img[:,:,0].astype(np.float32))
@@ -600,8 +598,6 @@ def visualize_color_metrics_comparison(pee_stages, save_path, title="Channel Met
     title : str, optional
         Title for the plot
     """
-    import matplotlib.pyplot as plt
-    import numpy as np
     
     # Extract data
     stages = []
@@ -655,16 +651,16 @@ def visualize_color_metrics_comparison(pee_stages, save_path, title="Channel Met
 
 def create_color_channel_comparison(original_img, embedded_img, save_path):
     """
-    Create a visual comparison of original vs embedded for each color channel.
+    創建彩色通道對比的視覺化（無文字標註版本）
     
     Parameters:
     -----------
     original_img : numpy.ndarray
-        Original color image
+        原始彩色圖像
     embedded_img : numpy.ndarray
-        Embedded color image
+        嵌入後的彩色圖像
     save_path : str
-        Path to save the comparison image
+        保存路徑
     """
     import numpy as np
     import cv2
@@ -677,39 +673,28 @@ def create_color_channel_comparison(original_img, embedded_img, save_path):
     h, w = original_img.shape[:2]
     comparison = np.ones((h*3, w*2 + 10, 3), dtype=np.uint8) * 255  # White background
     
-    # Place images in grid
-    # Blue channel
-    comparison[:h, :w, 0] = b1  # Blue channel of original in first position
-    comparison[:h, :w, 1:] = 0  # Zero out other channels
-    comparison[:h, w+10:w*2+10, 0] = b2  # Blue channel of embedded
+    # Place images in grid (無文字標註，純圖像對比)
+    # Blue channel row
+    comparison[:h, :w, 0] = b1
+    comparison[:h, :w, 1:] = 0
+    comparison[:h, w+10:w*2+10, 0] = b2
     comparison[:h, w+10:w*2+10, 1:] = 0
     
-    # Green channel
-    comparison[h:h*2, :w, 1] = g1  # Green channel of original
+    # Green channel row
+    comparison[h:h*2, :w, 1] = g1
     comparison[h:h*2, :w, 0] = 0
     comparison[h:h*2, :w, 2] = 0
-    comparison[h:h*2, w+10:w*2+10, 1] = g2  # Green channel of embedded
+    comparison[h:h*2, w+10:w*2+10, 1] = g2
     comparison[h:h*2, w+10:w*2+10, 0] = 0
     comparison[h:h*2, w+10:w*2+10, 2] = 0
     
-    # Red channel
-    comparison[h*2:h*3, :w, 2] = r1  # Red channel of original
+    # Red channel row
+    comparison[h*2:h*3, :w, 2] = r1
     comparison[h*2:h*3, :w, :2] = 0
-    comparison[h*2:h*3, w+10:w*2+10, 2] = r2  # Red channel of embedded
+    comparison[h*2:h*3, w+10:w*2+10, 2] = r2
     comparison[h*2:h*3, w+10:w*2+10, :2] = 0
     
-    # Add text labels
-    font = cv2.FONT_HERSHEY_SIMPLEX
-    cv2.putText(comparison, "Original Blue", (10, 30), font, 1, (255, 255, 255), 2)
-    cv2.putText(comparison, "Embedded Blue", (w+20, 30), font, 1, (255, 255, 255), 2)
-    
-    cv2.putText(comparison, "Original Green", (10, h+30), font, 1, (255, 255, 255), 2)
-    cv2.putText(comparison, "Embedded Green", (w+20, h+30), font, 1, (255, 255, 255), 2)
-    
-    cv2.putText(comparison, "Original Red", (10, h*2+30), font, 1, (255, 255, 255), 2)
-    cv2.putText(comparison, "Embedded Red", (w+20, h*2+30), font, 1, (255, 255, 255), 2)
-    
-    # Save comparison
+    # 直接保存，不添加任何文字標籤
     cv2.imwrite(save_path, comparison)
     
     return comparison
@@ -832,6 +817,61 @@ def create_all_quadtree_block_visualizations(block_info, original_img, output_di
     # 額外創建一個所有區塊的合併視覺化
     combined_path = f"{output_dir}/stage_{stage_num}_all_blocks.png"
     all_blocks_vis = visualize_quadtree(block_info, original_img.shape[:2])  # 只需要形狀
+    cv2.imwrite(combined_path, all_blocks_vis)
+    visualization_paths['all'] = combined_path
+    
+    return visualization_paths
+
+def create_all_quadtree_block_visualizations_color(block_info, original_img, output_dir, stage_num, channel_name=None):
+    """
+    為彩色圖像的所有區塊大小創建單獨的視覺化圖像
+    
+    Parameters:
+    -----------
+    block_info : dict
+        包含區塊資訊的字典
+    original_img : numpy.ndarray
+        原始圖像（彩色或對應通道的灰度圖像）
+    output_dir : str
+        輸出目錄
+    stage_num : int
+        階段編號
+    channel_name : str, optional
+        通道名稱（'red', 'green', 'blue' 或 None）
+    
+    Returns:
+    --------
+    dict
+        各區塊大小圖像的路徑字典
+    """
+    # 確保輸出目錄存在
+    os.makedirs(output_dir, exist_ok=True)
+    
+    # 標準區塊大小列表
+    block_sizes = [16, 32, 64, 128, 256, 512, 1024]
+    
+    # 儲存各圖像路徑
+    visualization_paths = {}
+    
+    # 為每個出現的區塊大小創建視覺化
+    for size in block_sizes:
+        size_str = str(size)
+        if size_str in block_info and len(block_info[size_str]['blocks']) > 0:
+            if channel_name:
+                save_path = f"{output_dir}/stage_{stage_num}_{channel_name}_blocks_{size}x{size}.png"
+            else:
+                save_path = f"{output_dir}/stage_{stage_num}_blocks_{size}x{size}.png"
+            
+            visualize_specific_quadtree_blocks_color(block_info, original_img, size, save_path, channel_name)
+            visualization_paths[size] = save_path
+    
+    # 額外創建一個所有區塊的合併視覺化
+    if channel_name:
+        combined_path = f"{output_dir}/stage_{stage_num}_{channel_name}_all_blocks.png"
+    else:
+        combined_path = f"{output_dir}/stage_{stage_num}_all_blocks.png"
+    
+    all_blocks_vis = visualize_quadtree(block_info, original_img.shape[:2])
     cv2.imwrite(combined_path, all_blocks_vis)
     visualization_paths['all'] = combined_path
     
@@ -1000,11 +1040,6 @@ def create_rotation_method_flowchart(original_img, imgName, method, prediction_m
     output_dir : str
         輸出目錄
     """
-    import matplotlib.pyplot as plt
-    import matplotlib.patches as patches
-    from matplotlib.patches import FancyBboxPatch
-    import numpy as np
-    import os
     
     # 確保輸出目錄存在
     method_dir = f"{output_dir}/image/{imgName}/{method}"
@@ -1135,9 +1170,6 @@ def create_rotation_prediction_error_analysis(original_img, imgName, method, pre
     output_dir : str
         輸出目錄
     """
-    import matplotlib.pyplot as plt
-    import numpy as np
-    import os
     
     # 確保輸出目錄存在
     method_dir = f"{output_dir}/image/{imgName}/{method}"
@@ -1225,12 +1257,6 @@ def create_rotation_method_flowchart_color(original_img, imgName, method, predic
     """
     創建彩色圖像旋轉方法的完整流程示意圖
     """
-    import matplotlib.pyplot as plt
-    import matplotlib.patches as patches
-    from matplotlib.patches import FancyBboxPatch
-    import numpy as np
-    import cv2
-    import os
     
     # 確保輸出目錄存在
     method_dir = f"{output_dir}/image/{imgName}/{method}"
@@ -1382,10 +1408,6 @@ def create_rotation_prediction_error_analysis_color(original_img, imgName, metho
     """
     創建彩色圖像旋轉方法的預測誤差分析圖
     """
-    import matplotlib.pyplot as plt
-    import numpy as np
-    import cv2
-    import os
     
     # 確保輸出目錄存在
     method_dir = f"{output_dir}/image/{imgName}/{method}"
@@ -1499,10 +1521,6 @@ def create_split_rotation_effect_grayscale(sub_images, rotations, split_size, bl
     tuple
         (merged_image, tiled_image) 合成圖像和拼貼圖像
     """
-    import cupy as cp
-    import numpy as np
-    import cv2
-    import os
     
     # 確保目錄存在
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -1628,12 +1646,6 @@ def create_split_rotation_effect_color(channel_sub_images, rotations, split_size
     dict
         包含各通道結果的字典
     """
-    import cupy as cp
-    import numpy as np
-    import cv2
-    import os
-
-    from image_processing import merge_image_flexible
     
     # 確保目錄存在
     os.makedirs(save_dir, exist_ok=True)
@@ -1928,5 +1940,270 @@ def convert_single_channel_to_color(single_channel_img, channel_name):
     else:
         raise ValueError(f"Unknown channel name: {channel_name}")
     
-    
     return colored_img
+
+def enhance_with_grid_visualization(combined_stage, b_img, g_img, r_img, image_dir, stage_num):
+    """
+    🎨 增強 with_grid 視覺化：生成三通道彩色版本和組合版本（僅彩色）
+    """
+    from visualization import convert_single_channel_to_color
+    from image_processing import add_grid_lines
+    
+    # 創建目錄
+    with_grid_dir = f"{image_dir}/with_grid"
+    colored_grid_dir = f"{with_grid_dir}/colored"
+    combined_grid_dir = f"{with_grid_dir}/combined"
+    os.makedirs(colored_grid_dir, exist_ok=True)
+    os.makedirs(combined_grid_dir, exist_ok=True)
+    
+    channel_names = ['blue', 'green', 'red']
+    channel_imgs = [b_img, g_img, r_img]
+    colored_grids = []
+    
+    # 處理每個通道
+    for ch_name, ch_img in zip(channel_names, channel_imgs):
+        if ch_name in combined_stage['channel_block_info']:
+            block_info = combined_stage['channel_block_info'][ch_name]
+            
+            # 生成帶網格的灰階圖像
+            grid_img_gray = add_grid_lines(ch_img.copy(), block_info)
+            
+            # 🎨 轉換為對應顏色並保存
+            grid_img_colored = convert_single_channel_to_color(grid_img_gray, ch_name)
+            colored_grids.append(grid_img_colored)
+            
+            # 🎨 僅保存彩色網格圖像
+            cv2.imwrite(f"{with_grid_dir}/stage_{stage_num}_{ch_name}_grid.png", grid_img_colored)
+    
+    # 🎨 生成三通道組合的彩色網格圖像
+    if len(colored_grids) == 3:
+        # 方法1：直接疊加三個彩色通道（創造混合效果）
+        combined_overlay = np.zeros_like(colored_grids[0], dtype=np.float32)
+        for colored_grid in colored_grids:
+            combined_overlay += colored_grid.astype(np.float32)
+        combined_overlay = np.clip(combined_overlay / 3, 0, 255).astype(np.uint8)
+        
+        cv2.imwrite(f"{combined_grid_dir}/stage_{stage_num}_overlay_grid.png", combined_overlay)
+        
+        # 方法2：使用原始通道組合後再添加統一網格
+        from color import combine_color_channels
+        combined_img = combine_color_channels(b_img, g_img, r_img)
+        
+        # 使用藍色通道的block_info作為代表（因為三通道通常有相似的分割）
+        if 'blue' in combined_stage['channel_block_info']:
+            combined_grid = add_grid_lines_color(combined_img.copy(), combined_stage['channel_block_info']['blue'])
+            cv2.imwrite(f"{combined_grid_dir}/stage_{stage_num}_unified_grid.png", combined_grid)
+
+def enhance_block_visualizations(combined_stage, original_img, image_dir, stage_num):
+    """
+    🎨 增強 block_size_visualizations：生成三通道彩色版本和組合版本
+    """
+    from visualization import (convert_single_channel_to_color, 
+                             visualize_specific_quadtree_blocks)
+    from color import split_color_channels, combine_color_channels
+    
+    # 創建目錄結構
+    blocks_viz_dir = f"{image_dir}/block_size_visualizations"
+    colored_blocks_dir = f"{blocks_viz_dir}/colored"
+    combined_blocks_dir = f"{blocks_viz_dir}/combined"
+    
+    for ch_name in ['blue', 'green', 'red']:
+        ch_colored_dir = f"{colored_blocks_dir}/{ch_name}"
+        os.makedirs(ch_colored_dir, exist_ok=True)
+    os.makedirs(combined_blocks_dir, exist_ok=True)
+    
+    # 分離原始圖像通道
+    b_orig, g_orig, r_orig = split_color_channels(original_img)
+    channel_origs = {'blue': b_orig, 'green': g_orig, 'red': r_orig}
+    
+    # 標準區塊大小列表
+    block_sizes = [16, 32, 64, 128, 256, 512, 1024]
+    
+    # 為每個區塊大小創建視覺化
+    for size in block_sizes:
+        size_str = str(size)
+        
+        # 檢查是否有這個大小的區塊
+        has_blocks = any(
+            size_str in combined_stage['channel_block_info'][ch] and 
+            len(combined_stage['channel_block_info'][ch][size_str]['blocks']) > 0
+            for ch in ['blue', 'green', 'red']
+            if ch in combined_stage['channel_block_info']
+        )
+        
+        if has_blocks:
+            colored_channel_imgs = []
+            
+            # 處理每個通道
+            for ch_name, ch_orig in channel_origs.items():
+                if (ch_name in combined_stage['channel_block_info'] and 
+                    size_str in combined_stage['channel_block_info'][ch_name] and
+                    len(combined_stage['channel_block_info'][ch_name][size_str]['blocks']) > 0):
+                    
+                    # 生成灰階的區塊視覺化
+                    block_viz_gray = visualize_specific_quadtree_blocks(
+                        combined_stage['channel_block_info'][ch_name], 
+                        ch_orig, size, 
+                        f"{blocks_viz_dir}/{ch_name}/stage_{stage_num}_blocks_{size}x{size}.png"
+                    )
+                    
+                    # 🎨 轉換為對應顏色
+                    block_viz_colored = convert_single_channel_to_color(block_viz_gray, ch_name)
+                    colored_channel_imgs.append(block_viz_colored)
+                    
+                    # 保存單通道彩色版本
+                    colored_save_path = f"{colored_blocks_dir}/{ch_name}/stage_{stage_num}_blocks_{size}x{size}_colored.png"
+                    cv2.imwrite(colored_save_path, block_viz_colored)
+                    
+                else:
+                    # 如果該通道沒有這個大小的區塊，創建空的佔位符
+                    empty_colored = np.zeros((ch_orig.shape[0], ch_orig.shape[1], 3), dtype=np.uint8)
+                    colored_channel_imgs.append(empty_colored)
+            
+            # 🎨 生成三通道組合的彩色視覺化
+            if len(colored_channel_imgs) == 3:
+                # 方法1：疊加三個彩色通道
+                combined_overlay = np.zeros_like(colored_channel_imgs[0], dtype=np.float32)
+                for colored_img in colored_channel_imgs:
+                    combined_overlay += colored_img.astype(np.float32)
+                combined_overlay = np.clip(combined_overlay, 0, 255).astype(np.uint8)
+                
+                overlay_path = f"{combined_blocks_dir}/stage_{stage_num}_blocks_{size}x{size}_overlay.png"
+                cv2.imwrite(overlay_path, combined_overlay)
+                
+                # 方法2：使用實際的彩色組合（基於原始圖像的區塊分割）
+                # 這需要更複雜的邏輯，暫時使用藍色通道的分割資訊作為代表
+                if ('blue' in combined_stage['channel_block_info'] and 
+                    size_str in combined_stage['channel_block_info']['blue']):
+                    
+                    color_blocks_viz = visualize_specific_quadtree_blocks_color(
+                        combined_stage['channel_block_info']['blue'], 
+                        original_img, size
+                    )
+                    
+                    unified_path = f"{combined_blocks_dir}/stage_{stage_num}_blocks_{size}x{size}_unified.png"
+                    cv2.imwrite(unified_path, color_blocks_viz)
+
+def enhance_final_visualizations(pee_stages, final_b_img, final_g_img, final_r_img, image_dir):
+    """
+    🎨 增強最終結果的視覺化
+    """
+    from visualization import convert_single_channel_to_color
+    from image_processing import add_grid_lines
+    from color import combine_color_channels
+    
+    if not pee_stages:
+        return
+    
+    final_stage = pee_stages[-1]
+    
+    # 🎨 最終 with_grid 視覺化
+    if 'channel_block_info' in final_stage:
+        with_grid_dir = f"{image_dir}/with_grid"
+        colored_grid_dir = f"{with_grid_dir}/colored"
+        combined_grid_dir = f"{with_grid_dir}/combined"
+        os.makedirs(colored_grid_dir, exist_ok=True)
+        os.makedirs(combined_grid_dir, exist_ok=True)
+        
+        channel_names = ['blue', 'green', 'red']
+        channel_imgs = [final_b_img, final_g_img, final_r_img]
+        colored_final_grids = []
+        
+        for ch_name, ch_img in zip(channel_names, channel_imgs):
+            if ch_name in final_stage['channel_block_info']:
+                # 生成帶網格的灰階圖像
+                final_grid_gray = add_grid_lines(ch_img.copy(), final_stage['channel_block_info'][ch_name])
+                
+                # 🎨 轉換為對應顏色
+                final_grid_colored = convert_single_channel_to_color(final_grid_gray, ch_name)
+                colored_final_grids.append(final_grid_colored)
+                
+                # 保存最終單通道彩色網格
+                cv2.imwrite(f"{colored_grid_dir}/final_{ch_name}_grid_colored.png", final_grid_colored)
+                
+                # 保存原始灰階版本（向後兼容）
+                cv2.imwrite(f"{with_grid_dir}/final_{ch_name}_channel_grid.png", final_grid_gray)
+        
+        # 🎨 生成最終組合彩色網格
+        if len(colored_final_grids) == 3:
+            # 疊加版本
+            final_overlay = np.zeros_like(colored_final_grids[0], dtype=np.float32)
+            for colored_grid in colored_final_grids:
+                final_overlay += colored_grid.astype(np.float32)
+            final_overlay = np.clip(final_overlay / 3, 0, 255).astype(np.uint8)
+            cv2.imwrite(f"{combined_grid_dir}/final_overlay_grid.png", final_overlay)
+            
+            # 統一版本
+            final_combined_img = combine_color_channels(final_b_img, final_g_img, final_r_img)
+            if 'blue' in final_stage['channel_block_info']:
+                final_unified_grid = add_grid_lines_color(final_combined_img.copy(), 
+                                                        final_stage['channel_block_info']['blue'])
+                cv2.imwrite(f"{combined_grid_dir}/final_unified_grid.png", final_unified_grid)
+
+def add_grid_lines_color(img, block_info):
+    """
+    為彩色圖像添加網格線的輔助函數
+    """
+    grid_img = img.copy()
+    grid_color = [128, 128, 128]  # 灰色格線
+    
+    # 線寬設定
+    line_widths = {
+        1024: 4,
+        512: 3,
+        256: 3,
+        128: 2,
+        64: 2,
+        32: 1,
+        16: 1
+    }
+    
+    # 從大到小處理各個區塊
+    for size_str in sorted(block_info.keys(), key=lambda x: int(x), reverse=True):
+        size = int(size_str)
+        line_width = line_widths.get(size, 1)
+        blocks = block_info[size_str]['blocks']
+        
+        for block in blocks:
+            y, x = block['position']
+            block_size = block['size']
+            
+            # 繪製邊框
+            for i in range(line_width):
+                # 上下邊框
+                grid_img[y+i:y+i+1, x:x+block_size] = grid_color
+                grid_img[y+block_size-i-1:y+block_size-i, x:x+block_size] = grid_color
+                # 左右邊框
+                grid_img[y:y+block_size, x+i:x+i+1] = grid_color
+                grid_img[y:y+block_size, x+block_size-i-1:x+block_size-i] = grid_color
+    
+    return grid_img
+
+def visualize_specific_quadtree_blocks_color(block_info, original_color_img, specific_size):
+    """
+    為彩色圖像創建特定大小區塊的視覺化
+    """
+    height, width = original_color_img.shape[:2]
+    visualization = np.zeros((height, width, 3), dtype=np.uint8)  # 黑色背景
+    
+    size_str = str(specific_size)
+    if size_str in block_info:
+        blocks = block_info[size_str]['blocks']
+        
+        for block in blocks:
+            y, x = block['position']
+            
+            # 複製原圖這個區塊的內容
+            visualization[y:y+specific_size, x:x+specific_size] = original_color_img[y:y+specific_size, x:x+specific_size]
+            
+            # 添加彩色邊框
+            border_width = max(1, specific_size // 64)
+            border_color = [255, 255, 0]  # 黃色邊框
+            
+            # 繪製邊框
+            visualization[y:y+border_width, x:x+specific_size] = border_color
+            visualization[y+specific_size-border_width:y+specific_size, x:x+specific_size] = border_color
+            visualization[y:y+specific_size, x:x+border_width] = border_color
+            visualization[y:y+specific_size, x+specific_size-border_width:x+specific_size] = border_color
+    
+    return visualization

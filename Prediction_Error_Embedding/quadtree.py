@@ -1,5 +1,6 @@
 import numpy as np
 import cupy as cp
+import os
 from pee import (
     multi_pass_embedding,
     compute_improved_adaptive_el,
@@ -8,15 +9,21 @@ from pee import (
 
 from utils import (
     generate_random_binary_array,
-    ensure_dir
 )
-
 from common import *
-
+from color import (
+    split_color_channels,
+    combine_color_channels
+)
 from image_processing import (
     PredictionMethod,
     save_image,
-    predict_image_cuda
+    predict_image_cuda,
+)
+from visualization import (
+    enhance_block_visualizations,
+    enhance_final_visualizations,
+    enhance_with_grid_visualization
 )
 
 def cleanup_quadtree_resources():
@@ -506,10 +513,6 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
             imgName, output_dir
         )
     try:
-        # 導入必要的模組
-        import os
-        import cv2
-        
         # 定義 ensure_dir 函數
         def ensure_dir(file_path):
             """確保目錄存在，如果不存在則創建"""
@@ -1000,7 +1003,7 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
                                        imgName=None,
                                        output_dir=None):
     """
-    Process a color image using quadtree PEE method.
+    Process a color image using quadtree PEE method with enhanced color visualization.
     """
     import os
     import cv2
@@ -1008,6 +1011,8 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
     import cupy as cp
     from color import split_color_channels, combine_color_channels
     from common import cleanup_memory
+    # 🎨 導入視覺化函數
+    from visualization import convert_single_channel_to_color
     
     if prediction_method is None:
         from image_processing import PredictionMethod
@@ -1019,10 +1024,14 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
     # Track total payload across all channels
     total_payload = 0
     
-    # Create directory structure for channel outputs if imgName is provided
+    # 🎨 創建增強的目錄結構
     if imgName and output_dir:
         channels_dir = f"{output_dir}/image/{imgName}/quadtree/channels"
         os.makedirs(channels_dir, exist_ok=True)
+        
+        # 🎨 新增：為彩色通道視覺化創建目錄
+        colored_channels_dir = f"{output_dir}/image/{imgName}/quadtree/channels/colored"
+        os.makedirs(colored_channels_dir, exist_ok=True)
     
     color_pee_stages = []
     
@@ -1056,9 +1065,13 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
     )
     total_payload += b_payload
     
-    # Save blue channel output if imgName is provided
+    # 🎨 保存藍色通道結果（灰階和彩色版本）
     if imgName and output_dir:
+        # 原始灰階版本
         cv2.imwrite(f"{channels_dir}/{imgName}_blue_final.png", final_b_img)
+        # 🎨 新增：彩色版本
+        blue_colored = convert_single_channel_to_color(final_b_img, 'blue')
+        cv2.imwrite(f"{colored_channels_dir}/{imgName}_blue_final_colored.png", blue_colored)
     
     # Clean GPU memory between channel processing
     cleanup_memory()
@@ -1075,9 +1088,13 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
     )
     total_payload += g_payload
     
-    # Save green channel output if imgName is provided
+    # 🎨 保存綠色通道結果（灰階和彩色版本）
     if imgName and output_dir:
+        # 原始灰階版本
         cv2.imwrite(f"{channels_dir}/{imgName}_green_final.png", final_g_img)
+        # 🎨 新增：彩色版本
+        green_colored = convert_single_channel_to_color(final_g_img, 'green')
+        cv2.imwrite(f"{colored_channels_dir}/{imgName}_green_final_colored.png", green_colored)
     
     # Clean GPU memory between channel processing
     cleanup_memory()
@@ -1094,9 +1111,13 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
     )
     total_payload += r_payload
     
-    # Save red channel output if imgName is provided
+    # 🎨 保存紅色通道結果（灰階和彩色版本）
     if imgName and output_dir:
+        # 原始灰階版本
         cv2.imwrite(f"{channels_dir}/{imgName}_red_final.png", final_r_img)
+        # 🎨 新增：彩色版本
+        red_colored = convert_single_channel_to_color(final_r_img, 'red')
+        cv2.imwrite(f"{colored_channels_dir}/{imgName}_red_final_colored.png", red_colored)
     
     # Combine channels back into a color image
     final_color_img = combine_color_channels(final_b_img, final_g_img, final_r_img)
@@ -1201,6 +1222,23 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
                             combined_block_counts[size_str] = 0
                         combined_block_counts[size_str] += count
             combined_stage['block_counts'] = combined_block_counts
+        
+        # 🎨 新增：增強的視覺化處理
+        if imgName and output_dir and prediction_method.value.upper() == "PROPOSED":
+            image_dir = f"{output_dir}/image/{imgName}/quadtree"
+            
+            # 🎨 處理 with_grid 的增強視覺化
+            if 'channel_block_info' in combined_stage:
+                enhance_with_grid_visualization(
+                    combined_stage, b_stage_img, g_stage_img, r_stage_img, 
+                    image_dir, i
+                )
+            
+            # 🎨 處理 block_size_visualizations 的增強視覺化
+            if 'channel_block_info' in combined_stage:
+                enhance_block_visualizations(
+                    combined_stage, img, image_dir, i
+                )
             
         # Add stage to combined stages
         color_pee_stages.append(combined_stage)
@@ -1210,5 +1248,12 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
             stage_dir = f"{output_dir}/image/{imgName}/quadtree"
             os.makedirs(stage_dir, exist_ok=True)
             cv2.imwrite(f"{stage_dir}/color_stage_{i}_result.png", combined_stage['stage_img'])
+    
+    # 🎨 最終結果的增強視覺化
+    if imgName and output_dir and prediction_method.value.upper() == "PROPOSED":
+        enhance_final_visualizations(
+            color_pee_stages, final_b_img, final_g_img, final_r_img,
+            f"{output_dir}/image/{imgName}/quadtree"
+        )
     
     return final_color_img, total_payload, color_pee_stages

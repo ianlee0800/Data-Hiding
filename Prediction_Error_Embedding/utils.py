@@ -4,11 +4,26 @@ import cv2
 import matplotlib.pyplot as plt
 import os
 import time
+import traceback
+from scipy.signal import savgol_filter
+from tqdm import tqdm
 from datetime import datetime
 import cupy as cp
 from prettytable import PrettyTable
-from common import calculate_psnr, calculate_ssim, histogram_correlation, cleanup_memory
-from image_processing import save_image, generate_histogram, PredictionMethod
+
+from common import (
+    calculate_psnr,
+    calculate_ssim,
+    histogram_correlation,
+    cleanup_memory
+)
+from image_processing import (
+    save_image,
+    generate_histogram,
+    PredictionMethod
+)
+
+
 
 # =============================================================================
 # 第一部分：基本工具函數
@@ -32,9 +47,7 @@ def create_pee_info_table(pee_stages, use_different_weights, total_pixels,
                          split_size, quad_tree=False):
     """
     創建 PEE 資訊表格的完整函數 - 支援彩色圖像
-    """
-    from prettytable import PrettyTable
-    
+    """    
     table = PrettyTable()
     
     # 🔧 修改：改進彩色圖像檢測邏輯
@@ -331,7 +344,6 @@ def run_embedding_with_target(origImg, method, prediction_method, ratio_of_ones,
         pee_process_with_split_cuda
     )
     from quadtree import pee_process_with_quadtree_cuda
-    
     # 重置GPU記憶體
     cp.get_default_memory_pool().free_all_blocks()
     
@@ -591,9 +603,7 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
     
     # 結果列表現在只包含最大容量點
     results = [max_capacity_result]
-    
-    # 使用 tqdm 添加進度條
-    from tqdm import tqdm
+
     
     # 運行每個測量點，但跳過最大容量點
     for i, target in enumerate(tqdm(payload_points, desc="處理測量點")):
@@ -753,7 +763,7 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
         # 第二步：應用Savitzky-Golay平滑處理（如果數據點足夠多）
         if len(df) >= 7:  # 需要至少7個點以獲得良好效果
             try:
-                from scipy.signal import savgol_filter
+
                 
                 # 創建臨時DataFrame以排除最大容量點進行平滑處理
                 temp_df = df[df.index != max_capacity_idx].copy()
@@ -1188,8 +1198,6 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
     dict
         包含各預測器測量結果的字典
     """
-    import cv2
-    from tqdm import tqdm
     
     # 設置默認的預測器ratio字典
     if predictor_ratios is None:
@@ -1304,7 +1312,6 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
             print(f"Error processing {method_name.lower()}: {str(e)}")
             with open(log_file, 'a') as f:
                 f.write(f"Error processing {method_name.lower()}: {str(e)}\n")
-                import traceback
                 f.write(traceback.format_exc())
                 f.write("\n\n")
     
@@ -1332,7 +1339,6 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
         print(f"Error generating comparison: {str(e)}")
         with open(log_file, 'a') as f:
             f.write(f"\nError generating comparison: {str(e)}\n")
-            import traceback
             f.write(traceback.format_exc())
     
     return all_results
@@ -1372,17 +1378,6 @@ def run_method_comparison(imgName, filetype="png", predictor="proposed",
     dict
         包含每個方法結果的字典 {方法名稱: DataFrame}
     """
-    import os
-    import cv2
-    import numpy as np
-    import pandas as pd
-    import matplotlib.pyplot as plt
-    import time
-    from datetime import datetime
-    from tqdm import tqdm
-    
-    from image_processing import PredictionMethod
-    from common import cleanup_memory
     
     # 讀取原始圖像
     origImg = cv2.imread(f"./Prediction_Error_Embedding/image/{imgName}.{filetype}", cv2.IMREAD_GRAYSCALE)
@@ -1476,7 +1471,6 @@ def run_method_comparison(imgName, filetype="png", predictor="proposed",
             print(f"Error processing {method_name}: {str(e)}")
             with open(log_file, 'a') as f:
                 f.write(f"Error processing {method_name}: {str(e)}\n")
-                import traceback
                 f.write(traceback.format_exc())
                 f.write("\n\n")
             
@@ -1699,8 +1693,6 @@ def plot_method_comparison(all_results, imgName, predictor, output_dir):
     output_dir : str
         輸出目錄
     """
-    import matplotlib.pyplot as plt
-    import numpy as np
     
     # 為不同方法設置顏色和標記
     colors = {
@@ -1838,8 +1830,6 @@ def create_comparative_table(all_results, output_path):
     pandas.DataFrame
         比較表
     """
-    import pandas as pd
-    import numpy as np
     
     # 首先，識別共同的 BPP 範圍
     all_bpp_values = []
@@ -1942,9 +1932,6 @@ def create_radar_chart(all_results, predictor, imgName, output_dir):
     output_dir : str
         輸出目錄
     """
-    import matplotlib.pyplot as plt
-    import numpy as np
-    import pandas as pd
     
     # 檢查是否有足夠的方法來創建雷達圖
     if len(all_results) < 2:
@@ -2317,12 +2304,12 @@ def run_multiple_predictors(imgName, filetype="png", method="quadtree",
     tuple
         (results_df, all_stats) 包含比較結果的DataFrame和統計數據
     """
+    
     from embedding import (
         pee_process_with_rotation_cuda,
         pee_process_with_split_cuda
     )
     from quadtree import pee_process_with_quadtree_cuda
-    import cv2
     
     # 設置默認的預測器ratio字典
     if predictor_ratios is None:
@@ -2498,7 +2485,6 @@ def run_multiple_predictors(imgName, filetype="png", method="quadtree",
             print(f"Error processing {method_name.lower()}: {str(e)}")
             with open(log_file, 'a') as f:
                 f.write(f"Error processing {method_name.lower()}: {str(e)}\n")
-                import traceback
                 f.write(traceback.format_exc())
                 f.write("\n\n")
     
@@ -2534,7 +2520,6 @@ def run_multiple_predictors(imgName, filetype="png", method="quadtree",
             print(f"Error generating comparison: {str(e)}")
             with open(log_file, 'a') as f:
                 f.write(f"\nError generating comparison: {str(e)}\n")
-                import traceback
                 f.write(traceback.format_exc())
     
     else:
@@ -2704,9 +2689,6 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
     # 清理記憶體
     cleanup_memory()
     
-    # 使用 tqdm 添加進度條
-    from tqdm import tqdm
-    
     # 運行其餘級距的測量 (1到segments-1，跳過最後一個因為已經有了max結果)
     for i, target in enumerate(tqdm(payload_points[:-1], desc=f"處理 {method_name} 數據點")):
         percentage = (i+1) / segments * 100
@@ -2868,5 +2850,3 @@ def create_wide_format_tables(all_results, output_dir):
         f.write(hist_corr_df.to_latex(index=False, float_format="%.4f"))
     
     print(f"Wide format tables saved to {output_dir}")
-    
-    
