@@ -118,19 +118,38 @@ def main():
     split_size = 2            # 用於 rotation 和 split 方法
     block_base = True        # 用於 split 方法
     
-    # quad tree 特定參數
+    # 🔧 修改：quad tree 特定參數 - 支援自適應 variance threshold
     quad_tree_params = {
-        'min_block_size': 16,   # 支援到16x16
-        'variance_threshold': 300
+        'min_block_size': 16,                    # 支援到16x16
+        'variance_threshold': 300,               # 預設固定值（當不使用自適應時）
+        'adaptive_threshold': True,              # 🔧 新增：是否使用自適應 threshold
+        'search_mode': 'balanced',               # 🔧 新增：自適應搜索模式 ('fast', 'balanced', 'thorough')
+        'target_bpp_for_search': 0.8,           # 🔧 新增：自適應搜索的目標BPP
+        'target_psnr_for_search': 35.0          # 🔧 新增：自適應搜索的目標PSNR
     }
     
-    # 方法特定參數
+    # 🔧 修改：方法特定參數 - 使用 get() 方法避免 KeyError
     method_params = {
-        "rotation": {"split_size": split_size, "use_different_weights": use_different_weights},
-        "split": {"split_size": split_size, "block_base": block_base, "use_different_weights": use_different_weights},
-        "quadtree": {"min_block_size": quad_tree_params['min_block_size'], 
-                    "variance_threshold": quad_tree_params['variance_threshold'], 
-                    "use_different_weights": use_different_weights}
+        "rotation": {
+            "split_size": split_size, 
+            "use_different_weights": use_different_weights
+        },
+        "split": {
+            "split_size": split_size, 
+            "block_base": block_base, 
+            "use_different_weights": use_different_weights
+        },
+        "quadtree": {
+            "min_block_size": quad_tree_params['min_block_size'],
+            # 🔧 修改：使用 get() 方法，如果鍵不存在則使用預設值
+            "variance_threshold": quad_tree_params.get('variance_threshold', 300),
+            "use_different_weights": use_different_weights,
+            # 🔧 新增：自適應相關參數
+            "adaptive_threshold": quad_tree_params.get('adaptive_threshold', False),
+            "search_mode": quad_tree_params.get('search_mode', 'balanced'),
+            "target_bpp_for_search": quad_tree_params.get('target_bpp_for_search', 0.8),
+            "target_psnr_for_search": quad_tree_params.get('target_psnr_for_search', 35.0)
+        }
     }
     
     # 啟用詳細輸出
@@ -354,19 +373,26 @@ def main():
                     target_payload_size=-1  # 使用最大嵌入量
                 )
             elif method == "quadtree":
+                # 🔧 修改：quadtree 方法呼叫，新增自適應參數
                 final_pee_img, total_payload, pee_stages = pee_process_with_quadtree_cuda(
                     origImg,
                     total_embeddings,
                     ratio_of_ones,
                     use_different_weights,
                     quad_tree_params['min_block_size'],
-                    quad_tree_params['variance_threshold'],
+                    quad_tree_params.get('variance_threshold', 300),  # 🔧 使用 get() 避免 KeyError
                     el_mode,
                     rotation_mode='random',
                     prediction_method=prediction_method,
                     target_payload_size=-1,
+                    max_block_size=None,
                     imgName=imgName,  # Pass the image name
-                    output_dir="./Prediction_Error_Embedding/outcome"  # Pass the output directory
+                    output_dir="./Prediction_Error_Embedding/outcome",  # Pass the output directory
+                    # 🔧 新增：自適應 threshold 相關參數
+                    adaptive_threshold=quad_tree_params.get('adaptive_threshold', False),
+                    search_mode=quad_tree_params.get('search_mode', 'balanced'),
+                    target_bpp_for_search=quad_tree_params.get('target_bpp_for_search', 0.8),
+                    target_psnr_for_search=quad_tree_params.get('target_psnr_for_search', 35.0)
                 )
 
             # 如果是rotation方法且是proposed預測器，生成論文圖像
