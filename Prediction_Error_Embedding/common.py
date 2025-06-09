@@ -183,6 +183,7 @@ def improved_predict_image_cpu(img, weight):
 def compute_improved_adaptive_el_kernel(img, local_el, window_size, max_el, block_size):
     """
     計算改進的自適應EL值的CUDA kernel，優化版本
+    修改：EL值範圍改為1~5，不再限制為奇數
     """
     x, y = cuda.grid(2)
     if x < img.shape[1] and y < img.shape[0]:
@@ -213,7 +214,7 @@ def compute_improved_adaptive_el_kernel(img, local_el, window_size, max_el, bloc
         local_mean = local_sum / count
         local_variance = (local_sum_sq / count) - (local_mean * local_mean)
         
-        # 使用簡單的variance正規化策略，調整以支持更大的區塊
+        # 修改：調整variance正規化策略，映射到1~5範圍
         max_variance = 6400  # 預設值
         if block_size > 0:
             if block_size >= 512:
@@ -223,19 +224,23 @@ def compute_improved_adaptive_el_kernel(img, local_el, window_size, max_el, bloc
             elif block_size <= 64:
                 max_variance = 4900
         
+        # 正規化variance到0~1範圍
         normalized_variance = min(local_variance / max_variance, 1)
-        el_value = int(max_el * (1 - normalized_variance))
         
-        # 確保EL值為奇數且在有效範圍內
-        el_value = max(1, min(el_value, max_el))
-        if el_value % 2 == 0:
-            el_value -= 1
+        # 修改：映射到1~5範圍，不再限制為奇數
+        # 使用反比關係：variance越高，EL越小（更保守）
+        el_value = int(5 - normalized_variance * 4)  # 5 - (0~4) = 5~1
+        
+        # 確保EL值在1~5範圍內（移除奇數限制）
+        el_value = max(1, min(el_value, 5))
         
         local_el[y, x] = el_value
 
-def compute_improved_adaptive_el(img, window_size=5, max_el=7, block_size=None):
+
+def compute_improved_adaptive_el(img, window_size=5, max_el=5, block_size=None):
     """
     計算改進的自適應EL值
+    修改：max_el預設改為5，支援1~5範圍
     """
     if isinstance(img, cp.ndarray):
         img = cp.asnumpy(img)
