@@ -425,8 +425,9 @@ def ensure_bpp_psnr_consistency(results_df):
     return df.sort_values('Target_Percentage')
 
 def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_of_ones, 
-                            total_embeddings=5, el_mode=0, segments=15, step_size=None, use_different_weights=False,
-                            split_size=2, block_base=False, quad_tree_params=None):
+                            total_embeddings=5, el_mode=0, segments=15, step_size=None, 
+                            use_different_weights=False, split_size=2, block_base=False, 
+                            quad_tree_params=None):
     """
     運行精確的數據點測量，為均勻分布的payload目標單獨執行嵌入算法
     增加數據平滑處理和異常點修正功能，並確保最大容量點使用初始測量值
@@ -450,7 +451,7 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
     segments : int
         要測量的數據點數量 (如果提供了step_size則忽略此參數)
     step_size : int, optional
-        測量點之間的步長 (以位元為單位，例如10000)
+        測量點之間的步長 (以位元為單位，例如100000)
         如果提供，則覆蓋segments參數
     use_different_weights : bool
         是否使用不同權重
@@ -488,10 +489,13 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
         f.write(f"Ratio of ones: {ratio_of_ones}\n")
         f.write(f"Total embeddings: {total_embeddings}\n")
         f.write(f"EL mode: {el_mode}\n")
-        if step_size:
-            f.write(f"Step size: {step_size} bits\n")
+        
+        # 關鍵修復：明確記錄使用的測量參數
+        if step_size is not None and step_size > 0:
+            f.write(f"Using step_size: {step_size} bits (segments parameter ignored)\n")
         else:
-            f.write(f"Segments: {segments}\n")
+            f.write(f"Using segments: {segments} (no step_size provided)\n")
+            
         f.write(f"Use different weights: {use_different_weights}\n")
         f.write("\n" + "="*80 + "\n\n")
     
@@ -555,39 +559,52 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
     
     # 步驟2: 計算測量點，排除最大容量點（因為已經測量）
     print(f"\n{'='*80}")
-    if step_size and step_size > 0:
+    # 關鍵修復：優先使用 step_size 參數
+    if step_size is not None and step_size > 0:
         print(f"Step 2: Calculating measurement points with {step_size} bit steps")
+        print(f"Note: segments parameter ({segments}) is ignored when step_size is provided")
     else:
         print(f"Step 2: Calculating {segments} evenly distributed payload points")
+        print(f"Note: no step_size provided, using segments")
     print(f"{'='*80}")
     
     with open(log_file, 'a') as f:
-        if step_size and step_size > 0:
+        if step_size is not None and step_size > 0:
             f.write(f"Step 2: Calculating measurement points with {step_size} bit steps\n")
+            f.write(f"Note: segments parameter ({segments}) is ignored\n")
         else:
             f.write(f"Step 2: Calculating {segments} evenly distributed payload points\n")
+            f.write(f"Note: no step_size provided\n")
     
-    # 根據參數生成測量點，但排除最大容量點
-    if step_size and step_size > 0:
+    # 關鍵修復：根據參數生成測量點，但排除最大容量點
+    if step_size is not None and step_size > 0:
         # 使用固定步長生成測量點
         payload_points = list(range(step_size, max_payload, step_size))
+        measurement_mode = f"step_size={step_size}"
     else:
         # 使用分段生成測量點，但排除100%點
         payload_points = [int(max_payload * (i+1) / segments) for i in range(segments-1)]
         # 添加最後一個點作為接近最大值的點（例如99%），如果需要的話
         if segments > 1:
             payload_points.append(int(max_payload * 0.99))
+        measurement_mode = f"segments={segments}"
     
     # 確保測量點中不包含最大容量
     if max_payload in payload_points:
         payload_points.remove(max_payload)
     
+    print(f"Measurement mode: {measurement_mode}")
+    print(f"Total measurement points: {len(payload_points) + 1} (including max capacity)")
     print("Target payload points:")
-    for i, target in enumerate(payload_points):
+    for i, target in enumerate(payload_points[:5]):  # 只顯示前5個
         print(f"  Point {i+1}: {target} bits ({target/max_payload*100:.1f}% of max)")
+    if len(payload_points) > 5:
+        print(f"  ... (showing first 5 of {len(payload_points)} points)")
     print(f"  Point {len(payload_points)+1}: {max_payload} bits (100.0% of max) [using initial measurement]")
     
     with open(log_file, 'a') as f:
+        f.write(f"Measurement mode: {measurement_mode}\n")
+        f.write(f"Total measurement points: {len(payload_points) + 1}\n")
         f.write("Target payload points:\n")
         for i, target in enumerate(payload_points):
             f.write(f"  Point {i+1}: {target} bits ({target/max_payload*100:.1f}% of max)\n")
@@ -603,7 +620,6 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
     
     # 結果列表現在只包含最大容量點
     results = [max_capacity_result]
-
     
     # 運行每個測量點，但跳過最大容量點
     for i, target in enumerate(tqdm(payload_points, desc="處理測量點")):
@@ -763,8 +779,6 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
         # 第二步：應用Savitzky-Golay平滑處理（如果數據點足夠多）
         if len(df) >= 7:  # 需要至少7個點以獲得良好效果
             try:
-
-                
                 # 創建臨時DataFrame以排除最大容量點進行平滑處理
                 temp_df = df[df.index != max_capacity_idx].copy()
                 
@@ -871,12 +885,16 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
     
     total_time = time.time() - total_start_time
     
+    print(f"Measurement mode used: {measurement_mode}")
+    print(f"Total data points generated: {len(results)}")
     print(f"Total processing time: {total_time:.2f} seconds")
     print(f"Average time per point: {total_time/len(results):.2f} seconds")
     print(f"Results saved to {result_dir}")
     
     with open(log_file, 'a') as f:
         f.write(f"Results summary:\n")
+        f.write(f"Measurement mode used: {measurement_mode}\n")
+        f.write(f"Total data points generated: {len(results)}\n")
         f.write(f"Total processing time: {total_time:.2f} seconds\n")
         f.write(f"Average time per point: {total_time/len(results):.2f} seconds\n")
         f.write(f"Results saved to {result_dir}\n\n")
@@ -1183,7 +1201,10 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
     el_mode : int
         EL模式
     segments : int
-        要測量的數據點數量
+        要測量的數據點數量 (如果提供了step_size則忽略此參數)
+    step_size : int, optional
+        測量點之間的步長 (以位元為單位，例如100000)
+        如果提供，則覆蓋segments參數
     use_different_weights : bool
         是否使用不同權重
     split_size : int
@@ -1209,10 +1230,17 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
         }
     
     # 讀取原始圖像
-    origImg = cv2.imread(f"./Prediction_Error_Embedding/image/{imgName}.{filetype}", cv2.IMREAD_GRAYSCALE)
-    if origImg is None:
-        raise ValueError(f"Failed to read image: ./Prediction_Error_Embedding/image/{imgName}.{filetype}")
-    origImg = np.array(origImg).astype(np.uint8)
+    from color import read_image_auto
+    
+    img_path = f"./Prediction_Error_Embedding/image/{imgName}.{filetype}"
+    if not os.path.exists(img_path):
+        img_path = f"./pred_and_QR/image/{imgName}.{filetype}"
+        if not os.path.exists(img_path):
+            raise ValueError(f"Failed to find image: {imgName}.{filetype}")
+    
+    print(f"Loading image from: {img_path}")
+    # 使用新的函數自動檢測圖像類型
+    origImg, is_grayscale_img = read_image_auto(img_path)
     
     # 預測方法列表
     prediction_methods = [
@@ -1237,7 +1265,13 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
         f.write(f"Method: {method}\n")
         f.write(f"Total embeddings: {total_embeddings}\n")
         f.write(f"EL mode: {el_mode}\n")
-        f.write(f"Segments: {segments}\n")
+        
+        # 關鍵修復：明確記錄使用的參數
+        if step_size is not None and step_size > 0:
+            f.write(f"Using step_size: {step_size} bits (segments parameter ignored)\n")
+        else:
+            f.write(f"Using segments: {segments} (no step_size provided)\n")
+            
         f.write("Predictor ratio settings:\n")
         for pred, ratio in predictor_ratios.items():
             f.write(f"  {pred}: {ratio}\n")
@@ -1258,6 +1292,10 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
         
         print(f"\n{'='*80}")
         print(f"Running precise measurements for {method_name.lower()} predictor")
+        if step_size is not None and step_size > 0:
+            print(f"Using step_size: {step_size} bits")
+        else:
+            print(f"Using segments: {segments}")
         print(f"{'='*80}")
         
         # 獲取當前預測器的ratio_of_ones
@@ -1266,7 +1304,12 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
         
         with open(log_file, 'a') as f:
             f.write(f"Starting precise measurements for {method_name.lower()} predictor\n")
-            f.write(f"Using ratio_of_ones = {current_ratio_of_ones}\n\n")
+            f.write(f"Using ratio_of_ones = {current_ratio_of_ones}\n")
+            if step_size is not None and step_size > 0:
+                f.write(f"Using step_size = {step_size} bits\n")
+            else:
+                f.write(f"Using segments = {segments}\n")
+            f.write("\n")
         
         try:
             # 為了簡化數據處理，創建一個自定義的測量函數
@@ -1275,13 +1318,13 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
                 result_dir = f"./Prediction_Error_Embedding/outcome/plots/{imgName}/precise_{method_name.lower()}"
                 os.makedirs(result_dir, exist_ok=True)
                 
-                # 執行精確測量
+                # 執行精確測量 - 關鍵修復：確保正確傳遞 step_size 參數
                 predictor_start_time = time.time()
                 results_df = run_precise_measurements(
                     origImg, imgName, method, prediction_method, 
                     current_ratio_of_ones, total_embeddings, 
-                    el_mode, segments, use_different_weights,
-                    split_size, block_base, quad_tree_params
+                    el_mode, segments, step_size,  # 關鍵修復：明確傳遞 step_size
+                    use_different_weights, split_size, block_base, quad_tree_params
                 )
             else:
                 # 對於其他預測器，僅儲存數據而不儲存圖像和圖表
@@ -1289,8 +1332,8 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
                 results_df = run_simplified_precise_measurements(
                     origImg, imgName, method, prediction_method, 
                     current_ratio_of_ones, total_embeddings, 
-                    el_mode, segments, use_different_weights,
-                    split_size, block_base, quad_tree_params
+                    el_mode, segments, step_size,  # 關鍵修復：明確傳遞 step_size
+                    use_different_weights, split_size, block_base, quad_tree_params
                 )
             
             predictor_time = time.time() - predictor_start_time
@@ -1300,7 +1343,8 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
             
             with open(log_file, 'a') as f:
                 f.write(f"Completed measurements for {method_name.lower()} predictor\n")
-                f.write(f"Time taken: {predictor_time:.2f} seconds\n\n")
+                f.write(f"Time taken: {predictor_time:.2f} seconds\n")
+                f.write(f"Generated {len(results_df)} data points\n\n")
                 
             # 保存CSV到比較目錄
             results_df.to_csv(f"{comparison_dir}/{method_name.lower()}_precise.csv", index=False)
@@ -2553,7 +2597,7 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
     el_mode : int
         EL模式
     segments : int
-        要測量的數據點數量
+        要測量的數據點數量 (如果提供了step_size則忽略此參數)
     step_size : int, optional
         測量步長（位元），如果提供則覆蓋segments參數
     use_different_weights : bool
@@ -2588,9 +2632,13 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
         f.write(f"Ratio of ones: {ratio_of_ones}\n")
         f.write(f"Total embeddings: {total_embeddings}\n")
         f.write(f"EL mode: {el_mode}\n")
-        f.write(f"Segments: {segments}\n")
-        if step_size:
-            f.write(f"Step size: {step_size}\n")
+        
+        # 關鍵修復：明確記錄使用的測量參數
+        if step_size is not None and step_size > 0:
+            f.write(f"Using step_size: {step_size} bits (segments parameter ignored)\n")
+        else:
+            f.write(f"Using segments: {segments} (no step_size provided)\n")
+            
         f.write(f"Use different weights: {use_different_weights}\n")
         f.write("\n" + "="*80 + "\n\n")
     
@@ -2626,38 +2674,50 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
     # 清理記憶體
     cleanup_memory()
     
-    # 步驟2: 計算測量點
+    # 步驟2: 計算測量點 - 關鍵修復：優先使用 step_size
     print(f"\n{'='*80}")
-    if step_size and step_size > 0:
+    if step_size is not None and step_size > 0:
         print(f"Step 2: Calculating measurement points with {step_size} bit steps")
+        print(f"Note: segments parameter ({segments}) is ignored when step_size is provided")
     else:
         print(f"Step 2: Calculating {segments} evenly distributed payload points")
+        print(f"Note: no step_size provided, using segments")
     print(f"{'='*80}")
     
     with open(log_file, 'a') as f:
-        if step_size and step_size > 0:
+        if step_size is not None and step_size > 0:
             f.write(f"Step 2: Calculating measurement points with {step_size} bit steps\n")
+            f.write(f"Note: segments parameter ({segments}) is ignored\n")
         else:
             f.write(f"Step 2: Calculating {segments} evenly distributed payload points\n")
+            f.write(f"Note: no step_size provided\n")
     
-    # 根據參數生成測量點
-    if step_size and step_size > 0:
+    # 關鍵修復：根據參數生成測量點，優先使用 step_size
+    if step_size is not None and step_size > 0:
         # 使用固定步長生成測量點，但排除最大容量點
         payload_points = list(range(step_size, max_payload, step_size))
+        measurement_mode = f"step_size={step_size}"
     else:
         # 使用分段生成測量點，但排除100%點
         payload_points = [int(max_payload * (i+1) / segments) for i in range(segments-1)]
+        measurement_mode = f"segments={segments}"
     
     # 確保測量點中不包含最大容量
     if max_payload in payload_points:
         payload_points.remove(max_payload)
     
+    print(f"Measurement mode: {measurement_mode}")
+    print(f"Total measurement points: {len(payload_points) + 1} (including max capacity)")
     print("Target payload points:")
-    for i, target in enumerate(payload_points):
+    for i, target in enumerate(payload_points[:5]):  # 只顯示前5個
         print(f"  Point {i+1}: {target} bits ({target/max_payload*100:.1f}% of max)")
+    if len(payload_points) > 5:
+        print(f"  ... (showing first 5 of {len(payload_points)} points)")
     print(f"  Point {len(payload_points)+1}: {max_payload} bits (100.0% of max) [using initial measurement]")
     
     with open(log_file, 'a') as f:
+        f.write(f"Measurement mode: {measurement_mode}\n")
+        f.write(f"Total measurement points: {len(payload_points) + 1}\n")
         f.write("Target payload points:\n")
         for i, target in enumerate(payload_points):
             f.write(f"  Point {i+1}: {target} bits ({target/max_payload*100:.1f}% of max)\n")
@@ -2764,12 +2824,16 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
     
     total_time = time.time() - total_start_time
     
+    print(f"Measurement mode used: {measurement_mode}")
+    print(f"Total data points generated: {len(results)}")
     print(f"Total processing time: {total_time:.2f} seconds")
     print(f"Average time per point: {total_time/len(results):.2f} seconds")
     print(f"Results saved to {result_dir}")
     
     with open(log_file, 'a') as f:
         f.write(f"Results summary:\n")
+        f.write(f"Measurement mode used: {measurement_mode}\n")
+        f.write(f"Total data points generated: {len(results)}\n")
         f.write(f"Total processing time: {total_time:.2f} seconds\n")
         f.write(f"Average time per point: {total_time/len(results):.2f} seconds\n")
         f.write(f"Results saved to {result_dir}\n\n")
