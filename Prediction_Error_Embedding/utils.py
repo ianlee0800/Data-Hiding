@@ -1163,7 +1163,7 @@ def plot_precise_measurements(df, imgName, method, prediction_method, output_dir
 
 def run_multi_predictor_precise_measurements(imgName, filetype="png", method="quadtree", 
                                            predictor_ratios=None, total_embeddings=5, 
-                                           el_mode=0, segments=15, use_different_weights=False,
+                                           el_mode=0, segments=15, step_size=None, use_different_weights=False,
                                            split_size=2, block_base=False, quad_tree_params=None):
     """
     為多個預測器運行精確測量並生成比較結果，只為 proposed 預測器儲存詳細資料
@@ -2530,7 +2530,7 @@ def run_multiple_predictors(imgName, filetype="png", method="quadtree",
     return None, None
 
 def run_simplified_precise_measurements(origImg, imgName, method, prediction_method, ratio_of_ones, 
-                                      total_embeddings=5, el_mode=0, segments=15, use_different_weights=False,
+                                      total_embeddings=5, el_mode=0, segments=15, step_size=None, use_different_weights=False,
                                       split_size=2, block_base=False, quad_tree_params=None):
     """
     運行精確的數據點測量，但僅儲存數據而不產生圖像和圖表
@@ -2554,6 +2554,8 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
         EL模式
     segments : int
         要測量的數據點數量
+    step_size : int, optional
+        測量步長（位元），如果提供則覆蓋segments參數
     use_different_weights : bool
         是否使用不同權重
     split_size : int
@@ -2587,6 +2589,8 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
         f.write(f"Total embeddings: {total_embeddings}\n")
         f.write(f"EL mode: {el_mode}\n")
         f.write(f"Segments: {segments}\n")
+        if step_size:
+            f.write(f"Step size: {step_size}\n")
         f.write(f"Use different weights: {use_different_weights}\n")
         f.write("\n" + "="*80 + "\n\n")
     
@@ -2622,26 +2626,62 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
     # 清理記憶體
     cleanup_memory()
     
-    # 步驟2: 計算均勻分布的payload點
+    # 步驟2: 計算測量點
     print(f"\n{'='*80}")
-    print(f"Step 2: Calculating {segments} evenly distributed payload points")
+    if step_size and step_size > 0:
+        print(f"Step 2: Calculating measurement points with {step_size} bit steps")
+    else:
+        print(f"Step 2: Calculating {segments} evenly distributed payload points")
     print(f"{'='*80}")
     
     with open(log_file, 'a') as f:
-        f.write(f"Step 2: Calculating {segments} evenly distributed payload points\n")
+        if step_size and step_size > 0:
+            f.write(f"Step 2: Calculating measurement points with {step_size} bit steps\n")
+        else:
+            f.write(f"Step 2: Calculating {segments} evenly distributed payload points\n")
     
-    # 計算每個級距的目標嵌入量 (從10%到100%)
-    payload_points = [int(max_payload * (i+1) / segments) for i in range(segments)]
+    # 根據參數生成測量點
+    if step_size and step_size > 0:
+        # 使用固定步長生成測量點，但排除最大容量點
+        payload_points = list(range(step_size, max_payload, step_size))
+    else:
+        # 使用分段生成測量點，但排除100%點
+        payload_points = [int(max_payload * (i+1) / segments) for i in range(segments-1)]
+    
+    # 確保測量點中不包含最大容量
+    if max_payload in payload_points:
+        payload_points.remove(max_payload)
     
     print("Target payload points:")
     for i, target in enumerate(payload_points):
         print(f"  Point {i+1}: {target} bits ({target/max_payload*100:.1f}% of max)")
+    print(f"  Point {len(payload_points)+1}: {max_payload} bits (100.0% of max) [using initial measurement]")
     
     with open(log_file, 'a') as f:
         f.write("Target payload points:\n")
         for i, target in enumerate(payload_points):
             f.write(f"  Point {i+1}: {target} bits ({target/max_payload*100:.1f}% of max)\n")
-        f.write("\n")
+        f.write(f"  Point {len(payload_points)+1}: {max_payload} bits (100.0% of max) [using initial measurement]\n\n")
+    
+    # 計算最大容量的品質指標
+    psnr_max = calculate_psnr(origImg, final_img_max)
+    ssim_max = calculate_ssim(origImg, final_img_max)
+    hist_corr_max = histogram_correlation(
+        np.histogram(origImg, bins=256, range=(0, 255))[0],
+        np.histogram(final_img_max, bins=256, range=(0, 255))[0]
+    )
+    
+    # 初始化結果列表，包含最大容量結果
+    results = [{
+        'Target_Percentage': 100.0,
+        'Target_Payload': max_payload,
+        'Actual_Payload': max_payload,
+        'BPP': max_payload / total_pixels,
+        'PSNR': psnr_max,
+        'SSIM': ssim_max,
+        'Hist_Corr': hist_corr_max,
+        'Processing_Time': max_run_time
+    }]
     
     # 步驟3: 為每個目標點運行嵌入算法
     print(f"\n{'='*80}")
@@ -2651,49 +2691,11 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
     with open(log_file, 'a') as f:
         f.write(f"Step 3: Running embedding algorithm for each target point\n")
     
-    # 記錄結果
-    results = []
-    
-    # 添加最大嵌入容量的結果
-    psnr_max = calculate_psnr(origImg, final_img_max)
-    ssim_max = calculate_ssim(origImg, final_img_max)
-    hist_corr_max = histogram_correlation(
-        np.histogram(origImg, bins=256, range=(0, 255))[0],
-        np.histogram(final_img_max, bins=256, range=(0, 255))[0]
-    )
-    
-    # 將100%結果加入列表
-    results.append({
-        'Target_Percentage': 100.0,
-        'Target_Payload': max_payload,
-        'Actual_Payload': max_payload,
-        'BPP': max_payload / total_pixels,
-        'PSNR': psnr_max,
-        'SSIM': ssim_max,
-        'Hist_Corr': hist_corr_max,
-        'Processing_Time': max_run_time
-    })
-    
-    # 注意：我們不保存圖像，只記錄數據
-    
-    with open(log_file, 'a') as f:
-        f.write(f"100.0% target (Max capacity):\n")
-        f.write(f"  Target: {max_payload} bits\n")
-        f.write(f"  Actual: {max_payload} bits\n")
-        f.write(f"  BPP: {max_payload/total_pixels:.6f}\n")
-        f.write(f"  PSNR: {psnr_max:.2f}\n")
-        f.write(f"  SSIM: {ssim_max:.4f}\n")
-        f.write(f"  Hist_Corr: {hist_corr_max:.4f}\n")
-        f.write(f"  Time: {max_run_time:.2f} seconds\n\n")
-    
-    # 清理記憶體
-    cleanup_memory()
-    
-    # 運行其餘級距的測量 (1到segments-1，跳過最後一個因為已經有了max結果)
-    for i, target in enumerate(tqdm(payload_points[:-1], desc=f"處理 {method_name} 數據點")):
-        percentage = (i+1) / segments * 100
+    # 運行其餘級距的測量 (不包括最大容量點，因為已經有了)
+    for i, target in enumerate(tqdm(payload_points, desc=f"處理 {method_name} 數據點")):
+        percentage = target / max_payload * 100
         
-        print(f"\nRunning point {i+1}/{segments}: {target} bits ({percentage:.1f}% of max)")
+        print(f"\nRunning point {i+1}/{len(payload_points)}: {target} bits ({percentage:.1f}% of max)")
         
         with open(log_file, 'a') as f:
             f.write(f"{percentage:.1f}% target:\n")
@@ -2763,13 +2765,13 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
     total_time = time.time() - total_start_time
     
     print(f"Total processing time: {total_time:.2f} seconds")
-    print(f"Average time per point: {total_time/segments:.2f} seconds")
+    print(f"Average time per point: {total_time/len(results):.2f} seconds")
     print(f"Results saved to {result_dir}")
     
     with open(log_file, 'a') as f:
         f.write(f"Results summary:\n")
         f.write(f"Total processing time: {total_time:.2f} seconds\n")
-        f.write(f"Average time per point: {total_time/segments:.2f} seconds\n")
+        f.write(f"Average time per point: {total_time/len(results):.2f} seconds\n")
         f.write(f"Results saved to {result_dir}\n\n")
         
         f.write("Data table:\n")

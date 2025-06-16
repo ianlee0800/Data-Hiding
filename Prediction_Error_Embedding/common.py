@@ -229,10 +229,10 @@ def compute_improved_adaptive_el_kernel(img, local_el, window_size, max_el, bloc
         
         # 修改：映射到1~5範圍，不再限制為奇數
         # 使用反比關係：variance越高，EL越小（更保守）
-        el_value = int(5 - normalized_variance * 4)  # 5 - (0~4) = 5~1
+        el_value = int(15 - normalized_variance * 4)  # 5 - (0~4) = 5~1
         
         # 確保EL值在1~5範圍內（移除奇數限制）
-        el_value = max(1, min(el_value, 5))
+        el_value = max(1, min(el_value, 15))
         
         local_el[y, x] = el_value
 

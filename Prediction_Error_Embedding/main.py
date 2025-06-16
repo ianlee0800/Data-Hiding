@@ -6,6 +6,7 @@ from tqdm import tqdm
 import cupy as cp
 import numpy as np
 import cv2
+import inspect
 from image_processing import (
     save_image,
     generate_histogram,
@@ -79,23 +80,23 @@ def main():
     # ==== 參數設置（直接在代碼中調整） ====
     
     # 基本參數設置
-    imgName = "F16"           # 圖像名稱
+    imgName = "Male"           # 圖像名稱
     filetype = "tiff"         # 圖像檔案類型
-    total_embeddings = 5      # 總嵌入次數
+    total_embeddings = 4      # 總嵌入次數
     
     # 各預測器的ratio_of_ones設置
     predictor_ratios = {
         "PROPOSED": 0.5,      # proposed預測器的ratio_of_ones
-        "MED": 1.0,           # MED預測器的ratio_of_ones
-        "GAP": 0.7,           # GAP預測器的ratio_of_ones
-        "RHOMBUS": 0.9        # RHOMBUS預測器的ratio_of_ones
+        "MED": 0.5,           # MED預測器的ratio_of_ones
+        "GAP": 0.5,           # GAP預測器的ratio_of_ones
+        "RHOMBUS": 0.5        # RHOMBUS預測器的ratio_of_ones
     }
     
     el_mode = 0               # 0: 無限制, 1: 漸增, 2: 漸減
-    use_different_weights = False 
+    use_different_weights = True
     
     # 測量方式
-    use_precise_measurement = False     # True: 使用精確測量模式, False: 使用近似模式
+    use_precise_measurement = True     # True: 使用精確測量模式, False: 使用近似模式
     use_method_comparison = False     # True: 比較不同方法, False: 不比較
     
     # 精確測量參數
@@ -105,10 +106,10 @@ def main():
     
     # 預測方法選擇
     # 可選：PROPOSED, MED, GAP, RHOMBUS, ALL (ALL表示運行所有方法並生成比較)
-    prediction_method_str = "PROPOSED"
+    prediction_method_str = "ALL"
     
     # 方法選擇
-    method = "quadtree"          # 可選："rotation", "split", "quadtree"
+    method = "split"          # 可選："rotation", "split", "quadtree"
     
     # 方法比較參數（僅當use_method_comparison=True時有效）
     methods_to_compare = ["rotation", "quadtree"]  # 要比較的方法
@@ -205,7 +206,7 @@ def main():
                 total_embeddings=total_embeddings,
                 el_mode=el_mode,
                 segments=stats_segments,
-                step_size=step_size,  # 新增步長參數
+                step_size=step_size,  # 確保這行存在且未被註釋
                 use_different_weights=use_different_weights,
                 split_size=split_size,
                 block_base=block_base,

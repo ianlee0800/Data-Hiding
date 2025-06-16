@@ -1,0 +1,43 @@
+Multi-predictor precise measurement run started at 2025-06-16 16:31:36
+Image: Male.tiff
+Method: rotation
+Total embeddings: 4
+EL mode: 0
+Segments: 20
+Predictor ratio settings:
+  PROPOSED: 0.5
+  MED: 0.5
+  GAP: 0.5
+  RHOMBUS: 0.5
+Split size: 2x2, block_base=True
+
+================================================================================
+
+Starting precise measurements for proposed predictor
+Using ratio_of_ones = 0.5
+
+Completed measurements for proposed predictor
+Time taken: 85.66 seconds
+
+Starting precise measurements for med predictor
+Using ratio_of_ones = 0.5
+
+Completed measurements for med predictor
+Time taken: 9.60 seconds
+
+Starting precise measurements for gap predictor
+Using ratio_of_ones = 0.5
+
+Completed measurements for gap predictor
+Time taken: 9.39 seconds
+
+Starting precise measurements for rhombus predictor
+Using ratio_of_ones = 0.5
+
+Completed measurements for rhombus predictor
+Time taken: 10.56 seconds
+
+
+Comparison completed at 2025-06-16 16:33:34
+Total processing time: 117.60 seconds
+
