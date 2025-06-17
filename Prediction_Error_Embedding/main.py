@@ -93,10 +93,10 @@ def main():
     }
     
     el_mode = 0               # 0: 無限制, 1: 漸增, 2: 漸減
-    use_different_weights = True
+    use_different_weights = False
     
     # 測量方式
-    use_precise_measurement = True     # True: 使用精確測量模式, False: 使用近似模式
+    use_precise_measurement = False     # True: 使用精確測量模式, False: 使用近似模式
     use_method_comparison = False     # True: 比較不同方法, False: 不比較
     
     # 精確測量參數
@@ -106,10 +106,10 @@ def main():
     
     # 預測方法選擇
     # 可選：PROPOSED, MED, GAP, RHOMBUS, ALL (ALL表示運行所有方法並生成比較)
-    prediction_method_str = "ALL"
+    prediction_method_str = "PROPOSED"
     
     # 方法選擇
-    method = "rotation"          # 可選："rotation", "split", "quadtree"
+    method = "quadtree"          # 可選："rotation", "split", "quadtree"
     
     # 方法比較參數（僅當use_method_comparison=True時有效）
     methods_to_compare = ["rotation", "quadtree"]  # 要比較的方法
@@ -117,7 +117,7 @@ def main():
     
     # 各方法共用參數
     split_size = 2            # 用於 rotation 和 split 方法
-    block_base = True        # 用於 split 方法
+    block_base = False        # 用於 split 方法，True為直接切割，False則是使用subsampling
     
     # 🔧 修改：quad tree 特定參數 - 支援自適應 variance threshold
     quad_tree_params = {

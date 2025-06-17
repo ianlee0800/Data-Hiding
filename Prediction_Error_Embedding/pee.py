@@ -269,7 +269,20 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
                         prediction_method=PredictionMethod.PROPOSED,
                         remaining_target=None):
     """
-    多種預測方法的嵌入函數，為不同預測器使用不同的嵌入策略
+    多種預測方法的嵌入函數，使用組合策略
+    
+    🔧 組合策略（策略1 + 策略2）：
+    - PROPOSED預測器：
+      * Stage 0: 使用 3次通過（最大嵌入容量）
+      * Stage 1+: 使用 2次通過（平衡容量與品質）
+    - MED/GAP/RHOMBUS預測器：
+      * 所有Stage: 使用 1次通過（最快處理速度）
+    
+    這種策略的優勢：
+    1. PROPOSED保持最高性能，同時後續Stage更注重品質
+    2. 其他預測器獲得最大速度提升
+    3. 明確的性能分層：高性能、平衡、高速度
+    4. 最佳的資源利用效率
     
     Parameters:
     -----------
@@ -336,12 +349,10 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
     # 使用統一的預測函數接口
     pred_img = predict_image_cuda(d_img, prediction_method, weights)
     
-    # 保存預測圖像的副本 (修復部分：檢查類型)
-    # 安全地處理不同類型的預測圖像
+    # 保存預測圖像的副本
     if hasattr(pred_img, 'copy_to_host'):
         pred_img_copy = pred_img.copy_to_host()
     else:
-        # 如果 pred_img 已經是 numpy 數組，直接使用它
         pred_img_copy = pred_img
     
     height, width = d_img.shape
@@ -394,10 +405,28 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
             
         return embedded, payload, pred_img_copy
     
-    # 對於Stage 0，使用多次嵌入來增加容量
-    if stage == 0:
-        # 針對 Stage 0 的增強型多次嵌入
-        passes = 3  # 使用3次嵌入來增加容量
+    # 🔧 組合策略核心：根據預測方法和階段決定通過次數
+    if prediction_method == PredictionMethod.PROPOSED:
+        # 🎯 策略1：PROPOSED預測器使用動態通過次數
+        if stage == 0:
+            passes = 3  # Stage 0: 最大容量
+            strategy_name = "PROPOSED Stage 0 (Maximum Capacity)"
+        else:
+            passes = 2  # Stage 1+: 平衡容量與品質
+            strategy_name = f"PROPOSED Stage {stage} (Balanced)"
+        use_multi_pass = True
+    else:
+        # 🎯 策略2：其他預測器統一使用1次通過
+        passes = 1
+        strategy_name = f"{prediction_method.value} Stage {stage} (High Speed)"
+        use_multi_pass = False
+    
+    # 輸出策略資訊
+    #print(f"   🔧 Using Combined Strategy: {strategy_name} ({passes} pass{'es' if passes > 1 else ''})")
+    
+    # 🔧 根據是否使用多次通過來選擇處理邏輯
+    if use_multi_pass:
+        # 多次通過邏輯（適用於PROPOSED預測器）
         total_payload = 0
         
         for pass_idx in range(passes):
@@ -405,26 +434,31 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
             if remaining_target is not None and remaining_target[0] <= 0:
                 break
                 
-            if prediction_method == PredictionMethod.PROPOSED:
-                if hasattr(local_el, 'copy_to_host'):
-                    local_el_np = local_el.copy_to_host()
-                elif isinstance(local_el, cp.ndarray):
-                    local_el_np = cp.asnumpy(local_el)
-                else:
-                    local_el_np = local_el
-                    
-                d_local_el = cuda.to_device(local_el_np)
+            # PROPOSED預測器使用複雜的嵌入核心
+            if hasattr(local_el, 'copy_to_host'):
+                local_el_np = local_el.copy_to_host()
+            elif isinstance(local_el, cp.ndarray):
+                local_el_np = cp.asnumpy(local_el)
+            else:
+                local_el_np = local_el
                 
-                # 使用加強版的嵌入核心，專為 Stage 0 優化
+            d_local_el = cuda.to_device(local_el_np)
+            
+            # 🔧 根據stage和pass_idx調整嵌入強度
+            if stage == 0:
+                # Stage 0 使用激進策略（原有邏輯）
                 pee_embedding_kernel[blocks_per_grid, threads_per_block](
                     d_img, pred_img, d_data[total_payload:], d_embedded, d_payload, d_local_el,
                     height, width, pass_idx
                 )
             else:
-                # 對於其他預測器，使用簡化的嵌入核心
-                simple_single_embedding_kernel[blocks_per_grid, threads_per_block](
-                    d_img, pred_img, d_data[total_payload:], d_embedded, d_payload,
-                    height, width, pass_idx
+                # Stage 1+ 使用較保守的策略
+                # 可以在這裡調整 pass_idx 或使用不同的參數
+                # 例如：將 pass_idx 映射到更保守的值
+                conservative_pass_idx = min(pass_idx + 1, 2)  # 讓後續stage更保守
+                pee_embedding_kernel[blocks_per_grid, threads_per_block](
+                    d_img, pred_img, d_data[total_payload:], d_embedded, d_payload, d_local_el,
+                    height, width, conservative_pass_idx
                 )
             
             # 更新嵌入結果和總容量
@@ -446,15 +480,14 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
             
             d_payload = cuda.to_device(np.array([0], dtype=np.int32))
             
-            # 保存當前結果供下次嵌入使用 - 修正使用正確的方法
-            # 先將結果複製到主機記憶體，然後再轉回設備
+            # 保存當前結果供下次嵌入使用
             temp_img = d_embedded.copy_to_host()
             d_img = cuda.to_device(temp_img)
             
             # 更新預測圖像
             pred_img = predict_image_cuda(d_img, prediction_method, weights)
             
-            # 更新預測圖像副本 (修復部分)
+            # 更新預測圖像副本
             if hasattr(pred_img, 'copy_to_host'):
                 pred_img_copy = pred_img.copy_to_host()
             else:
@@ -465,31 +498,15 @@ def multi_pass_embedding(img, data, local_el, weights, stage,
         
         # 確保不會超過目標
         if remaining_target is not None:
-            # 更新最終payload為實際使用的量
             payload = min(payload, current_target)
-    else:
-        # 原有的嵌入邏輯
-        if prediction_method == PredictionMethod.PROPOSED:
-            if hasattr(local_el, 'copy_to_host'):
-                local_el_np = local_el.copy_to_host()
-            elif isinstance(local_el, cp.ndarray):
-                local_el_np = cp.asnumpy(local_el)
-            else:
-                local_el_np = local_el
-                
-            d_local_el = cuda.to_device(local_el_np)
             
-            # 使用改進的 PEE 嵌入函數
-            pee_embedding_kernel[blocks_per_grid, threads_per_block](
-                d_img, pred_img, d_data, d_embedded, d_payload, d_local_el,
-                height, width, stage
-            )
-        else:
-            # 對於其他預測器，使用簡單的單次嵌入方式
-            simple_single_embedding_kernel[blocks_per_grid, threads_per_block](
-                d_img, pred_img, d_data, d_embedded, d_payload,
-                height, width, stage
-            )
+    else:
+        # 🔧 單次通過邏輯（適用於其他預測器的所有Stage）
+        # 其他預測器使用簡化的單次嵌入方式
+        simple_single_embedding_kernel[blocks_per_grid, threads_per_block](
+            d_img, pred_img, d_data, d_embedded, d_payload,
+            height, width, 0  # pass_idx 固定為 0，因為只有1次通過
+        )
         
         # 獲取結果
         embedded = d_embedded.copy_to_host()

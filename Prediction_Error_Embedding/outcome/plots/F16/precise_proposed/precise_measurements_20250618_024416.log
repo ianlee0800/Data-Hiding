@@ -1,0 +1,21 @@
+Precise measurement run started at 2025-06-18 02:44:16
+Image: F16 (512x512 color image)
+Method: quadtree
+Prediction method: proposed
+Ratio of ones: 0.5
+Total embeddings: 4
+EL mode: 0
+Pixel count for BPP calculation: 262144
+Using step_size: 100000 bits (segments parameter 20 ignored)
+Measurement mode: step_size
+Use different weights: True
+
+================================================================================
+
+Maximum payload: 2866014 bits
+Max BPP: 10.932976
+Max PSNR: 41.84
+Max SSIM: 0.9852
+Max Hist Corr: 0.9934
+Time taken: 61.85 seconds
+

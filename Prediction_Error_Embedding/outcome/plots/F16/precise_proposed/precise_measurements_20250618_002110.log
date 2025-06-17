@@ -1,0 +1,21 @@
+Precise measurement run started at 2025-06-18 00:21:10
+Image: F16 (512x512 color image)
+Method: rotation
+Prediction method: proposed
+Ratio of ones: 0.5
+Total embeddings: 4
+EL mode: 0
+Pixel count for BPP calculation: 262144
+Using step_size: 100000 bits (segments parameter 20 ignored)
+Measurement mode: step_size
+Use different weights: True
+
+================================================================================
+
+Maximum payload: 2034703 bits
+Max BPP: 7.761776
+Max PSNR: 46.75
+Max SSIM: 0.9919
+Max Hist Corr: 0.9932
+Time taken: 7.66 seconds
+
