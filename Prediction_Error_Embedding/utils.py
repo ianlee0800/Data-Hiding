@@ -308,6 +308,7 @@ def run_embedding_with_target(origImg, method, prediction_method, ratio_of_ones,
                              use_different_weights=False):
     """
     執行特定嵌入算法，針對特定的目標payload
+    修复版本：确保正确处理所有预测器的权重设置
     
     Parameters:
     -----------
@@ -344,56 +345,71 @@ def run_embedding_with_target(origImg, method, prediction_method, ratio_of_ones,
         pee_process_with_split_cuda
     )
     from quadtree import pee_process_with_quadtree_cuda
+    
     # 重置GPU記憶體
     cp.get_default_memory_pool().free_all_blocks()
     
-    # 根據方法選擇相應的嵌入算法
-    if method == "rotation":
-        final_img, actual_payload, stages = pee_process_with_rotation_cuda(
-            origImg,
-            total_embeddings,
-            ratio_of_ones,
-            use_different_weights,
-            split_size,
-            el_mode,
-            prediction_method=prediction_method,
-            target_payload_size=target_payload_size
-        )
-    elif method == "split":
-        final_img, actual_payload, stages = pee_process_with_split_cuda(
-            origImg,
-            total_embeddings,
-            ratio_of_ones,
-            use_different_weights,
-            split_size,
-            el_mode,
-            block_base,
-            prediction_method=prediction_method,
-            target_payload_size=target_payload_size
-        )
-    elif method == "quadtree":
-        if quad_tree_params is None:
-            quad_tree_params = {
-                'min_block_size': 16,
-                'variance_threshold': 300
-            }
-        
-        final_img, actual_payload, stages = pee_process_with_quadtree_cuda(
-            origImg,
-            total_embeddings,
-            ratio_of_ones,
-            use_different_weights,
-            quad_tree_params['min_block_size'],
-            quad_tree_params['variance_threshold'],
-            el_mode,
-            rotation_mode='random',
-            prediction_method=prediction_method,
-            target_payload_size=target_payload_size
-        )
+    # 关键修复：对非PROPOSED预测器禁用权重优化
+    if prediction_method in [PredictionMethod.MED, PredictionMethod.GAP, PredictionMethod.RHOMBUS]:
+        actual_use_weights = False
+        if use_different_weights:  # 只在原本要使用权重时才显示消息
+            print(f"Note: Weight optimization disabled for {prediction_method.value} prediction method")
     else:
-        raise ValueError(f"Unknown method: {method}")
+        actual_use_weights = use_different_weights
     
-    return final_img, actual_payload, stages
+    try:
+        # 根据方法选择相应的嵌入算法
+        if method == "rotation":
+            final_img, actual_payload, stages = pee_process_with_rotation_cuda(
+                origImg,
+                total_embeddings,
+                ratio_of_ones,
+                actual_use_weights,  # 使用修正后的权重设置
+                split_size,
+                el_mode,
+                prediction_method=prediction_method,
+                target_payload_size=target_payload_size
+            )
+        elif method == "split":
+            final_img, actual_payload, stages = pee_process_with_split_cuda(
+                origImg,
+                total_embeddings,
+                ratio_of_ones,
+                actual_use_weights,  # 使用修正后的权重设置
+                split_size,
+                el_mode,
+                block_base,
+                prediction_method=prediction_method,
+                target_payload_size=target_payload_size
+            )
+        elif method == "quadtree":
+            if quad_tree_params is None:
+                quad_tree_params = {
+                    'min_block_size': 16,
+                    'variance_threshold': 300
+                }
+            
+            final_img, actual_payload, stages = pee_process_with_quadtree_cuda(
+                origImg,
+                total_embeddings,
+                ratio_of_ones,
+                actual_use_weights,  # 使用修正后的权重设置
+                quad_tree_params['min_block_size'],
+                quad_tree_params['variance_threshold'],
+                el_mode,
+                rotation_mode='random',
+                prediction_method=prediction_method,
+                target_payload_size=target_payload_size
+            )
+        else:
+            raise ValueError(f"Unknown method: {method}")
+        
+        return final_img, actual_payload, stages
+        
+    except Exception as e:
+        print(f"Error in embedding: method={method}, predictor={prediction_method.value}")
+        print(f"Error details: {str(e)}")
+        raise e
 
 def ensure_bpp_psnr_consistency(results_df):
     """
@@ -431,6 +447,7 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
     """
     運行精確的數據點測量，為均勻分布的payload目標單獨執行嵌入算法
     增加數據平滑處理和異常點修正功能，並確保最大容量點使用初始測量值
+    修正版本：確保 step_size 參數正確處理和優先使用，並修復Unicode編碼問題
     
     Parameters:
     -----------
@@ -479,9 +496,9 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
     result_dir = f"./Prediction_Error_Embedding/outcome/plots/{imgName}/precise_{method_name}"
     os.makedirs(result_dir, exist_ok=True)
     
-    # 記錄運行設置
+    # 記錄運行設置 - 修復：使用UTF-8編碼
     log_file = f"{result_dir}/precise_measurements_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-    with open(log_file, 'w') as f:
+    with open(log_file, 'w', encoding='utf-8') as f:
         f.write(f"Precise measurement run started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"Image: {imgName}\n")
         f.write(f"Method: {method}\n")
@@ -490,11 +507,13 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
         f.write(f"Total embeddings: {total_embeddings}\n")
         f.write(f"EL mode: {el_mode}\n")
         
-        # 關鍵修復：明確記錄使用的測量參數
+        # 關鍵修復：明確記錄和檢查使用的測量參數
         if step_size is not None and step_size > 0:
-            f.write(f"Using step_size: {step_size} bits (segments parameter ignored)\n")
+            f.write(f"Using step_size: {step_size} bits (segments parameter {segments} ignored)\n")
+            f.write(f"Measurement mode: step_size\n")
         else:
-            f.write(f"Using segments: {segments} (no step_size provided)\n")
+            f.write(f"Using segments: {segments} (no valid step_size provided: {step_size})\n")
+            f.write(f"Measurement mode: segments\n")
             
         f.write(f"Use different weights: {use_different_weights}\n")
         f.write("\n" + "="*80 + "\n\n")
@@ -504,7 +523,7 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
     print(f"Step 1: Finding maximum payload capacity")
     print(f"{'='*80}")
     
-    with open(log_file, 'a') as f:
+    with open(log_file, 'a', encoding='utf-8') as f:
         f.write(f"Step 1: Finding maximum payload capacity\n")
     
     start_time = time.time()
@@ -546,7 +565,7 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
     print(f"Max SSIM: {ssim_max:.4f}")
     print(f"Time taken: {max_run_time:.2f} seconds")
     
-    with open(log_file, 'a') as f:
+    with open(log_file, 'a', encoding='utf-8') as f:
         f.write(f"Maximum payload: {max_payload} bits\n")
         f.write(f"Max BPP: {max_payload/total_pixels:.6f}\n")
         f.write(f"Max PSNR: {psnr_max:.2f}\n")
@@ -559,39 +578,47 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
     
     # 步驟2: 計算測量點，排除最大容量點（因為已經測量）
     print(f"\n{'='*80}")
-    # 關鍵修復：優先使用 step_size 參數
-    if step_size is not None and step_size > 0:
-        print(f"Step 2: Calculating measurement points with {step_size} bit steps")
-        print(f"Note: segments parameter ({segments}) is ignored when step_size is provided")
+    print(f"Step 2: Calculating measurement points")
+    
+    # 關鍵修復：更嚴格的 step_size 檢查和優先使用邏輯
+    use_step_size = False
+    if step_size is not None and isinstance(step_size, (int, float)) and step_size > 0:
+        use_step_size = True
+        print(f"Using step_size: {step_size} bits (segments parameter {segments} will be ignored)")
+        measurement_mode = f"step_size={step_size}"
     else:
-        print(f"Step 2: Calculating {segments} evenly distributed payload points")
-        print(f"Note: no step_size provided, using segments")
+        print(f"Using segments: {segments} (step_size={step_size} is invalid or not provided)")
+        measurement_mode = f"segments={segments}"
+        
     print(f"{'='*80}")
     
-    with open(log_file, 'a') as f:
-        if step_size is not None and step_size > 0:
+    with open(log_file, 'a', encoding='utf-8') as f:
+        if use_step_size:
             f.write(f"Step 2: Calculating measurement points with {step_size} bit steps\n")
             f.write(f"Note: segments parameter ({segments}) is ignored\n")
         else:
             f.write(f"Step 2: Calculating {segments} evenly distributed payload points\n")
-            f.write(f"Note: no step_size provided\n")
+            f.write(f"Note: invalid step_size ({step_size}) provided\n")
     
-    # 關鍵修復：根據參數生成測量點，但排除最大容量點
-    if step_size is not None and step_size > 0:
+    # 關鍵修復：根據 use_step_size 標誌生成測量點，但排除最大容量點
+    if use_step_size:
         # 使用固定步長生成測量點
-        payload_points = list(range(step_size, max_payload, step_size))
-        measurement_mode = f"step_size={step_size}"
+        payload_points = list(range(int(step_size), max_payload, int(step_size)))
+        print(f"Generated {len(payload_points)} points using step_size={step_size}")
+        print(f"Step points range: {payload_points[0] if payload_points else 'None'} to {payload_points[-1] if payload_points else 'None'}")
     else:
         # 使用分段生成測量點，但排除100%點
         payload_points = [int(max_payload * (i+1) / segments) for i in range(segments-1)]
         # 添加最後一個點作為接近最大值的點（例如99%），如果需要的話
         if segments > 1:
             payload_points.append(int(max_payload * 0.99))
-        measurement_mode = f"segments={segments}"
+        print(f"Generated {len(payload_points)} points using segments={segments}")
+        print(f"Segment points range: {payload_points[0] if payload_points else 'None'} to {payload_points[-1] if payload_points else 'None'}")
     
     # 確保測量點中不包含最大容量
     if max_payload in payload_points:
         payload_points.remove(max_payload)
+        print(f"Removed max_payload {max_payload} from measurement points")
     
     print(f"Measurement mode: {measurement_mode}")
     print(f"Total measurement points: {len(payload_points) + 1} (including max capacity)")
@@ -602,7 +629,7 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
         print(f"  ... (showing first 5 of {len(payload_points)} points)")
     print(f"  Point {len(payload_points)+1}: {max_payload} bits (100.0% of max) [using initial measurement]")
     
-    with open(log_file, 'a') as f:
+    with open(log_file, 'a', encoding='utf-8') as f:
         f.write(f"Measurement mode: {measurement_mode}\n")
         f.write(f"Total measurement points: {len(payload_points) + 1}\n")
         f.write("Target payload points:\n")
@@ -613,10 +640,12 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
     # 步驟3: 為每個目標點運行嵌入算法，不包括最大容量點
     print(f"\n{'='*80}")
     print(f"Step 3: Running embedding algorithm for each target point (excluding max capacity)")
+    print(f"Processing {len(payload_points)} measurement points...")
     print(f"{'='*80}")
     
-    with open(log_file, 'a') as f:
+    with open(log_file, 'a', encoding='utf-8') as f:
         f.write(f"Step 3: Running embedding algorithm for each target point\n")
+        f.write(f"Processing {len(payload_points)} measurement points using {measurement_mode}\n")
     
     # 結果列表現在只包含最大容量點
     results = [max_capacity_result]
@@ -628,8 +657,8 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
         
         print(f"\nRunning point {i+1}/{len(payload_points)}: {target} bits ({percentage:.1f}% of max)")
         
-        with open(log_file, 'a') as f:
-            f.write(f"{percentage:.1f}% target:\n")
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(f"{percentage:.1f}% target (point {i+1}/{len(payload_points)}):\n")
             f.write(f"  Target: {target} bits\n")
         
         start_time = time.time()
@@ -660,7 +689,7 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
                 psnr > last_result['PSNR']):
                 is_psnr_suspicious = True
                 print(f"  Warning: Suspicious PSNR value detected: {psnr:.2f} > previous {last_result['PSNR']:.2f}")
-                with open(log_file, 'a') as f:
+                with open(log_file, 'a', encoding='utf-8') as f:
                     f.write(f"  Warning: Suspicious PSNR value detected: {psnr:.2f} > previous {last_result['PSNR']:.2f}\n")
         
         # 記錄結果
@@ -673,7 +702,8 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
             'SSIM': ssim,
             'Hist_Corr': hist_corr,
             'Processing_Time': run_time,
-            'Suspicious': is_psnr_suspicious
+            'Suspicious': is_psnr_suspicious,
+            'Measurement_Mode': measurement_mode  # 關鍵修復：記錄測量模式
         })
         
         # 保存嵌入圖像
@@ -685,7 +715,7 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
         print(f"  SSIM: {ssim:.4f}")
         print(f"  Time: {run_time:.2f} seconds")
         
-        with open(log_file, 'a') as f:
+        with open(log_file, 'a', encoding='utf-8') as f:
             f.write(f"  Actual: {actual_payload} bits\n")
             f.write(f"  BPP: {actual_payload/total_pixels:.6f}\n")
             f.write(f"  PSNR: {psnr:.2f}\n")
@@ -779,6 +809,8 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
         # 第二步：應用Savitzky-Golay平滑處理（如果數據點足夠多）
         if len(df) >= 7:  # 需要至少7個點以獲得良好效果
             try:
+                from scipy.signal import savgol_filter
+                
                 # 創建臨時DataFrame以排除最大容量點進行平滑處理
                 temp_df = df[df.index != max_capacity_idx].copy()
                 
@@ -891,13 +923,26 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
     print(f"Average time per point: {total_time/len(results):.2f} seconds")
     print(f"Results saved to {result_dir}")
     
-    with open(log_file, 'a') as f:
+    # 關鍵修復：確認使用的測量模式，使用ASCII字符
+    if use_step_size:
+        print(f"Confirmed: Used step_size={step_size} bits for {method_name}")
+    else:
+        print(f"Confirmed: Used segments={segments} for {method_name}")
+    
+    with open(log_file, 'a', encoding='utf-8') as f:
         f.write(f"Results summary:\n")
         f.write(f"Measurement mode used: {measurement_mode}\n")
         f.write(f"Total data points generated: {len(results)}\n")
         f.write(f"Total processing time: {total_time:.2f} seconds\n")
         f.write(f"Average time per point: {total_time/len(results):.2f} seconds\n")
-        f.write(f"Results saved to {result_dir}\n\n")
+        f.write(f"Results saved to {result_dir}\n")
+        
+        # 關鍵修復：在日誌中確認測量模式，使用ASCII字符
+        if use_step_size:
+            f.write(f"Final confirmation: Used step_size={step_size} bits for {method_name}\n")
+        else:
+            f.write(f"Final confirmation: Used segments={segments} for {method_name}\n")
+        f.write("\n")
         
         f.write("Data table:\n")
         f.write(df.to_string(index=False))
@@ -1179,45 +1224,14 @@ def plot_precise_measurements(df, imgName, method, prediction_method, output_dir
     plt.savefig(f"{output_dir}/processing_time.png", dpi=300)
     plt.close()  # 關閉圖表
 
+
 def run_multi_predictor_precise_measurements(imgName, filetype="png", method="quadtree", 
                                            predictor_ratios=None, total_embeddings=5, 
                                            el_mode=0, segments=15, step_size=None, use_different_weights=False,
                                            split_size=2, block_base=False, quad_tree_params=None):
     """
     為多個預測器運行精確測量並生成比較結果，只為 proposed 預測器儲存詳細資料
-    
-    Parameters:
-    -----------
-    imgName : str
-        圖像名稱
-    filetype : str
-        圖像檔案類型
-    method : str
-        使用的方法
-    predictor_ratios : dict
-        各預測器的ratio_of_ones設置
-    total_embeddings : int
-        總嵌入次數
-    el_mode : int
-        EL模式
-    segments : int
-        要測量的數據點數量 (如果提供了step_size則忽略此參數)
-    step_size : int, optional
-        測量點之間的步長 (以位元為單位，例如100000)
-        如果提供，則覆蓋segments參數
-    use_different_weights : bool
-        是否使用不同權重
-    split_size : int
-        分割大小
-    block_base : bool
-        是否使用block base方式
-    quad_tree_params : dict
-        四叉樹參數
-        
-    Returns:
-    --------
-    dict
-        包含各預測器測量結果的字典
+    修正版本：確保 step_size 參數正確傳遞和處理，並修復Unicode編碼問題
     """
     
     # 設置默認的預測器ratio字典
@@ -1257,9 +1271,9 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
     # 記錄總運行開始時間
     total_start_time = time.time()
     
-    # 創建記錄檔案
+    # 創建記錄檔案 - 修復：使用UTF-8編碼
     log_file = f"{comparison_dir}/multi_predictor_precise_run_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-    with open(log_file, 'w') as f:
+    with open(log_file, 'w', encoding='utf-8') as f:
         f.write(f"Multi-predictor precise measurement run started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"Image: {imgName}.{filetype}\n")
         f.write(f"Method: {method}\n")
@@ -1269,8 +1283,10 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
         # 關鍵修復：明確記錄使用的參數
         if step_size is not None and step_size > 0:
             f.write(f"Using step_size: {step_size} bits (segments parameter ignored)\n")
+            f.write(f"Measurement mode: step_size\n")
         else:
             f.write(f"Using segments: {segments} (no step_size provided)\n")
+            f.write(f"Measurement mode: segments\n")
             
         f.write("Predictor ratio settings:\n")
         for pred, ratio in predictor_ratios.items():
@@ -1292,17 +1308,19 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
         
         print(f"\n{'='*80}")
         print(f"Running precise measurements for {method_name.lower()} predictor")
+        
+        # 關鍵修復：明確顯示使用的測量參數
         if step_size is not None and step_size > 0:
-            print(f"Using step_size: {step_size} bits")
+            print(f"Using step_size: {step_size} bits (segments parameter {segments} will be ignored)")
         else:
-            print(f"Using segments: {segments}")
+            print(f"Using segments: {segments} (no step_size provided)")
         print(f"{'='*80}")
         
         # 獲取當前預測器的ratio_of_ones
         current_ratio_of_ones = predictor_ratios.get(method_name, 0.5)
         print(f"Using ratio_of_ones = {current_ratio_of_ones}")
         
-        with open(log_file, 'a') as f:
+        with open(log_file, 'a', encoding='utf-8') as f:
             f.write(f"Starting precise measurements for {method_name.lower()} predictor\n")
             f.write(f"Using ratio_of_ones = {current_ratio_of_ones}\n")
             if step_size is not None and step_size > 0:
@@ -1341,10 +1359,16 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
             # 保存結果
             all_results[method_name.lower()] = results_df
             
-            with open(log_file, 'a') as f:
+            with open(log_file, 'a', encoding='utf-8') as f:
                 f.write(f"Completed measurements for {method_name.lower()} predictor\n")
                 f.write(f"Time taken: {predictor_time:.2f} seconds\n")
-                f.write(f"Generated {len(results_df)} data points\n\n")
+                f.write(f"Generated {len(results_df)} data points\n")
+                # 關鍵修復：記錄實際使用的測量模式，使用ASCII字符
+                if step_size is not None and step_size > 0:
+                    f.write(f"Measurement mode used: step_size={step_size}\n")
+                else:
+                    f.write(f"Measurement mode used: segments={segments}\n")
+                f.write("\n")
                 
             # 保存CSV到比較目錄
             results_df.to_csv(f"{comparison_dir}/{method_name.lower()}_precise.csv", index=False)
@@ -1354,7 +1378,7 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
             
         except Exception as e:
             print(f"Error processing {method_name.lower()}: {str(e)}")
-            with open(log_file, 'a') as f:
+            with open(log_file, 'a', encoding='utf-8') as f:
                 f.write(f"Error processing {method_name.lower()}: {str(e)}\n")
                 f.write(traceback.format_exc())
                 f.write("\n\n")
@@ -1367,12 +1391,24 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
             # 記錄運行時間
             total_time = time.time() - total_start_time
             
-            with open(log_file, 'a') as f:
+            with open(log_file, 'a', encoding='utf-8') as f:
                 f.write(f"\nComparison completed at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-                f.write(f"Total processing time: {total_time:.2f} seconds\n\n")
+                f.write(f"Total processing time: {total_time:.2f} seconds\n")
+                # 關鍵修復：在最終日誌中記錄測量模式，使用ASCII字符
+                if step_size is not None and step_size > 0:
+                    f.write(f"Final confirmation: Used step_size={step_size} for all predictors\n")
+                else:
+                    f.write(f"Final confirmation: Used segments={segments} for all predictors\n")
+                f.write("\n")
                 
             print(f"\nComparison completed and saved to {comparison_dir}")
             print(f"Total processing time: {total_time:.2f} seconds")
+            
+            # 關鍵修復：在控制台輸出確認使用的測量模式，使用ASCII字符
+            if step_size is not None and step_size > 0:
+                print(f"Confirmed: All predictors used step_size={step_size} bits")
+            else:
+                print(f"Confirmed: All predictors used segments={segments}")
             
             # 創建寬格式表格，便於論文使用
             create_wide_format_tables(all_results, comparison_dir)
@@ -1381,7 +1417,7 @@ def run_multi_predictor_precise_measurements(imgName, filetype="png", method="qu
             
     except Exception as e:
         print(f"Error generating comparison: {str(e)}")
-        with open(log_file, 'a') as f:
+        with open(log_file, 'a', encoding='utf-8') as f:
             f.write(f"\nError generating comparison: {str(e)}\n")
             f.write(traceback.format_exc())
     
@@ -2579,6 +2615,7 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
     """
     運行精確的數據點測量，但僅儲存數據而不產生圖像和圖表
     適用於非 proposed 預測器
+    修正版本：確保 step_size 參數正確處理，並修復Unicode編碼問題，改进错误处理
     
     Parameters:
     -----------
@@ -2622,9 +2659,9 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
     result_dir = f"./Prediction_Error_Embedding/outcome/plots/{imgName}/data_{method_name.lower()}"
     os.makedirs(result_dir, exist_ok=True)
     
-    # 記錄運行設置
+    # 記錄運行設置 - 修復：使用UTF-8編碼
     log_file = f"{result_dir}/simplified_measurements_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-    with open(log_file, 'w') as f:
+    with open(log_file, 'w', encoding='utf-8') as f:
         f.write(f"Simplified measurement run started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
         f.write(f"Image: {imgName}\n")
         f.write(f"Method: {method}\n")
@@ -2633,31 +2670,40 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
         f.write(f"Total embeddings: {total_embeddings}\n")
         f.write(f"EL mode: {el_mode}\n")
         
-        # 關鍵修復：明確記錄使用的測量參數
+        # 關鍵修復：明確記錄和檢查使用的測量參數
         if step_size is not None and step_size > 0:
-            f.write(f"Using step_size: {step_size} bits (segments parameter ignored)\n")
+            f.write(f"Using step_size: {step_size} bits (segments parameter {segments} ignored)\n")
+            f.write(f"Measurement mode: step_size\n")
         else:
-            f.write(f"Using segments: {segments} (no step_size provided)\n")
+            f.write(f"Using segments: {segments} (no valid step_size provided)\n")
+            f.write(f"Measurement mode: segments\n")
             
         f.write(f"Use different weights: {use_different_weights}\n")
+        f.write(f"Split size: {split_size}, Block base: {block_base}\n")
         f.write("\n" + "="*80 + "\n\n")
     
     # 步驟1: 找出最大嵌入容量
-    print(f"\n{'='*80}")
-    print(f"Step 1: Finding maximum payload capacity for {method_name}")
-    print(f"{'='*80}")
+    print(f"\nStep 1: Finding maximum payload capacity for {method_name}")
+    print("="*80)
     
-    with open(log_file, 'a') as f:
+    with open(log_file, 'a', encoding='utf-8') as f:
         f.write(f"Step 1: Finding maximum payload capacity\n")
     
     start_time = time.time()
-    final_img_max, max_payload, stages_max = run_embedding_with_target(
-        origImg, method, prediction_method, ratio_of_ones, 
-        total_embeddings, el_mode, target_payload_size=-1,
-        split_size=split_size, block_base=block_base, 
-        quad_tree_params=quad_tree_params,
-        use_different_weights=use_different_weights
-    )
+    try:
+        final_img_max, max_payload, stages_max = run_embedding_with_target(
+            origImg, method, prediction_method, ratio_of_ones, 
+            total_embeddings, el_mode, target_payload_size=-1,
+            split_size=split_size, block_base=block_base, 
+            quad_tree_params=quad_tree_params,
+            use_different_weights=use_different_weights
+        )
+    except Exception as max_error:
+        print(f"Error finding maximum capacity for {method_name}: {str(max_error)}")
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(f"Error finding maximum capacity: {str(max_error)}\n")
+        # 如果无法找到最大容量，返回空的DataFrame
+        return pd.DataFrame()
     
     max_run_time = time.time() - start_time
     total_pixels = origImg.size
@@ -2666,7 +2712,7 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
     print(f"Max BPP: {max_payload/total_pixels:.6f}")
     print(f"Time taken: {max_run_time:.2f} seconds")
     
-    with open(log_file, 'a') as f:
+    with open(log_file, 'a', encoding='utf-8') as f:
         f.write(f"Maximum payload: {max_payload} bits\n")
         f.write(f"Max BPP: {max_payload/total_pixels:.6f}\n")
         f.write(f"Time taken: {max_run_time:.2f} seconds\n\n")
@@ -2674,37 +2720,43 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
     # 清理記憶體
     cleanup_memory()
     
-    # 步驟2: 計算測量點 - 關鍵修復：優先使用 step_size
-    print(f"\n{'='*80}")
-    if step_size is not None and step_size > 0:
-        print(f"Step 2: Calculating measurement points with {step_size} bit steps")
-        print(f"Note: segments parameter ({segments}) is ignored when step_size is provided")
-    else:
-        print(f"Step 2: Calculating {segments} evenly distributed payload points")
-        print(f"Note: no step_size provided, using segments")
-    print(f"{'='*80}")
+    # 步驟2: 計算測量點 - 關鍵修復：優先檢查和使用 step_size
+    print(f"\nStep 2: Calculating measurement points for {method_name}")
+    print("="*80)
     
-    with open(log_file, 'a') as f:
-        if step_size is not None and step_size > 0:
-            f.write(f"Step 2: Calculating measurement points with {step_size} bit steps\n")
-            f.write(f"Note: segments parameter ({segments}) is ignored\n")
-        else:
-            f.write(f"Step 2: Calculating {segments} evenly distributed payload points\n")
-            f.write(f"Note: no step_size provided\n")
-    
-    # 關鍵修復：根據參數生成測量點，優先使用 step_size
-    if step_size is not None and step_size > 0:
-        # 使用固定步長生成測量點，但排除最大容量點
-        payload_points = list(range(step_size, max_payload, step_size))
+    # 關鍵修復：更嚴格的 step_size 檢查和使用邏輯
+    use_step_size = False
+    if step_size is not None and isinstance(step_size, (int, float)) and step_size > 0:
+        use_step_size = True
+        print(f"Using step_size: {step_size} bits (segments parameter {segments} will be ignored)")
         measurement_mode = f"step_size={step_size}"
+    else:
+        print(f"Using segments: {segments} (step_size={step_size} is invalid or not provided)")
+        measurement_mode = f"segments={segments}"
+    
+    with open(log_file, 'a', encoding='utf-8') as f:
+        f.write(f"Step 2: Calculating measurement points\n")
+        if use_step_size:
+            f.write(f"Using step_size: {step_size} bits (segments parameter ignored)\n")
+        else:
+            f.write(f"Using segments: {segments} (invalid step_size: {step_size})\n")
+    
+    # 關鍵修復：根據 use_step_size 標誌生成測量點，排除最大容量點
+    if use_step_size:
+        # 使用固定步長生成測量點，但排除最大容量點
+        payload_points = list(range(int(step_size), max_payload, int(step_size)))
+        print(f"Generated {len(payload_points)} points using step_size={step_size}")
+        print(f"Step points range: {payload_points[0] if payload_points else 'None'} to {payload_points[-1] if payload_points else 'None'}")
     else:
         # 使用分段生成測量點，但排除100%點
         payload_points = [int(max_payload * (i+1) / segments) for i in range(segments-1)]
-        measurement_mode = f"segments={segments}"
+        print(f"Generated {len(payload_points)} points using segments={segments}")
+        print(f"Segment points range: {payload_points[0] if payload_points else 'None'} to {payload_points[-1] if payload_points else 'None'}")
     
     # 確保測量點中不包含最大容量
     if max_payload in payload_points:
         payload_points.remove(max_payload)
+        print(f"Removed max_payload {max_payload} from measurement points")
     
     print(f"Measurement mode: {measurement_mode}")
     print(f"Total measurement points: {len(payload_points) + 1} (including max capacity)")
@@ -2715,7 +2767,7 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
         print(f"  ... (showing first 5 of {len(payload_points)} points)")
     print(f"  Point {len(payload_points)+1}: {max_payload} bits (100.0% of max) [using initial measurement]")
     
-    with open(log_file, 'a') as f:
+    with open(log_file, 'a', encoding='utf-8') as f:
         f.write(f"Measurement mode: {measurement_mode}\n")
         f.write(f"Total measurement points: {len(payload_points) + 1}\n")
         f.write("Target payload points:\n")
@@ -2724,12 +2776,21 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
         f.write(f"  Point {len(payload_points)+1}: {max_payload} bits (100.0% of max) [using initial measurement]\n\n")
     
     # 計算最大容量的品質指標
-    psnr_max = calculate_psnr(origImg, final_img_max)
-    ssim_max = calculate_ssim(origImg, final_img_max)
-    hist_corr_max = histogram_correlation(
-        np.histogram(origImg, bins=256, range=(0, 255))[0],
-        np.histogram(final_img_max, bins=256, range=(0, 255))[0]
-    )
+    try:
+        psnr_max = calculate_psnr(origImg, final_img_max)
+        ssim_max = calculate_ssim(origImg, final_img_max)
+        hist_corr_max = histogram_correlation(
+            np.histogram(origImg, bins=256, range=(0, 255))[0],
+            np.histogram(final_img_max, bins=256, range=(0, 255))[0]
+        )
+    except Exception as metrics_error:
+        print(f"Error calculating quality metrics for max capacity: {str(metrics_error)}")
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(f"Error calculating quality metrics: {str(metrics_error)}\n")
+        # 使用默认值
+        psnr_max = 0.0
+        ssim_max = 0.0
+        hist_corr_max = 0.0
     
     # 初始化結果列表，包含最大容量結果
     results = [{
@@ -2740,16 +2801,22 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
         'PSNR': psnr_max,
         'SSIM': ssim_max,
         'Hist_Corr': hist_corr_max,
-        'Processing_Time': max_run_time
+        'Processing_Time': max_run_time,
+        'Measurement_Mode': measurement_mode  # 關鍵修復：記錄測量模式
     }]
     
     # 步驟3: 為每個目標點運行嵌入算法
-    print(f"\n{'='*80}")
-    print(f"Step 3: Running embedding algorithm for each target point")
-    print(f"{'='*80}")
+    print(f"\nStep 3: Running embedding algorithm for each target point")
+    print(f"Processing {len(payload_points)} measurement points...")
+    print("="*80)
     
-    with open(log_file, 'a') as f:
+    with open(log_file, 'a', encoding='utf-8') as f:
         f.write(f"Step 3: Running embedding algorithm for each target point\n")
+        f.write(f"Processing {len(payload_points)} measurement points using {measurement_mode}\n")
+    
+    # 计数器跟踪成功和失败的测量
+    successful_measurements = 0
+    failed_measurements = 0
     
     # 運行其餘級距的測量 (不包括最大容量點，因為已經有了)
     for i, target in enumerate(tqdm(payload_points, desc=f"處理 {method_name} 數據點")):
@@ -2757,28 +2824,63 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
         
         print(f"\nRunning point {i+1}/{len(payload_points)}: {target} bits ({percentage:.1f}% of max)")
         
-        with open(log_file, 'a') as f:
-            f.write(f"{percentage:.1f}% target:\n")
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(f"{percentage:.1f}% target (point {i+1}/{len(payload_points)}):\n")
             f.write(f"  Target: {target} bits\n")
         
         start_time = time.time()
-        final_img, actual_payload, stages = run_embedding_with_target(
-            origImg, method, prediction_method, ratio_of_ones, 
-            total_embeddings, el_mode, target_payload_size=target,
-            split_size=split_size, block_base=block_base, 
-            quad_tree_params=quad_tree_params,
-            use_different_weights=use_different_weights
-        )
+        try:
+            final_img, actual_payload, stages = run_embedding_with_target(
+                origImg, method, prediction_method, ratio_of_ones, 
+                total_embeddings, el_mode, target_payload_size=target,
+                split_size=split_size, block_base=block_base, 
+                quad_tree_params=quad_tree_params,
+                use_different_weights=use_different_weights
+            )
+            
+            # 验证返回的数据
+            if final_img is None or actual_payload is None or stages is None:
+                print(f"  Warning: Invalid return data for target {target} bits")
+                print(f"    final_img is None: {final_img is None}")
+                print(f"    actual_payload is None: {actual_payload is None}")
+                print(f"    stages is None: {stages is None}")
+                
+                with open(log_file, 'a', encoding='utf-8') as f:
+                    f.write(f"  Warning: Invalid return data for target {target} bits\n")
+                
+                failed_measurements += 1
+                continue
+                
+        except Exception as embedding_error:
+            print(f"  Error in embedding for target {target} bits")
+            print(f"    Method: {method}")
+            print(f"    Predictor: {prediction_method.value}")
+            print(f"    Error: {str(embedding_error)}")
+            
+            with open(log_file, 'a', encoding='utf-8') as f:
+                f.write(f"  Error in embedding for target {target}: {str(embedding_error)}\n")
+            
+            failed_measurements += 1
+            # 跳过这个测量点，继续下一个
+            continue
         
         run_time = time.time() - start_time
         
         # 計算質量指標
-        psnr = calculate_psnr(origImg, final_img)
-        ssim = calculate_ssim(origImg, final_img)
-        hist_corr = histogram_correlation(
-            np.histogram(origImg, bins=256, range=(0, 255))[0],
-            np.histogram(final_img, bins=256, range=(0, 255))[0]
-        )
+        try:
+            psnr = calculate_psnr(origImg, final_img)
+            ssim = calculate_ssim(origImg, final_img)
+            hist_corr = histogram_correlation(
+                np.histogram(origImg, bins=256, range=(0, 255))[0],
+                np.histogram(final_img, bins=256, range=(0, 255))[0]
+            )
+        except Exception as metrics_error:
+            print(f"  Error calculating quality metrics: {str(metrics_error)}")
+            with open(log_file, 'a', encoding='utf-8') as f:
+                f.write(f"  Error calculating quality metrics: {str(metrics_error)}\n")
+            
+            failed_measurements += 1
+            continue
         
         # 記錄結果
         results.append({
@@ -2789,10 +2891,11 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
             'PSNR': psnr,
             'SSIM': ssim,
             'Hist_Corr': hist_corr,
-            'Processing_Time': run_time
+            'Processing_Time': run_time,
+            'Measurement_Mode': measurement_mode  # 關鍵修復：記錄測量模式
         })
         
-        # 注意：我們不保存圖像，只記錄數據
+        successful_measurements += 1
         
         print(f"  Actual: {actual_payload} bits")
         print(f"  BPP: {actual_payload/total_pixels:.6f}")
@@ -2800,7 +2903,7 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
         print(f"  SSIM: {ssim:.4f}")
         print(f"  Time: {run_time:.2f} seconds")
         
-        with open(log_file, 'a') as f:
+        with open(log_file, 'a', encoding='utf-8') as f:
             f.write(f"  Actual: {actual_payload} bits\n")
             f.write(f"  BPP: {actual_payload/total_pixels:.6f}\n")
             f.write(f"  PSNR: {psnr:.2f}\n")
@@ -2818,35 +2921,61 @@ def run_simplified_precise_measurements(origImg, imgName, method, prediction_met
     df = pd.DataFrame(results)
     
     # 步驟4: 整理結果
-    print(f"\n{'='*80}")
-    print(f"Step 4: Results summary for {method_name}")
-    print(f"{'='*80}")
+    print(f"\nStep 4: Results summary for {method_name}")
+    print("="*80)
     
     total_time = time.time() - total_start_time
     
     print(f"Measurement mode used: {measurement_mode}")
     print(f"Total data points generated: {len(results)}")
+    print(f"Successful measurements: {successful_measurements + 1}")  # +1 for max capacity
+    print(f"Failed measurements: {failed_measurements}")
+    print(f"Success rate: {((successful_measurements + 1) / (successful_measurements + failed_measurements + 1) * 100):.1f}%")
     print(f"Total processing time: {total_time:.2f} seconds")
     print(f"Average time per point: {total_time/len(results):.2f} seconds")
     print(f"Results saved to {result_dir}")
     
-    with open(log_file, 'a') as f:
+    # 確認使用的測量模式
+    if use_step_size:
+        print(f"Confirmed: Used step_size={step_size} bits for {method_name}")
+    else:
+        print(f"Confirmed: Used segments={segments} for {method_name}")
+    
+    with open(log_file, 'a', encoding='utf-8') as f:
         f.write(f"Results summary:\n")
         f.write(f"Measurement mode used: {measurement_mode}\n")
         f.write(f"Total data points generated: {len(results)}\n")
+        f.write(f"Successful measurements: {successful_measurements + 1}\n")
+        f.write(f"Failed measurements: {failed_measurements}\n")
+        f.write(f"Success rate: {((successful_measurements + 1) / (successful_measurements + failed_measurements + 1) * 100):.1f}%\n")
         f.write(f"Total processing time: {total_time:.2f} seconds\n")
         f.write(f"Average time per point: {total_time/len(results):.2f} seconds\n")
-        f.write(f"Results saved to {result_dir}\n\n")
+        f.write(f"Results saved to {result_dir}\n")
+        
+        # 確認測量模式
+        if use_step_size:
+            f.write(f"Final confirmation: Used step_size={step_size} bits for {method_name}\n")
+        else:
+            f.write(f"Final confirmation: Used segments={segments} for {method_name}\n")
+        f.write("\n")
         
         f.write("Data table:\n")
         f.write(df.to_string(index=False))
     
     # 保存結果
     csv_path = f"{result_dir}/simplified_measurements.csv"
-    df.to_csv(csv_path, index=False)
-    print(f"Results saved to {csv_path}")
-    
-    # 注意：我們不生成圖表，只保存數據
+    try:
+        df.to_csv(csv_path, index=False)
+        print(f"Results saved to {csv_path}")
+        
+        # 验证保存的CSV文件
+        verification_df = pd.read_csv(csv_path)
+        print(f"CSV verification: {len(verification_df)} rows successfully saved")
+        
+    except Exception as save_error:
+        print(f"Error saving CSV file: {str(save_error)}")
+        with open(log_file, 'a', encoding='utf-8') as f:
+            f.write(f"Error saving CSV: {str(save_error)}\n")
     
     return df
 

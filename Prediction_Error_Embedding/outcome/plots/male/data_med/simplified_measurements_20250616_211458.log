@@ -1,0 +1,173 @@
+Simplified measurement run started at 2025-06-16 21:14:58
+Image: Male
+Method: split
+Prediction method: med
+Ratio of ones: 0.5
+Total embeddings: 4
+EL mode: 0
+Using step_size: 100000 bits (segments parameter 20 ignored)
+Measurement mode: step_size
+Use different weights: True
+
+================================================================================
+
+Step 1: Finding maximum payload capacity
+Maximum payload: 1446111 bits
+Max BPP: 1.379119
+Time taken: 0.96 seconds
+
+Step 2: Calculating measurement points
+Using step_size: 100000 bits (segments parameter ignored)
+Measurement mode: step_size=100000
+Total measurement points: 15
+Target payload points:
+  Point 1: 100000 bits (6.9% of max)
+  Point 2: 200000 bits (13.8% of max)
+  Point 3: 300000 bits (20.7% of max)
+  Point 4: 400000 bits (27.7% of max)
+  Point 5: 500000 bits (34.6% of max)
+  Point 6: 600000 bits (41.5% of max)
+  Point 7: 700000 bits (48.4% of max)
+  Point 8: 800000 bits (55.3% of max)
+  Point 9: 900000 bits (62.2% of max)
+  Point 10: 1000000 bits (69.2% of max)
+  Point 11: 1100000 bits (76.1% of max)
+  Point 12: 1200000 bits (83.0% of max)
+  Point 13: 1300000 bits (89.9% of max)
+  Point 14: 1400000 bits (96.8% of max)
+  Point 15: 1446111 bits (100.0% of max) [using initial measurement]
+
+Step 3: Running embedding algorithm for each target point
+Processing 14 measurement points using step_size=100000
+6.9% target (point 1/14):
+  Target: 100000 bits
+  Actual: 100000 bits
+  BPP: 0.095367
+  PSNR: 58.96
+  SSIM: 0.9994
+  Hist_Corr: 0.9998
+  Time: 0.36 seconds
+
+13.8% target (point 2/14):
+  Target: 200000 bits
+  Actual: 200000 bits
+  BPP: 0.190735
+  PSNR: 56.60
+  SSIM: 0.9989
+  Hist_Corr: 0.9990
+  Time: 0.43 seconds
+
+20.7% target (point 3/14):
+  Target: 300000 bits
+  Actual: 300000 bits
+  BPP: 0.286102
+  PSNR: 56.47
+  SSIM: 0.9989
+  Hist_Corr: 0.9954
+  Time: 0.43 seconds
+
+27.7% target (point 4/14):
+  Target: 400000 bits
+  Actual: 400000 bits
+  BPP: 0.381470
+  PSNR: 55.81
+  SSIM: 0.9985
+  Hist_Corr: 0.9871
+  Time: 0.45 seconds
+
+34.6% target (point 5/14):
+  Target: 500000 bits
+  Actual: 500000 bits
+  BPP: 0.476837
+  PSNR: 54.63
+  SSIM: 0.9979
+  Hist_Corr: 0.9714
+  Time: 0.47 seconds
+
+41.5% target (point 6/14):
+  Target: 600000 bits
+  Actual: 600000 bits
+  BPP: 0.572205
+  PSNR: 53.46
+  SSIM: 0.9971
+  Hist_Corr: 0.9730
+  Time: 0.47 seconds
+
+48.4% target (point 7/14):
+  Target: 700000 bits
+  Actual: 700000 bits
+  BPP: 0.667572
+  PSNR: 52.57
+  SSIM: 0.9965
+  Hist_Corr: 0.9712
+  Time: 0.50 seconds
+
+55.3% target (point 8/14):
+  Target: 800000 bits
+  Actual: 800000 bits
+  BPP: 0.762939
+  PSNR: 52.92
+  SSIM: 0.9964
+  Hist_Corr: 0.9631
+  Time: 0.53 seconds
+
+62.2% target (point 9/14):
+  Target: 900000 bits
+  Actual: 900000 bits
+  BPP: 0.858307
+  PSNR: 51.71
+  SSIM: 0.9964
+  Hist_Corr: 0.9768
+  Time: 0.55 seconds
+
+69.2% target (point 10/14):
+  Target: 1000000 bits
+  Actual: 1000000 bits
+  BPP: 0.953674
+  PSNR: 50.95
+  SSIM: 0.9951
+  Hist_Corr: 0.9628
+  Time: 0.62 seconds
+
+76.1% target (point 11/14):
+  Target: 1100000 bits
+  Actual: 1100000 bits
+  BPP: 1.049042
+  PSNR: 51.07
+  SSIM: 0.9953
+  Hist_Corr: 0.9776
+  Time: 0.65 seconds
+
+83.0% target (point 12/14):
+  Target: 1200000 bits
+  Actual: 1200000 bits
+  BPP: 1.144409
+  PSNR: 50.86
+  SSIM: 0.9949
+  Hist_Corr: 0.9834
+  Time: 0.68 seconds
+
+89.9% target (point 13/14):
+  Target: 1300000 bits
+  Actual: 1300000 bits
+  BPP: 1.239777
+  PSNR: 50.33
+  SSIM: 0.9942
+  Hist_Corr: 0.9588
+  Time: 0.70 seconds
+
+96.8% target (point 14/14):
+  Target: 1400000 bits
+  Actual: 1400000 bits
+  BPP: 1.335144
+  PSNR: 49.68
+  SSIM: 0.9935
+  Hist_Corr: 0.9686
+  Time: 0.79 seconds
+
+Results summary:
+Measurement mode used: step_size=100000
+Total data points generated: 15
+Total processing time: 10.59 seconds
+Average time per point: 0.71 seconds
+Results saved to ./Prediction_Error_Embedding/outcome/plots/Male/data_med

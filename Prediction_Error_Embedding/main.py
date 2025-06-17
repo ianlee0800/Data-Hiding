@@ -80,7 +80,7 @@ def main():
     # ==== 參數設置（直接在代碼中調整） ====
     
     # 基本參數設置
-    imgName = "Male"           # 圖像名稱
+    imgName = "F16"           # 圖像名稱
     filetype = "tiff"         # 圖像檔案類型
     total_embeddings = 4      # 總嵌入次數
     
@@ -102,7 +102,7 @@ def main():
     # 精確測量參數
     # 以下兩個參數二選一，若都設置則優先使用step_size
     stats_segments = 20                 # 統計分段數量
-    step_size = 100000                   # 測量步長（位元），如不使用步長則設為None
+    step_size = 100000                  # 測量步長（位元），如不使用步長則設為None
     
     # 預測方法選擇
     # 可選：PROPOSED, MED, GAP, RHOMBUS, ALL (ALL表示運行所有方法並生成比較)
@@ -190,14 +190,24 @@ def main():
         print(f"Method comparison completed.")
         return
     
-    # 如果選擇 ALL，則執行所有預測方法並生成比較
     if prediction_method_str.upper() == "ALL":
         print("Running all prediction methods and generating comparison...")
         
         if use_precise_measurement:
-            # 使用精確測量模式，改進版：只為 proposed 儲存詳細資訊
-            print("Using precise measurement mode with separate runs per predictor...")
+            print(f"\nUsing precise measurement mode...")
             
+            # 關鍵修復：明確顯示傳遞的參數
+            print(f"Parameters for precise measurement:")
+            print(f"  - segments: {stats_segments}")
+            print(f"  - step_size: {step_size}")
+            
+            # 關鍵修復：明確確認使用的測量模式
+            if step_size is not None and step_size > 0:
+                print(f"  ✓ Will use step_size={step_size} bits (segments={stats_segments} will be ignored)")
+            else:
+                print(f"  ✓ Will use segments={stats_segments} (step_size={step_size} is invalid)")
+            
+            # 關鍵修復：確保 step_size 參數正確傳遞
             run_multi_predictor_precise_measurements(
                 imgName=imgName,
                 filetype=filetype,
@@ -206,7 +216,7 @@ def main():
                 total_embeddings=total_embeddings,
                 el_mode=el_mode,
                 segments=stats_segments,
-                step_size=step_size,  # 確保這行存在且未被註釋
+                step_size=step_size,  # 關鍵修復：確保這行存在且正確傳遞
                 use_different_weights=use_different_weights,
                 split_size=split_size,
                 block_base=block_base,
@@ -322,14 +332,14 @@ def main():
                 # 為 proposed 執行完整測量，包括圖像和圖表
                 run_precise_measurements(
                     origImg, imgName, method, prediction_method, ratio_of_ones, 
-                    total_embeddings, el_mode, stats_segments, step_size,  # 新增step_size
+                    total_embeddings, el_mode, stats_segments, step_size,  # 關鍵修復：確保step_size正確傳遞
                     use_different_weights, split_size, block_base, quad_tree_params
                 )
             else:
                 # 為其他預測器執行簡化測量，僅儲存數據
                 run_simplified_precise_measurements(
                     origImg, imgName, method, prediction_method, ratio_of_ones, 
-                    total_embeddings, el_mode, stats_segments, step_size,  # 新增step_size
+                    total_embeddings, el_mode, stats_segments, step_size,  # 關鍵修復：確保step_size正確傳遞
                     use_different_weights, split_size, block_base, quad_tree_params
                 )
             
