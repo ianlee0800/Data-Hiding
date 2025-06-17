@@ -303,42 +303,11 @@ def generate_embedding_data(total_embeddings, sub_images_per_stage, max_capacity
 # =============================================================================
 
 def run_embedding_with_target(origImg, method, prediction_method, ratio_of_ones, 
-                             total_embeddings, el_mode, target_payload_size,
-                             split_size=2, block_base=False, quad_tree_params=None,
-                             use_different_weights=False):
+                                   total_embeddings, el_mode, target_payload_size,
+                                   split_size=2, block_base=False, quad_tree_params=None,
+                                   use_different_weights=False):
     """
-    執行特定嵌入算法，針對特定的目標payload
-    修复版本：确保正确处理所有预测器的权重设置
-    
-    Parameters:
-    -----------
-    origImg : numpy.ndarray
-        原始圖像
-    method : str
-        使用的方法 ("rotation", "split", "quadtree")
-    prediction_method : PredictionMethod
-        預測方法
-    ratio_of_ones : float
-        嵌入數據中1的比例
-    total_embeddings : int
-        總嵌入次數
-    el_mode : int
-        EL模式
-    target_payload_size : int
-        目標嵌入量
-    split_size : int, optional
-        分割大小
-    block_base : bool, optional
-        是否使用block base方式
-    quad_tree_params : dict, optional
-        四叉樹參數
-    use_different_weights : bool, optional
-        是否使用不同權重
-        
-    Returns:
-    --------
-    tuple
-        (final_img, actual_payload, stages)
+    修復版的嵌入測試函數，正確處理彩色圖像的目標容量和BPP計算
     """
     from embedding import (
         pee_process_with_rotation_cuda,
@@ -346,25 +315,35 @@ def run_embedding_with_target(origImg, method, prediction_method, ratio_of_ones,
     )
     from quadtree import pee_process_with_quadtree_cuda
     
+    # 檢測圖像類型
+    is_color = len(origImg.shape) == 3 and origImg.shape[2] == 3
+    
+    if is_color:
+        print(f"Processing color image with target: {target_payload_size} bits")
+        print(f"Expected capacity: ~3x equivalent grayscale image")
+        # 🔧 重要：對於彩色圖像，我們已經修改了嵌入函數來正確處理容量
+        # 所以這裡不需要特殊的target_payload_size調整
+    else:
+        print(f"Processing grayscale image with target: {target_payload_size} bits")
+    
     # 重置GPU記憶體
     cp.get_default_memory_pool().free_all_blocks()
     
-    # 关键修复：对非PROPOSED预测器禁用权重优化
+    # 修正權重設置
     if prediction_method in [PredictionMethod.MED, PredictionMethod.GAP, PredictionMethod.RHOMBUS]:
         actual_use_weights = False
-        if use_different_weights:  # 只在原本要使用权重时才显示消息
+        if use_different_weights:
             print(f"Note: Weight optimization disabled for {prediction_method.value} prediction method")
     else:
         actual_use_weights = use_different_weights
     
     try:
-        # 根据方法选择相应的嵌入算法
         if method == "rotation":
             final_img, actual_payload, stages = pee_process_with_rotation_cuda(
                 origImg,
                 total_embeddings,
                 ratio_of_ones,
-                actual_use_weights,  # 使用修正后的权重设置
+                actual_use_weights,
                 split_size,
                 el_mode,
                 prediction_method=prediction_method,
@@ -375,7 +354,7 @@ def run_embedding_with_target(origImg, method, prediction_method, ratio_of_ones,
                 origImg,
                 total_embeddings,
                 ratio_of_ones,
-                actual_use_weights,  # 使用修正后的权重设置
+                actual_use_weights,
                 split_size,
                 el_mode,
                 block_base,
@@ -393,7 +372,7 @@ def run_embedding_with_target(origImg, method, prediction_method, ratio_of_ones,
                 origImg,
                 total_embeddings,
                 ratio_of_ones,
-                actual_use_weights,  # 使用修正后的权重设置
+                actual_use_weights,
                 quad_tree_params['min_block_size'],
                 quad_tree_params['variance_threshold'],
                 el_mode,
@@ -411,79 +390,54 @@ def run_embedding_with_target(origImg, method, prediction_method, ratio_of_ones,
         print(f"Error details: {str(e)}")
         raise e
 
-def ensure_bpp_psnr_consistency(results_df):
+def ensure_bpp_psnr_consistency(results_df, is_color=False):
     """
-    確保 BPP-PSNR 數據的一致性：較高的 BPP 應有較低的 PSNR
+    修復版的BPP-PSNR一致性檢查，考慮彩色圖像的特殊性
     """
     df = results_df.copy().sort_values('BPP')
+    
+    # 🔧 針對彩色圖像調整檢查參數
+    if is_color:
+        # 彩色圖像可能有更大的BPP變化範圍
+        tolerance_factor = 1.5
+        print("Applying color image specific consistency checks...")
+    else:
+        tolerance_factor = 1.0
     
     # 確保 PSNR 隨著 BPP 增加而單調下降
     for i in range(1, len(df)):
         if df.iloc[i]['PSNR'] > df.iloc[i-1]['PSNR']:
-            # 異常點檢測：當前 PSNR 高於前一個點
             if i > 1:
-                # 使用前兩個點的平均斜率進行修正
                 prev_slope = (df.iloc[i-1]['PSNR'] - df.iloc[i-2]['PSNR']) / (df.iloc[i-1]['BPP'] - df.iloc[i-2]['BPP'])
                 expected_drop = prev_slope * (df.iloc[i]['BPP'] - df.iloc[i-1]['BPP'])
                 corrected_psnr = max(df.iloc[i-1]['PSNR'] + expected_drop, df.iloc[i-1]['PSNR'] * 0.995)
                 df.loc[df.index[i], 'PSNR'] = corrected_psnr
             else:
-                # 簡單地將 PSNR 設為稍低於前一個點
-                df.loc[df.index[i], 'PSNR'] = df.iloc[i-1]['PSNR'] * 0.995
+                df.loc[df.index[i], 'PSNR'] = df.iloc[i-1]['PSNR'] * (0.998 if is_color else 0.995)
     
-    # 對 SSIM 和 Hist_Corr 也進行類似的處理
+    # 對其他指標進行類似處理
     for metric in ['SSIM', 'Hist_Corr']:
         for i in range(1, len(df)):
             if df.iloc[i][metric] > df.iloc[i-1][metric]:
-                # 簡單地進行平滑處理
-                df.loc[df.index[i], metric] = df.iloc[i-1][metric] * 0.99
+                df.loc[df.index[i], metric] = df.iloc[i-1][metric] * (0.995 if is_color else 0.99)
     
     return df.sort_values('Target_Percentage')
 
 def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_of_ones, 
-                            total_embeddings=5, el_mode=0, segments=15, step_size=None, 
-                            use_different_weights=False, split_size=2, block_base=False, 
-                            quad_tree_params=None):
+                                 total_embeddings=5, el_mode=0, segments=15, step_size=None, 
+                                 use_different_weights=False, split_size=2, block_base=False, 
+                                 quad_tree_params=None):
     """
-    運行精確的數據點測量，為均勻分布的payload目標單獨執行嵌入算法
-    增加數據平滑處理和異常點修正功能，並確保最大容量點使用初始測量值
-    修正版本：確保 step_size 參數正確處理和優先使用，並修復Unicode編碼問題
+    修復版的精確測量函數，正確處理彩色圖像的BPP計算和數據分析
+    """
+    import time
+    import os
+    from datetime import datetime
+    from tqdm import tqdm
     
-    Parameters:
-    -----------
-    origImg : numpy.ndarray
-        原始圖像
-    imgName : str
-        圖像名稱 (用於保存結果)
-    method : str
-        使用的方法
-    prediction_method : PredictionMethod
-        預測方法
-    ratio_of_ones : float
-        嵌入數據中1的比例
-    total_embeddings : int
-        總嵌入次數
-    el_mode : int
-        EL模式
-    segments : int
-        要測量的數據點數量 (如果提供了step_size則忽略此參數)
-    step_size : int, optional
-        測量點之間的步長 (以位元為單位，例如100000)
-        如果提供，則覆蓋segments參數
-    use_different_weights : bool
-        是否使用不同權重
-    split_size : int
-        分割大小
-    block_base : bool
-        是否使用block base方式
-    quad_tree_params : dict
-        四叉樹參數
-        
-    Returns:
-    --------
-    pandas.DataFrame
-        包含所有測量結果的DataFrame
-    """
+    # 檢測圖像類型
+    is_color = len(origImg.shape) == 3 and origImg.shape[2] == 3
+    
     # 總運行開始時間
     total_start_time = time.time()
     
@@ -496,18 +450,28 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
     result_dir = f"./Prediction_Error_Embedding/outcome/plots/{imgName}/precise_{method_name}"
     os.makedirs(result_dir, exist_ok=True)
     
-    # 記錄運行設置 - 修復：使用UTF-8編碼
+    # 🔧 重要：正確計算像素計數
+    if is_color:
+        pixel_count = origImg.shape[0] * origImg.shape[1]  # 像素位置數
+        total_pixels_info = f"{origImg.shape[0]}x{origImg.shape[1]} color image"
+        print(f"Color image detected: {pixel_count} pixel positions")
+    else:
+        pixel_count = origImg.size  # 總像素數
+        total_pixels_info = f"{origImg.shape[0]}x{origImg.shape[1]} grayscale image"
+        print(f"Grayscale image detected: {pixel_count} pixels")
+    
+    # 記錄運行設置
     log_file = f"{result_dir}/precise_measurements_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
     with open(log_file, 'w', encoding='utf-8') as f:
         f.write(f"Precise measurement run started at {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
-        f.write(f"Image: {imgName}\n")
+        f.write(f"Image: {imgName} ({total_pixels_info})\n")
         f.write(f"Method: {method}\n")
         f.write(f"Prediction method: {method_name}\n")
         f.write(f"Ratio of ones: {ratio_of_ones}\n")
         f.write(f"Total embeddings: {total_embeddings}\n")
         f.write(f"EL mode: {el_mode}\n")
+        f.write(f"Pixel count for BPP calculation: {pixel_count}\n")
         
-        # 關鍵修復：明確記錄和檢查使用的測量參數
         if step_size is not None and step_size > 0:
             f.write(f"Using step_size: {step_size} bits (segments parameter {segments} ignored)\n")
             f.write(f"Measurement mode: step_size\n")
@@ -523,9 +487,6 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
     print(f"Step 1: Finding maximum payload capacity")
     print(f"{'='*80}")
     
-    with open(log_file, 'a', encoding='utf-8') as f:
-        f.write(f"Step 1: Finding maximum payload capacity\n")
-    
     start_time = time.time()
     final_img_max, max_payload, stages_max = run_embedding_with_target(
         origImg, method, prediction_method, ratio_of_ones, 
@@ -536,51 +497,61 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
     )
     
     max_run_time = time.time() - start_time
-    total_pixels = origImg.size
     
-    # 計算最大容量的品質指標
-    psnr_max = calculate_psnr(origImg, final_img_max)
-    ssim_max = calculate_ssim(origImg, final_img_max)
-    hist_corr_max = histogram_correlation(
-        np.histogram(origImg, bins=256, range=(0, 255))[0],
-        np.histogram(final_img_max, bins=256, range=(0, 255))[0]
-    )
+    # 🔧 重要：計算最大容量的品質指標，使用正確的BPP計算
+    if is_color:
+        from color import calculate_color_metrics
+        psnr_max, ssim_max, hist_corr_max = calculate_color_metrics(origImg, final_img_max)
+    else:
+        psnr_max = calculate_psnr(origImg, final_img_max)
+        ssim_max = calculate_ssim(origImg, final_img_max)
+        hist_corr_max = histogram_correlation(
+            np.histogram(origImg, bins=256, range=(0, 255))[0],
+            np.histogram(final_img_max, bins=256, range=(0, 255))[0]
+        )
+    
+    # 🔧 重要：使用正確的像素計數計算BPP
+    max_bpp = max_payload / pixel_count
     
     # 創建最大容量結果字典
     max_capacity_result = {
         'Target_Percentage': 100.0,
         'Target_Payload': max_payload,
         'Actual_Payload': max_payload,
-        'BPP': max_payload / total_pixels,
+        'BPP': max_bpp,
         'PSNR': psnr_max,
         'SSIM': ssim_max,
         'Hist_Corr': hist_corr_max,
         'Processing_Time': max_run_time,
-        'Suspicious': False  # 初始測量不標記為可疑
+        'Suspicious': False,
+        'Image_Type': 'color' if is_color else 'grayscale',
+        'Pixel_Count': pixel_count
     }
     
     print(f"Maximum payload: {max_payload} bits")
-    print(f"Max BPP: {max_payload/total_pixels:.6f}")
+    print(f"Max BPP: {max_bpp:.6f}")
     print(f"Max PSNR: {psnr_max:.2f}")
     print(f"Max SSIM: {ssim_max:.4f}")
     print(f"Time taken: {max_run_time:.2f} seconds")
     
     with open(log_file, 'a', encoding='utf-8') as f:
         f.write(f"Maximum payload: {max_payload} bits\n")
-        f.write(f"Max BPP: {max_payload/total_pixels:.6f}\n")
+        f.write(f"Max BPP: {max_bpp:.6f}\n")
         f.write(f"Max PSNR: {psnr_max:.2f}\n")
         f.write(f"Max SSIM: {ssim_max:.4f}\n")
         f.write(f"Max Hist Corr: {hist_corr_max:.4f}\n")
         f.write(f"Time taken: {max_run_time:.2f} seconds\n\n")
     
     # 保存最大容量的嵌入圖像
-    save_image(final_img_max, f"{result_dir}/embedded_100pct.png")
+    if is_color:
+        cv2.imwrite(f"{result_dir}/embedded_100pct.png", final_img_max)
+    else:
+        save_image(final_img_max, f"{result_dir}/embedded_100pct.png")
     
-    # 步驟2: 計算測量點，排除最大容量點（因為已經測量）
+    # 步驟2: 計算測量點
     print(f"\n{'='*80}")
     print(f"Step 2: Calculating measurement points")
     
-    # 關鍵修復：更嚴格的 step_size 檢查和優先使用邏輯
     use_step_size = False
     if step_size is not None and isinstance(step_size, (int, float)) and step_size > 0:
         use_step_size = True
@@ -592,74 +563,34 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
         
     print(f"{'='*80}")
     
-    with open(log_file, 'a', encoding='utf-8') as f:
-        if use_step_size:
-            f.write(f"Step 2: Calculating measurement points with {step_size} bit steps\n")
-            f.write(f"Note: segments parameter ({segments}) is ignored\n")
-        else:
-            f.write(f"Step 2: Calculating {segments} evenly distributed payload points\n")
-            f.write(f"Note: invalid step_size ({step_size}) provided\n")
-    
-    # 關鍵修復：根據 use_step_size 標誌生成測量點，但排除最大容量點
+    # 生成測量點，排除最大容量點
     if use_step_size:
-        # 使用固定步長生成測量點
         payload_points = list(range(int(step_size), max_payload, int(step_size)))
         print(f"Generated {len(payload_points)} points using step_size={step_size}")
-        print(f"Step points range: {payload_points[0] if payload_points else 'None'} to {payload_points[-1] if payload_points else 'None'}")
     else:
-        # 使用分段生成測量點，但排除100%點
         payload_points = [int(max_payload * (i+1) / segments) for i in range(segments-1)]
-        # 添加最後一個點作為接近最大值的點（例如99%），如果需要的話
-        if segments > 1:
-            payload_points.append(int(max_payload * 0.99))
         print(f"Generated {len(payload_points)} points using segments={segments}")
-        print(f"Segment points range: {payload_points[0] if payload_points else 'None'} to {payload_points[-1] if payload_points else 'None'}")
     
-    # 確保測量點中不包含最大容量
     if max_payload in payload_points:
         payload_points.remove(max_payload)
         print(f"Removed max_payload {max_payload} from measurement points")
     
     print(f"Measurement mode: {measurement_mode}")
     print(f"Total measurement points: {len(payload_points) + 1} (including max capacity)")
-    print("Target payload points:")
-    for i, target in enumerate(payload_points[:5]):  # 只顯示前5個
-        print(f"  Point {i+1}: {target} bits ({target/max_payload*100:.1f}% of max)")
-    if len(payload_points) > 5:
-        print(f"  ... (showing first 5 of {len(payload_points)} points)")
-    print(f"  Point {len(payload_points)+1}: {max_payload} bits (100.0% of max) [using initial measurement]")
     
-    with open(log_file, 'a', encoding='utf-8') as f:
-        f.write(f"Measurement mode: {measurement_mode}\n")
-        f.write(f"Total measurement points: {len(payload_points) + 1}\n")
-        f.write("Target payload points:\n")
-        for i, target in enumerate(payload_points):
-            f.write(f"  Point {i+1}: {target} bits ({target/max_payload*100:.1f}% of max)\n")
-        f.write(f"  Point {len(payload_points)+1}: {max_payload} bits (100.0% of max) [using initial measurement]\n\n")
+    # 初始化結果列表，包含最大容量結果
+    results = [max_capacity_result]
     
-    # 步驟3: 為每個目標點運行嵌入算法，不包括最大容量點
+    # 步驟3: 為每個目標點運行嵌入算法
     print(f"\n{'='*80}")
-    print(f"Step 3: Running embedding algorithm for each target point (excluding max capacity)")
+    print(f"Step 3: Running embedding algorithm for each target point")
     print(f"Processing {len(payload_points)} measurement points...")
     print(f"{'='*80}")
     
-    with open(log_file, 'a', encoding='utf-8') as f:
-        f.write(f"Step 3: Running embedding algorithm for each target point\n")
-        f.write(f"Processing {len(payload_points)} measurement points using {measurement_mode}\n")
-    
-    # 結果列表現在只包含最大容量點
-    results = [max_capacity_result]
-    
-    # 運行每個測量點，但跳過最大容量點
     for i, target in enumerate(tqdm(payload_points, desc="處理測量點")):
-        # 計算百分比，用於命名和日誌
         percentage = target / max_payload * 100
         
         print(f"\nRunning point {i+1}/{len(payload_points)}: {target} bits ({percentage:.1f}% of max)")
-        
-        with open(log_file, 'a', encoding='utf-8') as f:
-            f.write(f"{percentage:.1f}% target (point {i+1}/{len(payload_points)}):\n")
-            f.write(f"  Target: {target} bits\n")
         
         start_time = time.time()
         final_img, actual_payload, stages = run_embedding_with_target(
@@ -672,56 +603,56 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
         
         run_time = time.time() - start_time
         
-        # 計算質量指標
-        psnr = calculate_psnr(origImg, final_img)
-        ssim = calculate_ssim(origImg, final_img)
-        hist_corr = histogram_correlation(
-            np.histogram(origImg, bins=256, range=(0, 255))[0],
-            np.histogram(final_img, bins=256, range=(0, 255))[0]
-        )
+        # 🔧 重要：計算質量指標，根據圖像類型選擇合適的方法
+        if is_color:
+            psnr, ssim, hist_corr = calculate_color_metrics(origImg, final_img)
+        else:
+            psnr = calculate_psnr(origImg, final_img)
+            ssim = calculate_ssim(origImg, final_img)
+            hist_corr = histogram_correlation(
+                np.histogram(origImg, bins=256, range=(0, 255))[0],
+                np.histogram(final_img, bins=256, range=(0, 255))[0]
+            )
         
         # 檢查 PSNR 是否異常
         is_psnr_suspicious = False
         if len(results) > 0:
             last_result = results[-1]
-            # 如果當前 BPP 更高但 PSNR 也更高，則標記為異常
-            if (actual_payload / total_pixels > last_result['BPP'] and 
+            if (actual_payload / pixel_count > last_result['BPP'] and 
                 psnr > last_result['PSNR']):
                 is_psnr_suspicious = True
                 print(f"  Warning: Suspicious PSNR value detected: {psnr:.2f} > previous {last_result['PSNR']:.2f}")
-                with open(log_file, 'a', encoding='utf-8') as f:
-                    f.write(f"  Warning: Suspicious PSNR value detected: {psnr:.2f} > previous {last_result['PSNR']:.2f}\n")
+        
+        # 🔧 重要：使用正確的像素計數計算BPP
+        bpp = actual_payload / pixel_count
         
         # 記錄結果
         results.append({
             'Target_Percentage': percentage,
             'Target_Payload': target,
             'Actual_Payload': actual_payload,
-            'BPP': actual_payload / total_pixels,
+            'BPP': bpp,
             'PSNR': psnr,
             'SSIM': ssim,
             'Hist_Corr': hist_corr,
             'Processing_Time': run_time,
             'Suspicious': is_psnr_suspicious,
-            'Measurement_Mode': measurement_mode  # 關鍵修復：記錄測量模式
+            'Measurement_Mode': measurement_mode,
+            'Image_Type': 'color' if is_color else 'grayscale',
+            'Pixel_Count': pixel_count
         })
         
         # 保存嵌入圖像
-        save_image(final_img, f"{result_dir}/embedded_{int(percentage)}pct.png")
+        if is_color:
+            cv2.imwrite(f"{result_dir}/embedded_{int(percentage)}pct.png", final_img)
+        else:
+            save_image(final_img, f"{result_dir}/embedded_{int(percentage)}pct.png")
         
         print(f"  Actual: {actual_payload} bits")
-        print(f"  BPP: {actual_payload/total_pixels:.6f}")
+        print(f"  BPP: {bpp:.6f}")
         print(f"  PSNR: {psnr:.2f}")
         print(f"  SSIM: {ssim:.4f}")
         print(f"  Time: {run_time:.2f} seconds")
-        
-        with open(log_file, 'a', encoding='utf-8') as f:
-            f.write(f"  Actual: {actual_payload} bits\n")
-            f.write(f"  BPP: {actual_payload/total_pixels:.6f}\n")
-            f.write(f"  PSNR: {psnr:.2f}\n")
-            f.write(f"  SSIM: {ssim:.4f}\n")
-            f.write(f"  Hist_Corr: {hist_corr:.4f}\n")
-            f.write(f"  Time: {run_time:.2f} seconds\n\n")
         
         # 清理記憶體
         cleanup_memory()
@@ -732,16 +663,24 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
     # 轉換為DataFrame
     df = pd.DataFrame(results)
     
-    # 步驟3.5: 處理異常數據點，確保曲線平滑，但保留最大容量點的原始值
+    # 步驟4: 數據平滑處理（針對彩色圖像調整）
     print(f"\n{'='*80}")
-    print(f"Step 3.5: Processing anomalous data points (preserving max capacity point)")
+    print(f"Step 4: Processing data (preserving max capacity point)")
     print(f"{'='*80}")
     
-    # 保留原始數據的副本
+    # 保留原始數據
     original_df = df.copy()
     
-    # 標記最大容量點的索引
+    # 標記最大容量點
     max_capacity_idx = df[df['Target_Percentage'] == 100.0].index[0]
+    
+    # 🔧 針對彩色圖像調整平滑參數
+    if is_color:
+        print("Applying color image specific data processing...")
+        # 彩色圖像可能有更高的BPP值，調整平滑策略
+        correction_strength = 0.3  # 較輕的修正強度
+    else:
+        correction_strength = 0.5  # 標準修正強度
     
     # 存儲最大容量點的原始指標值
     max_capacity_metrics = {
@@ -910,75 +849,50 @@ def run_precise_measurements(origImg, imgName, method, prediction_method, ratio_
         for metric in metrics_to_smooth:
             df[f'{metric}_Original'] = df[metric]
     
-    # 步驟4: 整理結果
+    # 步驟5: 整理結果
     print(f"\n{'='*80}")
-    print(f"Step 4: Results summary")
+    print(f"Step 5: Results summary")
     print(f"{'='*80}")
     
     total_time = time.time() - total_start_time
     
+    print(f"Image type: {'Color' if is_color else 'Grayscale'}")
+    print(f"Pixel count used for BPP: {pixel_count}")
     print(f"Measurement mode used: {measurement_mode}")
     print(f"Total data points generated: {len(results)}")
     print(f"Total processing time: {total_time:.2f} seconds")
     print(f"Average time per point: {total_time/len(results):.2f} seconds")
     print(f"Results saved to {result_dir}")
     
-    # 關鍵修復：確認使用的測量模式，使用ASCII字符
     if use_step_size:
         print(f"Confirmed: Used step_size={step_size} bits for {method_name}")
     else:
         print(f"Confirmed: Used segments={segments} for {method_name}")
-    
-    with open(log_file, 'a', encoding='utf-8') as f:
-        f.write(f"Results summary:\n")
-        f.write(f"Measurement mode used: {measurement_mode}\n")
-        f.write(f"Total data points generated: {len(results)}\n")
-        f.write(f"Total processing time: {total_time:.2f} seconds\n")
-        f.write(f"Average time per point: {total_time/len(results):.2f} seconds\n")
-        f.write(f"Results saved to {result_dir}\n")
-        
-        # 關鍵修復：在日誌中確認測量模式，使用ASCII字符
-        if use_step_size:
-            f.write(f"Final confirmation: Used step_size={step_size} bits for {method_name}\n")
-        else:
-            f.write(f"Final confirmation: Used segments={segments} for {method_name}\n")
-        f.write("\n")
-        
-        f.write("Data table:\n")
-        f.write(df.to_string(index=False))
     
     # 保存結果
     csv_path = f"{result_dir}/precise_measurements.csv"
     df.to_csv(csv_path, index=False)
     print(f"Results saved to {csv_path}")
     
-    # 繪製圖表
-    plot_precise_measurements(df, imgName, method, method_name, result_dir)
+    # 繪製圖表（修復版本，考慮彩色圖像的BPP範圍）
+    plot_precise_measurements(df, imgName, method, method_name, result_dir, is_color)
     
     return df
 
-def plot_precise_measurements(df, imgName, method, prediction_method, output_dir):
+def plot_precise_measurements(df, imgName, method, prediction_method, output_dir, is_color=False):
     """
-    繪製精確測量結果的折線圖，並確保所有圖表資源都被正確釋放
-    使用平滑處理後的數據生成更美觀的圖表，並可選擇性顯示原始數據對比
+    修復版的精確測量結果繪圖函數，正確處理彩色圖像的BPP範圍和標籤
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
     
-    Parameters:
-    -----------
-    df : pandas.DataFrame
-        包含測量結果的DataFrame (已經過平滑處理)
-    imgName : str
-        圖像名稱
-    method : str
-        使用的方法
-    prediction_method : str
-        預測方法
-    output_dir : str
-        輸出目錄
-    """
+    # 🔧 根據圖像類型調整圖表標題和標籤
+    image_type_label = "Color" if is_color else "Grayscale"
+    bpp_description = "Bits Per Pixel Position" if is_color else "Bits Per Pixel"
+    
     # 繪製BPP-PSNR折線圖
     plt.figure(figsize=(12, 8))
     
-    # 如果有原始數據列，同時繪製原始和平滑後的數據
     if 'PSNR_Original' in df.columns:
         plt.plot(df['BPP'], df['PSNR_Original'], 
              color='lightblue',
@@ -989,16 +903,15 @@ def plot_precise_measurements(df, imgName, method, prediction_method, output_dir
              markersize=4,
              label='Original Data')
     
-    # 繪製平滑後的數據（主線）
     plt.plot(df['BPP'], df['PSNR'], 
              color='blue',
              linewidth=2.5,
              marker='o',
              markersize=6,
-             label=f'Method: {method}, Predictor: {prediction_method}')
+             label=f'{image_type_label} Image: {method}, {prediction_method}')
     
-    # 添加數據標籤 (只標記部分點，避免擁擠)
-    steps = max(1, len(df) // 10)  # 確保不超過10個標籤
+    # 添加數據標籤
+    steps = max(1, len(df) // 10)
     for i, row in enumerate(df.itertuples()):
         if i % steps == 0 or i == len(df) - 1:
             plt.annotate(f'({row.BPP:.4f}, {row.PSNR:.2f})',
@@ -1011,16 +924,41 @@ def plot_precise_measurements(df, imgName, method, prediction_method, output_dir
                                  alpha=0.3),
                         fontsize=8)
     
-    plt.xlabel('Bits Per Pixel (BPP)', fontsize=14)
+    plt.xlabel(f'{bpp_description} (BPP)', fontsize=14)
     plt.ylabel('PSNR (dB)', fontsize=14)
-    plt.title(f'Precise BPP-PSNR Measurements for {imgName}\n'
+    plt.title(f'Precise BPP-PSNR Measurements for {imgName} ({image_type_label})\n'
               f'Method: {method}, Predictor: {prediction_method}', fontsize=16)
     plt.grid(True, linestyle='--', alpha=0.7)
     plt.legend(fontsize=12)
     
     plt.tight_layout()
     plt.savefig(f"{output_dir}/precise_bpp_psnr.png", dpi=300)
-    plt.close()  # 關閉圖表
+    plt.close()
+    
+    # 🔧 如果是彩色圖像，添加額外的說明圖表
+    if is_color:
+        # 創建容量比較圖表
+        plt.figure(figsize=(12, 6))
+        
+        # 估算等效灰階圖像的BPP
+        equivalent_grayscale_bpp = df['BPP'] / 3  # 假設灰階圖像BPP約為彩色的1/3
+        
+        plt.plot(equivalent_grayscale_bpp, df['PSNR'], 
+                color='gray', linestyle='--', linewidth=2, 
+                label='Equivalent Grayscale BPP', alpha=0.7)
+        plt.plot(df['BPP'], df['PSNR'], 
+                color='red', linewidth=2.5,
+                label='Color Image BPP')
+        
+        plt.xlabel('Bits Per Pixel', fontsize=14)
+        plt.ylabel('PSNR (dB)', fontsize=14)
+        plt.title(f'Color vs Equivalent Grayscale Capacity for {imgName}', fontsize=16)
+        plt.legend(fontsize=12)
+        plt.grid(True, linestyle='--', alpha=0.7)
+        
+        plt.tight_layout()
+        plt.savefig(f"{output_dir}/color_vs_grayscale_comparison.png", dpi=300)
+        plt.close()
     
     # 繪製BPP-SSIM折線圖
     plt.figure(figsize=(12, 8))
@@ -2205,31 +2143,21 @@ def create_wide_format_tables(all_results, output_dir):
 
 def generate_interval_statistics(original_img, stages, total_payload, segments=15):
     """
-    根據總嵌入容量生成均勻分布的統計數據表格
-    (近似方法，使用已有的階段結果進行插值)
-    
-    Parameters:
-    -----------
-    original_img : numpy.ndarray
-        原始圖像
-    stages : list
-        包含嵌入各階段資訊的列表
-    total_payload : int
-        總嵌入容量
-    segments : int
-        要生成的數據點數量，默認為15
-        
-    Returns:
-    --------
-    tuple
-        (DataFrame, PrettyTable) 包含統計數據的DataFrame和格式化表格
+    修正版的統計數據生成函數，正確計算彩色圖像的BPP
     """
     # 確保輸入數據類型正確
     if isinstance(original_img, cp.ndarray):
         original_img = cp.asnumpy(original_img)
     
-    # 總像素數用於計算BPP
-    total_pixels = original_img.size
+    # 🔧 修正：正確計算像素數
+    if len(original_img.shape) == 3 and original_img.shape[2] == 3:
+        # 彩色圖像：使用像素位置數
+        pixel_count = original_img.shape[0] * original_img.shape[1]
+        print(f"Color image detected for interval statistics: {pixel_count} pixel positions")
+    else:
+        # 灰階圖像：使用總像素數
+        pixel_count = original_img.size
+        print(f"Grayscale image detected for interval statistics: {pixel_count} pixels")
     
     # 計算間隔和數據點
     if total_payload <= 0:
@@ -2259,7 +2187,7 @@ def generate_interval_statistics(original_img, stages, total_payload, segments=1
         while accumulated_payload < target_payload and current_stage_index < len(stages):
             current_stage = stages[current_stage_index]
             stage_payload = current_stage['payload']
-            current_stage_img = cp.asnumpy(current_stage['stage_img'])
+            current_stage_img = cp.asnumpy(current_stage['stage_img']) if isinstance(current_stage['stage_img'], cp.ndarray) else current_stage['stage_img']
             
             if accumulated_payload + stage_payload <= target_payload:
                 # 完整包含當前階段
@@ -2267,24 +2195,31 @@ def generate_interval_statistics(original_img, stages, total_payload, segments=1
                 current_stage_index += 1
             else:
                 # 部分包含當前階段 - 需要進行插值
-                # 注意：這裡使用線性插值來估計PSNR和SSIM，實際上可能需要更精確的模擬
                 break
         
         # 確保current_stage_img不為None
         if current_stage_img is None and current_stage_index > 0:
-            current_stage_img = cp.asnumpy(stages[current_stage_index-1]['stage_img'])
+            current_stage_img = cp.asnumpy(stages[current_stage_index-1]['stage_img']) if isinstance(stages[current_stage_index-1]['stage_img'], cp.ndarray) else stages[current_stage_index-1]['stage_img']
         elif current_stage_img is None:
             print("Warning: No valid stage image found.")
             continue
             
         # 計算性能指標
-        psnr = calculate_psnr(original_img, current_stage_img)
-        ssim = calculate_ssim(original_img, current_stage_img)
-        hist_corr = histogram_correlation(
-            np.histogram(original_img, bins=256, range=(0, 255))[0],
-            np.histogram(current_stage_img, bins=256, range=(0, 255))[0]
-        )
-        bpp = target_payload / total_pixels
+        if len(original_img.shape) == 3 and len(current_stage_img.shape) == 3:
+            # 彩色圖像使用彩色指標計算函數
+            from color import calculate_color_metrics
+            psnr, ssim, hist_corr = calculate_color_metrics(original_img, current_stage_img)
+        else:
+            # 灰階圖像使用原有計算方法
+            psnr = calculate_psnr(original_img, current_stage_img)
+            ssim = calculate_ssim(original_img, current_stage_img)
+            hist_corr = histogram_correlation(
+                np.histogram(original_img, bins=256, range=(0, 255))[0],
+                np.histogram(current_stage_img, bins=256, range=(0, 255))[0]
+            )
+        
+        # 🔧 修正：使用正確的像素計數來計算BPP
+        bpp = target_payload / pixel_count
         
         # 添加到結果列表
         results.append({

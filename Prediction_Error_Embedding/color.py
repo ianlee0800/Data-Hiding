@@ -123,34 +123,23 @@ def combine_color_channels(b_channel, g_channel, r_channel):
 
 def calculate_color_metrics(original_img, embedded_img):
     """
-    Calculate image quality metrics for color images.
-    
-    Parameters:
-    -----------
-    original_img : numpy.ndarray
-        Original color image
-    embedded_img : numpy.ndarray
-        Embedded color image
-        
-    Returns:
-    --------
-    tuple
-        (psnr, ssim, hist_corr) - Quality metrics
+    修正版的彩色圖像品質指標計算函數
+    不包含BPP計算，BPP應該在調用處單獨計算
     """
-    # Ensure the images are in numpy array format
+    # 確保圖像是numpy格式
     if isinstance(original_img, cp.ndarray):
         original_img = cp.asnumpy(original_img)
     if isinstance(embedded_img, cp.ndarray):
         embedded_img = cp.asnumpy(embedded_img)
     
-    # Calculate PSNR for color image
+    # 計算PSNR for color image
     mse = np.mean((original_img.astype(np.float64) - embedded_img.astype(np.float64)) ** 2)
     if mse == 0:
         psnr = float('inf')
     else:
         psnr = 10 * np.log10((255.0 ** 2) / mse)
     
-    # Calculate SSIM for each channel and average
+    # 計算SSIM for each channel and average
     b1, g1, r1 = cv2.split(original_img)
     b2, g2, r2 = cv2.split(embedded_img)
     
@@ -159,7 +148,7 @@ def calculate_color_metrics(original_img, embedded_img):
     ssim_r = calculate_ssim(r1, r2)
     ssim = (ssim_b + ssim_g + ssim_r) / 3.0
     
-    # Calculate histogram correlation for each channel and average
+    # 計算histogram correlation for each channel and average
     hist_corr_b = histogram_correlation(
         np.histogram(b1, bins=256, range=(0, 255))[0],
         np.histogram(b2, bins=256, range=(0, 255))[0]

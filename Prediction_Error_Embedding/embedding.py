@@ -10,7 +10,10 @@ from utils import (
     generate_random_binary_array,
     generate_embedding_data
 )
-
+from color import (
+    split_color_channels,
+    combine_color_channels
+)
 from common import *
 from pee import *
 
@@ -294,231 +297,279 @@ def pee_process_color_image_rotation_cuda(img, total_embeddings, ratio_of_ones, 
                                        split_size, el_mode, prediction_method=None,
                                        target_payload_size=-1):
     """
-    Process a color image using rotation PEE method - 完全重寫版本，確保與灰階版本功能一致
+    Process a color image using rotation PEE method with independent channel processing
     
-    This function splits a color image into its RGB channels, processes each channel
-    independently using the existing rotation PEE method, and then recombines the
-    channels into a final color image.
+    🔧 修改版本：每個通道都當作獨立的灰階圖像處理，發揮彩色圖像的真正3倍容量
     
     Parameters:
     -----------
-    Same as pee_process_with_rotation_cuda, but img is now a color image
+    img : numpy.ndarray
+        Input color image (BGR format)
+    total_embeddings : int
+        Total number of embedding stages
+    ratio_of_ones : float
+        Ratio of ones in embedded data
+    use_different_weights : bool
+        Whether to use different weights for each sub-image
+    split_size : int
+        Size of split (e.g., 2 for 2x2 split)
+    el_mode : int
+        EL mode (0: no restriction, 1: increasing, 2: decreasing)
+    prediction_method : PredictionMethod, optional
+        Prediction method to use
+    target_payload_size : int, optional
+        Target payload size (-1 for maximum capacity)
         
     Returns:
     --------
     tuple
         (final_color_img, total_payload, color_pee_stages)
     """
-    import os
-    import cv2
-    import numpy as np
-    import cupy as cp
-    from color import split_color_channels, combine_color_channels
-    from common import cleanup_memory, calculate_psnr, calculate_ssim, histogram_correlation
     
     if prediction_method is None:
-        # Import PredictionMethod if not provided to maintain compatibility
         from image_processing import PredictionMethod
         prediction_method = PredictionMethod.PROPOSED
     
-    print(f"Processing color image with {prediction_method.value} prediction method")
+    print(f"Processing color image with independent channel rotation method using {prediction_method.value}")
     
-    # Split color image into channels
+    # 🔧 核心改變：分離彩色通道後，每個都當作獨立的灰階圖像處理
     b_channel, g_channel, r_channel = split_color_channels(img)
+    channels = [b_channel, g_channel, r_channel]
+    channel_names = ['blue', 'green', 'red']
     
-    # Track total payload across all channels
+    # 總嵌入量追蹤
     total_payload = 0
-    
     color_pee_stages = []
+    final_channels = []
     
-    # Calculate target payload per channel
-    channel_target = target_payload_size // 3 if target_payload_size > 0 else -1
+    # 🔧 關鍵修改：每個通道的目標容量計算
+    if target_payload_size > 0:
+        # 如果有指定目標容量，平均分配給三個通道
+        channel_target = target_payload_size // 3
+        print(f"Target payload distributed: {channel_target} bits per channel")
+        print(f"Total target: {target_payload_size} bits across all channels")
+    else:
+        # 如果是最大容量模式，每個通道都用最大容量
+        channel_target = -1
+        print("Using maximum capacity for each channel independently")
+        print("Expected total capacity: ~3x equivalent grayscale image")
     
-    # Process each channel separately
-    print("\nProcessing blue channel...")
-    final_b_img, b_payload, b_stages = pee_process_with_rotation_cuda(
-        b_channel, total_embeddings, ratio_of_ones, use_different_weights,
-        split_size, el_mode, prediction_method=prediction_method,
-        target_payload_size=channel_target
-    )
-    total_payload += b_payload
-    
-    # Clean GPU memory between channel processing
-    cleanup_memory()
-    
-    print("\nProcessing green channel...")
-    final_g_img, g_payload, g_stages = pee_process_with_rotation_cuda(
-        g_channel, total_embeddings, ratio_of_ones, use_different_weights,
-        split_size, el_mode, prediction_method=prediction_method,
-        target_payload_size=channel_target
-    )
-    total_payload += g_payload
-    
-    # Clean GPU memory between channel processing
-    cleanup_memory()
-    
-    print("\nProcessing red channel...")
-    final_r_img, r_payload, r_stages = pee_process_with_rotation_cuda(
-        r_channel, total_embeddings, ratio_of_ones, use_different_weights,
-        split_size, el_mode, prediction_method=prediction_method,
-        target_payload_size=channel_target
-    )
-    total_payload += r_payload
-    
-    # Combine channels back into a color image
-    final_color_img = combine_color_channels(final_b_img, final_g_img, final_r_img)
-    
-    # Create combined stages information for all 3 channels - 完全重寫以確保一致性
-    for i in range(min(len(b_stages), len(g_stages), len(r_stages))):
-        # Get stage info from each channel
-        b_stage = b_stages[i]
-        g_stage = g_stages[i]
-        r_stage = r_stages[i]
+    # 🔧 獨立處理每個通道 - 這是關鍵改變
+    for ch_idx, (channel, ch_name) in enumerate(zip(channels, channel_names)):
+        print(f"\n{'='*60}")
+        print(f"Processing {ch_name} channel as independent grayscale image")
+        print(f"Channel shape: {channel.shape}")
+        print(f"{'='*60}")
         
-        # Initialize combined stage info with all necessary fields
-        combined_stage = {
-            'embedding': b_stage['embedding'],  # All should be the same
-            'payload': b_stage['payload'] + g_stage['payload'] + r_stage['payload'],
-            'channel_payloads': {
-                'blue': b_stage['payload'],
-                'green': g_stage['payload'],
-                'red': r_stage['payload']
-            },
-            'bpp': (b_stage['bpp'] + g_stage['bpp'] + r_stage['bpp']) / 3,  # Average BPP
-            'channel_metrics': {
-                'blue': {'psnr': b_stage['psnr'], 'ssim': b_stage['ssim'], 'hist_corr': b_stage['hist_corr']},
-                'green': {'psnr': g_stage['psnr'], 'ssim': g_stage['ssim'], 'hist_corr': g_stage['hist_corr']},
-                'red': {'psnr': r_stage['psnr'], 'ssim': r_stage['ssim'], 'hist_corr': r_stage['hist_corr']}
-            },
-            'prediction_method': prediction_method.value,
-            'rotation': b_stage.get('rotation', i * 90)  # All channels should have the same rotation
-        }
-        
-        # 添加原始圖像資訊
-        combined_stage['original_img'] = img
-        
-        # Combine stage images if available
-        if 'stage_img' in b_stage and 'stage_img' in g_stage and 'stage_img' in r_stage:
-            b_stage_img = cp.asnumpy(b_stage['stage_img']) if isinstance(b_stage['stage_img'], cp.ndarray) else b_stage['stage_img']
-            g_stage_img = cp.asnumpy(g_stage['stage_img']) if isinstance(g_stage['stage_img'], cp.ndarray) else g_stage['stage_img']
-            r_stage_img = cp.asnumpy(r_stage['stage_img']) if isinstance(r_stage['stage_img'], cp.ndarray) else r_stage['stage_img']
+        try:
+            # 🔧 核心修改：每個通道都調用完整的灰階處理函數
+            # 這確保每個通道都能發揮其最大嵌入潛力
+            final_ch_img, ch_payload, ch_stages = pee_process_with_rotation_cuda(
+                channel,                    # 當作灰階圖像處理
+                total_embeddings,           # 使用相同的嵌入階段數
+                ratio_of_ones,              # 使用相同的數據比例
+                use_different_weights,      # 使用相同的權重策略
+                split_size,                 # 使用相同的分割大小
+                el_mode,                    # 使用相同的EL模式
+                prediction_method=prediction_method,
+                target_payload_size=channel_target  # 每個通道的目標容量
+            )
             
-            combined_stage['stage_img'] = combine_color_channels(b_stage_img, g_stage_img, r_stage_img)
-        
-        # 組合旋轉圖像（如果有）
-        if 'rotated_img' in b_stage and 'rotated_img' in g_stage and 'rotated_img' in r_stage:
-            try:
-                b_rotated = cp.asnumpy(b_stage['rotated_img']) if isinstance(b_stage['rotated_img'], cp.ndarray) else b_stage['rotated_img']
-                g_rotated = cp.asnumpy(g_stage['rotated_img']) if isinstance(g_stage['rotated_img'], cp.ndarray) else g_stage['rotated_img']
-                r_rotated = cp.asnumpy(r_stage['rotated_img']) if isinstance(r_stage['rotated_img'], cp.ndarray) else r_stage['rotated_img']
+            final_channels.append(final_ch_img)
+            total_payload += ch_payload
+            
+            print(f"{ch_name} channel processed successfully:")
+            print(f"  Payload: {ch_payload} bits")
+            if len(ch_stages) > 0:
+                final_stage = ch_stages[-1]
+                print(f"  Final PSNR: {final_stage['psnr']:.2f}")
+                print(f"  Final SSIM: {final_stage['ssim']:.4f}")
+                print(f"  Final BPP: {final_stage['bpp']:.6f}")
+            
+            # 🔧 合併階段資訊 - 保持與原有格式的兼容性
+            for i, stage in enumerate(ch_stages):
+                # 確保有足夠的階段容器
+                while len(color_pee_stages) <= i:
+                    color_pee_stages.append({
+                        'embedding': i,
+                        'payload': 0,
+                        'channel_payloads': {'blue': 0, 'green': 0, 'red': 0},
+                        'bpp': 0,
+                        'psnr': 0,
+                        'ssim': 0,
+                        'hist_corr': 0,
+                        'channel_metrics': {
+                            'blue': {'psnr': 0, 'ssim': 0, 'hist_corr': 0},
+                            'green': {'psnr': 0, 'ssim': 0, 'hist_corr': 0},
+                            'red': {'psnr': 0, 'ssim': 0, 'hist_corr': 0}
+                        },
+                        'prediction_method': prediction_method.value,
+                        'split_size': split_size,
+                        'original_img': img,  # 保存原始彩色圖像
+                        'block_params': []  # 用於兼容現有的表格生成函數
+                    })
                 
-                combined_stage['rotated_img'] = combine_color_channels(b_rotated, g_rotated, r_rotated)
-            except Exception as e:
-                print(f"Warning: Could not combine rotated images: {e}")
-        
-        # 組合預測圖像（如果有）
-        if 'pred_img' in b_stage and 'pred_img' in g_stage and 'pred_img' in r_stage:
-            try:
-                b_pred = b_stage['pred_img'] if isinstance(b_stage['pred_img'], np.ndarray) else np.array(b_stage['pred_img'])
-                g_pred = g_stage['pred_img'] if isinstance(g_stage['pred_img'], np.ndarray) else np.array(g_stage['pred_img'])
-                r_pred = r_stage['pred_img'] if isinstance(r_stage['pred_img'], np.ndarray) else np.array(r_stage['pred_img'])
-                
-                combined_stage['pred_img'] = combine_color_channels(b_pred, g_pred, r_pred)
-            except Exception as e:
-                print(f"Warning: Could not combine prediction images: {e}")
-        
-        # 組合子圖像樣本（如果有）
-        if all(key in b_stage for key in ['sample_original_sub', 'sample_pred_sub', 'sample_embedded_sub']):
-            combined_stage['sample_original_sub'] = {
-                'blue': b_stage['sample_original_sub'],
-                'green': g_stage['sample_original_sub'],
-                'red': r_stage['sample_original_sub']
-            }
-            combined_stage['sample_pred_sub'] = {
-                'blue': b_stage['sample_pred_sub'],
-                'green': g_stage['sample_pred_sub'],
-                'red': r_stage['sample_pred_sub']
-            }
-            combined_stage['sample_embedded_sub'] = {
-                'blue': b_stage['sample_embedded_sub'],
-                'green': g_stage['sample_embedded_sub'],
-                'red': r_stage['sample_embedded_sub']
-            }
-        
-        # Calculate combined metrics directly from the combined image
-        if 'stage_img' in combined_stage:
-            psnr = (b_stage['psnr'] + g_stage['psnr'] + r_stage['psnr']) / 3
-            ssim = (b_stage['ssim'] + g_stage['ssim'] + r_stage['ssim']) / 3
-            hist_corr = (b_stage['hist_corr'] + g_stage['hist_corr'] + r_stage['hist_corr']) / 3
-            
-            combined_stage['psnr'] = psnr
-            combined_stage['ssim'] = ssim
-            combined_stage['hist_corr'] = hist_corr
-            
-        # Save combined sub_images information if available (nested by channel)
-        if 'sub_images' in b_stage and 'sub_images' in g_stage and 'sub_images' in r_stage:
-            combined_stage['sub_images'] = {
-                'blue': b_stage['sub_images'],
-                'green': g_stage['sub_images'],
-                'red': r_stage['sub_images']
-            }
-            
-        # Block params need special handling to ensure compatibility with create_pee_info_table
-        if 'block_params' in b_stage and 'block_params' in g_stage and 'block_params' in r_stage:
-            combined_stage['block_params'] = []
-            
-            # We'll take as many block params as available in all three channels
-            for j in range(min(len(b_stage['block_params']), len(g_stage['block_params']), len(r_stage['block_params']))):
-                # Get block parameters from each channel
-                b_block = b_stage['block_params'][j]
-                g_block = g_stage['block_params'][j]
-                r_block = r_stage['block_params'][j]
-                
-                # Create a combined block that has both the nested channel data and
-                # flattened keys that create_pee_info_table expects
-                combined_block = {
-                    'channel_params': {
-                        'blue': b_block,
-                        'green': g_block,
-                        'red': r_block
-                    },
-                    # Include the keys that create_pee_info_table expects at the top level
-                    'weights': b_block.get('weights', 'N/A'),  # Take weights from blue channel
-                    'EL': b_block.get('EL', 0),                # Take EL from blue channel
-                    'payload': (b_block.get('payload', 0) + 
-                               g_block.get('payload', 0) + 
-                               r_block.get('payload', 0)),
-                    'psnr': (b_block.get('psnr', 0) + 
-                            g_block.get('psnr', 0) + 
-                            r_block.get('psnr', 0)) / 3,
-                    'ssim': (b_block.get('ssim', 0) + 
-                            g_block.get('ssim', 0) + 
-                            r_block.get('ssim', 0)) / 3,
-                    'hist_corr': (b_block.get('hist_corr', 0) + 
-                                 g_block.get('hist_corr', 0) + 
-                                 r_block.get('hist_corr', 0)) / 3,
-                    'rotation': b_block.get('rotation', 0),     # All channels have same rotation
-                    'prediction_method': prediction_method.value
+                # 添加通道特定的資訊
+                combined_stage = color_pee_stages[i]
+                combined_stage['channel_payloads'][ch_name] = stage['payload']
+                combined_stage['channel_metrics'][ch_name] = {
+                    'psnr': stage['psnr'],
+                    'ssim': stage['ssim'],
+                    'hist_corr': stage['hist_corr']
                 }
-                combined_stage['block_params'].append(combined_block)
+                
+                # 累加總payload
+                combined_stage['payload'] += stage['payload']
+                
+                # 🔧 保存各種圖像資訊以便後續可視化
+                # 保存階段圖像（每個通道處理完後更新）
+                if 'channel_imgs' not in combined_stage:
+                    combined_stage['channel_imgs'] = {}
+                combined_stage['channel_imgs'][ch_name] = cp.asnumpy(stage['stage_img']) if isinstance(stage['stage_img'], cp.ndarray) else stage['stage_img']
+                
+                # 保存原始圖像（rotation方法特有）
+                if 'original_img' not in combined_stage:
+                    combined_stage['original_img'] = img
+                
+                # 保存預測圖像（如果有）
+                if 'pred_img' in stage:
+                    if 'channel_pred_imgs' not in combined_stage:
+                        combined_stage['channel_pred_imgs'] = {}
+                    combined_stage['channel_pred_imgs'][ch_name] = stage['pred_img']
+                
+                # 保存子圖像資訊
+                if 'channel_sub_images' not in combined_stage:
+                    combined_stage['channel_sub_images'] = {}
+                if 'sub_images' in stage:
+                    combined_stage['channel_sub_images'][ch_name] = stage['sub_images']
+                
+                # 🔧 合併區塊參數（為了兼容現有的表格生成函數）
+                if 'block_params' in stage:
+                    # 如果是第一個通道，初始化block_params結構
+                    if ch_idx == 0:
+                        combined_stage['block_params'] = []
+                        for j, block_param in enumerate(stage['block_params']):
+                            combined_stage['block_params'].append({
+                                'channel_params': {
+                                    'blue': {},
+                                    'green': {},
+                                    'red': {}
+                                },
+                                # 使用第一個通道的基本參數
+                                'weights': block_param.get('weights', 'N/A'),
+                                'EL': block_param.get('EL', 0),
+                                'payload': 0,  # 會累加
+                                'psnr': 0,     # 會平均
+                                'ssim': 0,     # 會平均
+                                'hist_corr': 0, # 會平均
+                                'rotation': block_param.get('rotation', 0),
+                                'prediction_method': prediction_method.value
+                            })
+                    
+                    # 保存通道特定的區塊參數並累加/平均化指標
+                    for j, block_param in enumerate(stage['block_params']):
+                        if j < len(combined_stage['block_params']):
+                            # 保存通道特定的參數
+                            combined_stage['block_params'][j]['channel_params'][ch_name] = block_param
+                            
+                            # 累加payload
+                            combined_stage['block_params'][j]['payload'] += block_param.get('payload', 0)
+                            
+                            # 累加指標（最後會除以3）
+                            combined_stage['block_params'][j]['psnr'] += block_param.get('psnr', 0)
+                            combined_stage['block_params'][j]['ssim'] += block_param.get('ssim', 0)
+                            combined_stage['block_params'][j]['hist_corr'] += block_param.get('hist_corr', 0)
+                            
+                            # 在最後一個通道時計算平均值
+                            if ch_idx == 2:  # 紅色通道（最後一個）
+                                combined_stage['block_params'][j]['psnr'] /= 3
+                                combined_stage['block_params'][j]['ssim'] /= 3
+                                combined_stage['block_params'][j]['hist_corr'] /= 3
             
-        # Add stage to combined stages
-        color_pee_stages.append(combined_stage)
+            # 清理記憶體
+            cleanup_memory()
+            
+        except Exception as e:
+            print(f"Error processing {ch_name} channel: {str(e)}")
+            print(f"Using original channel data for {ch_name}")
+            # 如果某個通道處理失敗，使用原始通道
+            final_channels.append(channel)
+            continue
+    
+    # 🔧 重新組合彩色圖像
+    if len(final_channels) == 3:
+        final_color_img = combine_color_channels(final_channels[0], final_channels[1], final_channels[2])
+        print(f"\nSuccessfully combined all three channels")
+    else:
+        print(f"Warning: Only {len(final_channels)} channels processed successfully")
+        print("Using original image as fallback")
+        final_color_img = img
+    
+    # 🔧 計算合併階段的整體指標
+    pixel_count = img.shape[0] * img.shape[1]  # 只計算像素位置數，不包含通道數
+    
+    for stage in color_pee_stages:
+        # 🔧 修正BPP計算：總payload除以像素位置數（不包含通道數）
+        stage['bpp'] = stage['payload'] / pixel_count
+        
+        # 計算平均品質指標
+        channel_metrics = stage['channel_metrics']
+        stage['psnr'] = sum(channel_metrics[ch]['psnr'] for ch in channel_names) / 3
+        stage['ssim'] = sum(channel_metrics[ch]['ssim'] for ch in channel_names) / 3
+        stage['hist_corr'] = sum(channel_metrics[ch]['hist_corr'] for ch in channel_names) / 3
+        
+        # 🔧 合併階段圖像（如果所有通道都有的話）
+        if 'channel_imgs' in stage and len(stage['channel_imgs']) == 3:
+            stage['stage_img'] = combine_color_channels(
+                stage['channel_imgs']['blue'],
+                stage['channel_imgs']['green'], 
+                stage['channel_imgs']['red']
+            )
         
         # 輸出階段摘要
-        print(f"\nColor Embedding {i} summary:")
-        print(f"Prediction Method: {prediction_method.value}")
-        print(f"Total Payload: {combined_stage['payload']}")
-        print(f"BPP: {combined_stage['bpp']:.4f}")
-        print(f"PSNR: {combined_stage['psnr']:.2f}")
-        print(f"SSIM: {combined_stage['ssim']:.4f}")
-        print(f"Hist Corr: {combined_stage['hist_corr']:.4f}")
-        print(f"Rotation: {combined_stage['rotation']}°")
-        print("Channel payloads:")
-        for channel, payload in combined_stage['channel_payloads'].items():
-            print(f"  {channel.capitalize()}: {payload}")
+        print(f"\nColor Rotation Stage {stage['embedding']} summary:")
+        print(f"  Total Payload: {stage['payload']} bits")
+        print(f"  BPP: {stage['bpp']:.6f}")
+        print(f"  Average PSNR: {stage['psnr']:.2f}")
+        print(f"  Average SSIM: {stage['ssim']:.4f}")
+        print(f"  Average Hist Corr: {stage['hist_corr']:.4f}")
+        print("  Channel payloads:")
+        for ch_name, payload in stage['channel_payloads'].items():
+            print(f"    {ch_name.capitalize()}: {payload} bits")
     
-    return final_color_img, total_payload, color_pee_stages
+    # 🔧 輸出最終結果摘要
+    print(f"\n{'='*80}")
+    print(f"Final Independent Channel Rotation Processing Results:")
+    print(f"Image type: Color ({img.shape[0]}x{img.shape[1]}x{img.shape[2]})")
+    print(f"Total Payload: {total_payload} bits")
+    print(f"Total BPP: {total_payload / pixel_count:.6f}")
+    
+    if len(color_pee_stages) > 0:
+        final_stage = color_pee_stages[-1]
+        print(f"Final Average PSNR: {final_stage['psnr']:.2f}")
+        print(f"Final Average SSIM: {final_stage['ssim']:.4f}")
+        print(f"Final Average Hist Corr: {final_stage['hist_corr']:.4f}")
+    
+    print("Final channel payloads:")
+    if len(color_pee_stages) > 0:
+        final_payloads = color_pee_stages[-1]['channel_payloads']
+        total_channel_bpp = 0
+        for ch_name, payload in final_payloads.items():
+            channel_bpp = payload / pixel_count
+            total_channel_bpp += channel_bpp
+            print(f"  {ch_name.capitalize()}: {payload} bits (BPP: {channel_bpp:.6f})")
+        print(f"  Total BPP (sum of channels): {total_channel_bpp:.6f}")
+    
+    # 🔧 與等效灰階圖像的容量比較分析
+    print(f"\nBPP Analysis:")
+    print(f"  Pixel positions: {pixel_count}")
+    print(f"  Total payload: {total_payload} bits")
+    print(f"  Color image BPP: {total_payload / pixel_count:.6f}")
+    print(f"  This represents ~{total_payload / pixel_count:.1f} bits per pixel position across all channels")
+    print(f"  Compared to equivalent grayscale: {(total_payload / pixel_count):.2f}x higher capacity potential")
+    print(f"{'='*80}")
+    
+    return final_color_img, int(total_payload), color_pee_stages
 
 def pee_process_with_split_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, 
                               split_size, el_mode, block_base, 
@@ -813,14 +864,9 @@ def pee_process_color_image_split_cuda(img, total_embeddings, ratio_of_ones, use
                                      prediction_method=None,
                                      target_payload_size=-1):
     """
-    Process a color image using split PEE method with proper rotation synchronization and enhanced tracking.
+    Process a color image using split PEE method with independent channel processing
     
-    This function implements the split PEE method for color images by:
-    1. Splitting the color image into sub-images
-    2. Applying synchronized rotation to all channels of each sub-image
-    3. Processing each channel independently with PEE
-    4. Rotating back and recombining the results
-    5. Tracking rotation effects for visualization
+    🔧 修改版本：每個通道都當作獨立的灰階圖像處理，發揮彩色圖像的真正3倍容量
     
     Parameters:
     -----------
@@ -861,365 +907,247 @@ def pee_process_color_image_split_cuda(img, total_embeddings, ratio_of_ones, use
     if prediction_method is None:
         prediction_method = PredictionMethod.PROPOSED
     
-    print(f"Processing color image with split method using {prediction_method.value} prediction")
+    print(f"Processing color image with independent channel method using {prediction_method.value}")
     
-    # 初始化處理
-    original_img = img.copy()
-    height, width = img.shape[:2]
-    total_pixels = height * width
-    pee_stages = []
-    total_payload = 0
-    current_img = original_img.copy()
-    previous_psnr = float('inf')
-    previous_ssim = 1.0
-    
-    # 分離彩色通道
-    b_channel, g_channel, r_channel = split_color_channels(current_img)
-    current_channels = [b_channel, g_channel, r_channel]
+    # 🔧 核心改變：分離彩色通道後，每個都當作獨立的灰階圖像處理
+    b_channel, g_channel, r_channel = split_color_channels(img)
+    channels = [b_channel, g_channel, r_channel]
     channel_names = ['blue', 'green', 'red']
     
-    # 計算子圖像數量和每個子圖像的最大容量
-    sub_images_per_stage = split_size * split_size
-    max_capacity_per_subimage = (height * width) // sub_images_per_stage
+    # 總嵌入量追蹤
+    total_payload = 0
+    color_pee_stages = []
+    final_channels = []
     
-    # 生成嵌入數據
-    embedding_data = generate_embedding_data(
-        total_embeddings=total_embeddings,
-        sub_images_per_stage=sub_images_per_stage,
-        max_capacity_per_subimage=max_capacity_per_subimage,
-        ratio_of_ones=ratio_of_ones,
-        target_payload_size=target_payload_size
-    )
+    # 🔧 關鍵修改：每個通道的目標容量計算
+    if target_payload_size > 0:
+        # 如果有指定目標容量，平均分配給三個通道
+        channel_target = target_payload_size // 3
+        print(f"Target payload distributed: {channel_target} bits per channel")
+        print(f"Total target: {target_payload_size} bits across all channels")
+    else:
+        # 如果是最大容量模式，每個通道都用最大容量
+        channel_target = -1
+        print("Using maximum capacity for each channel independently")
+        print("Expected total capacity: ~3x equivalent grayscale image")
     
-    # 設定剩餘目標payload
-    remaining_target = target_payload_size if target_payload_size > 0 else None
-    
-    # 開始逐階段處理
-    for embedding in range(total_embeddings):
-        print(f"\nStarting embedding {embedding} for color image")
-        stage_data = embedding_data['stage_data'][embedding]
+    # 🔧 獨立處理每個通道 - 這是關鍵改變
+    for ch_idx, (channel, ch_name) in enumerate(zip(channels, channel_names)):
+        print(f"\n{'='*60}")
+        print(f"Processing {ch_name} channel as independent grayscale image")
+        print(f"Channel shape: {channel.shape}")
+        print(f"{'='*60}")
         
-        if remaining_target is not None:
-            print(f"Remaining target payload: {remaining_target}")
-            if remaining_target <= 0:
-                print("Target payload reached. Stage will only process image without embedding.")
-                break
-        
-        # 設定目標品質參數
-        if embedding == 0:
-            target_psnr = 40.0
-            target_bpp = 0.9
-        else:
-            target_psnr = max(28.0, previous_psnr - 1)
-            target_bpp = max(0.5, (total_payload / total_pixels) * 0.95)
-        
-        print(f"Target PSNR: {target_psnr:.2f}, Target BPP: {target_bpp:.4f}")
-        
-        # 💡 新增：統一的旋轉角度（確保三通道同步）
-        unified_rotations = cp.random.choice([0, 90, 180, 270], 
-                                           size=split_size * split_size)
-        print(f"Unified rotation angles for this stage: {cp.asnumpy(unified_rotations)}")
-        
-        # 💡 新增：追蹤各通道的旋轉效果
-        channel_rotated_sub_images = {
-            'blue': [],
-            'green': [],
-            'red': []
-        }
-        
-        # 初始化階段資訊
-        stage_info = {
-            'embedding': embedding,
-            'payload': 0,
-            'psnr': 0,
-            'ssim': 0,
-            'hist_corr': 0,
-            'bpp': 0,
-            'block_params': [],
-            'channel_payloads': {'blue': 0, 'green': 0, 'red': 0},
-            'channel_metrics': {
-                'blue': {'psnr': 0, 'ssim': 0, 'hist_corr': 0},
-                'green': {'psnr': 0, 'ssim': 0, 'hist_corr': 0},
-                'red': {'psnr': 0, 'ssim': 0, 'hist_corr': 0}
-            },
-            'prediction_method': prediction_method.value,
-            # 💡 新增：為階段資訊添加彩色相關欄位
-            'split_size': split_size,
-            'block_base': block_base,
-            'rotations': cp.asnumpy(unified_rotations).tolist(),
-            'original_img': original_img  # 保存原始彩色圖像
-        }
-        
-        stage_payload = 0
-        
-        # 處理每個通道
-        embedded_channels = []
-        channel_stages = []
-        
-        for ch_idx, (channel, ch_name) in enumerate(zip(current_channels, channel_names)):
-            print(f"\nProcessing {ch_name} channel...")
-            
-            # 確保通道是cupy數組
-            channel = cp.asarray(channel)
-            
-            # 使用彈性分割函數切割通道
-            sub_images = split_image_flexible(channel, split_size, block_base)
-            embedded_sub_images = []
-            channel_payload = 0
-            
-            # 💡 新增：該通道的旋轉子圖像列表
-            channel_rotated_subs = []  # 該通道的旋轉子圖像
-            
-            # 處理每個子圖像
-            for i, sub_img in enumerate(sub_images):
-                # 檢查是否已達到目標payload
-                if remaining_target is not None and remaining_target <= 0:
-                    embedded_sub_images.append(cp.asarray(sub_img))
-                    # 💡 對於未嵌入的子圖像，也保存旋轉版本以保持一致性
-                    rotation = int(unified_rotations[i])
-                    rotated_sub_img = cp.rot90(cp.asarray(sub_img), k=rotation // 90)
-                    channel_rotated_subs.append(rotated_sub_img)
-                    continue
-                
-                # 準備子圖像處理
-                sub_img = cp.asarray(sub_img)
-                
-                # ===== 關鍵改進：使用統一的旋轉角度 =====
-                rotation = int(unified_rotations[i])  # 所有通道在相同位置使用相同旋轉
-                rotated_sub_img = cp.rot90(sub_img, k=rotation // 90)
-                
-                # 準備嵌入數據 - 每個通道分配總數據的1/3
-                sub_data = stage_data['sub_data'][i]
-                channel_data_size = len(sub_data) // 3
-                channel_start = ch_idx * channel_data_size
-                channel_end = channel_start + channel_data_size
-                
-                # 為最後一個通道分配剩餘的數據
-                if ch_idx == 2:  # red channel
-                    channel_end = len(sub_data)
-                
-                channel_sub_data = sub_data[channel_start:channel_end]
-                channel_sub_data = cp.asarray(channel_sub_data, dtype=cp.uint8)
-                
-                # 計算當前子圖像的嵌入目標
-                if remaining_target is not None:
-                    current_target = min(len(channel_sub_data), remaining_target // 3)
-                else:
-                    current_target = None
-                
-                # 根據 el_mode 決定 max_el
-                if el_mode == 1:  # Increasing
-                    max_el = 3 + embedding * 2
-                elif el_mode == 2:  # Decreasing
-                    max_el = 11 - embedding * 2
-                else:  # No restriction
-                    max_el = 7
-                
-                # 計算自適應嵌入層級
-                local_el = compute_improved_adaptive_el(
-                    rotated_sub_img, 
-                    window_size=5, 
-                    max_el=max_el
-                )
-                
-                # 根據預測方法進行不同的處理
-                if prediction_method == PredictionMethod.PROPOSED:
-                    # 如果是第一個通道或使用不同權重，計算權重
-                    if ch_idx == 0 or use_different_weights:
-                        weights, (sub_payload, sub_psnr) = brute_force_weight_search_cuda(
-                            rotated_sub_img, channel_sub_data, local_el, 
-                            target_bpp, target_psnr, embedding
-                        )
-                    # 否則使用與藍色通道相同的權重（如果已計算過）
-                    elif 'weights' in locals():
-                        pass  # 使用之前計算的權重
-                    else:
-                        # 如果沒有之前的權重，重新計算
-                        weights, (sub_payload, sub_psnr) = brute_force_weight_search_cuda(
-                            rotated_sub_img, channel_sub_data, local_el, 
-                            target_bpp, target_psnr, embedding
-                        )
-                else:
-                    # MED 和 GAP 方法不需要權重
-                    weights = None
-                
-                # 執行數據嵌入
-                embedded_sub, payload, pred_sub = multi_pass_embedding(
-                    rotated_sub_img,
-                    channel_sub_data,
-                    local_el,
-                    weights,
-                    embedding,
-                    prediction_method=prediction_method,
-                    remaining_target=[current_target] if current_target else None
-                )
-                
-                # 💡 關鍵修改：保存該通道的旋轉結果
-                channel_rotated_subs.append(embedded_sub)
-                
-                # 更新剩餘目標量
-                if remaining_target is not None:
-                    actual_payload = min(payload, current_target) if current_target else payload
-                    remaining_target -= actual_payload
-                    payload = actual_payload
-                
-                # ===== 關鍵改進：使用相同的旋轉角度旋轉回來 =====
-                rotated_back_sub = cp.rot90(embedded_sub, k=-rotation // 90)
-                embedded_sub_images.append(rotated_back_sub)
-                channel_payload += payload
-                
-                # 計算品質指標
-                sub_img_np = cp.asnumpy(sub_img)
-                rotated_back_sub_np = cp.asnumpy(rotated_back_sub)
-                sub_psnr = calculate_psnr(sub_img_np, rotated_back_sub_np)
-                sub_ssim = calculate_ssim(sub_img_np, rotated_back_sub_np)
-                sub_hist_corr = histogram_correlation(
-                    np.histogram(sub_img_np, bins=256, range=(0, 255))[0],
-                    np.histogram(rotated_back_sub_np, bins=256, range=(0, 255))[0]
-                )
-                
-                # 記錄區塊資訊（只在藍色通道記錄，避免重複）
-                if ch_idx == 0:  # 只在藍色通道記錄統一資訊
-                    block_info = {
-                        'channel': ch_name,
-                        'weights': (weights.tolist() if weights is not None and hasattr(weights, 'tolist') 
-                                  else "N/A" if prediction_method in [PredictionMethod.MED, PredictionMethod.GAP] 
-                                  else None),
-                        'EL': int(cp.asnumpy(local_el).max()),
-                        'payload': int(payload),
-                        'psnr': float(sub_psnr),
-                        'ssim': float(sub_ssim),
-                        'rotation': rotation,
-                        'hist_corr': float(sub_hist_corr),
-                        'prediction_method': prediction_method.value,
-                        'original_img': sub_img_np,
-                        'pred_img': pred_sub,
-                        'embedded_img': rotated_back_sub_np,
-                        'rotated_embedded_img': cp.asnumpy(embedded_sub)  # 💡 新增：旋轉版本
-                    }
-                    stage_info['block_params'].append(block_info)
-            
-            # 💡 新增：保存該通道的旋轉子圖像
-            channel_rotated_sub_images[ch_name] = channel_rotated_subs
-            
-            # 合併處理後的子圖像
-            channel_img = merge_image_flexible(embedded_sub_images, split_size, block_base)
-            embedded_channels.append(channel_img)
-            
-            # 計算通道品質指標
-            channel_img_np = cp.asnumpy(channel_img)
-            original_channel_np = cp.asnumpy(current_channels[ch_idx])
-            channel_psnr = calculate_psnr(original_channel_np, channel_img_np)
-            channel_ssim = calculate_ssim(original_channel_np, channel_img_np)
-            channel_hist_corr = histogram_correlation(
-                np.histogram(original_channel_np, bins=256, range=(0, 255))[0],
-                np.histogram(channel_img_np, bins=256, range=(0, 255))[0]
+        try:
+            # 🔧 核心修改：每個通道都調用完整的灰階處理函數
+            # 這確保每個通道都能發揮其最大嵌入潛力
+            final_ch_img, ch_payload, ch_stages = pee_process_with_split_cuda(
+                channel,                    # 當作灰階圖像處理
+                total_embeddings,           # 使用相同的嵌入階段數
+                ratio_of_ones,              # 使用相同的數據比例
+                use_different_weights,      # 使用相同的權重策略
+                split_size,                 # 使用相同的分割大小
+                el_mode,                    # 使用相同的EL模式
+                block_base,                 # 使用相同的分割方式
+                prediction_method=prediction_method,
+                target_payload_size=channel_target  # 每個通道的目標容量
             )
             
-            # 更新通道資訊
-            stage_info['channel_payloads'][ch_name] = channel_payload
-            stage_info['channel_metrics'][ch_name] = {
-                'psnr': float(channel_psnr),
-                'ssim': float(channel_ssim),
-                'hist_corr': float(channel_hist_corr)
-            }
+            final_channels.append(final_ch_img)
+            total_payload += ch_payload
             
-            stage_payload += channel_payload
+            print(f"{ch_name} channel processed successfully:")
+            print(f"  Payload: {ch_payload} bits")
+            if len(ch_stages) > 0:
+                final_stage = ch_stages[-1]
+                print(f"  Final PSNR: {final_stage['psnr']:.2f}")
+                print(f"  Final SSIM: {final_stage['ssim']:.4f}")
+                print(f"  Final BPP: {final_stage['bpp']:.6f}")
             
-            print(f"{ch_name.capitalize()} channel processed:")
-            print(f"  Payload: {channel_payload}")
-            print(f"  PSNR: {channel_psnr:.2f}")
-            print(f"  SSIM: {channel_ssim:.4f}")
-        
-        # 💡 新增：保存彩色旋轉效果到階段資訊
-        stage_info['channel_rotated_sub_images'] = channel_rotated_sub_images
-        
-        # 💡 新增：嘗試合併各通道的旋轉效果圖像
-        try:
-            rotated_merged_channels = []
-            for ch_name in channel_names:
-                if channel_rotated_sub_images[ch_name]:
-                    rotated_channel_img = merge_image_flexible(
-                        channel_rotated_sub_images[ch_name], 
-                        split_size, 
-                        block_base
-                    )
-                    rotated_merged_channels.append(cp.asnumpy(rotated_channel_img))
-            
-            if len(rotated_merged_channels) == 3:
-                # 合併三個通道形成彩色旋轉效果圖像
-                rotated_color_img = combine_color_channels(
-                    rotated_merged_channels[0],  # blue
-                    rotated_merged_channels[1],  # green  
-                    rotated_merged_channels[2]   # red
-                )
-                stage_info['rotated_stage_img'] = rotated_color_img
+            # 🔧 合併階段資訊 - 保持與原有格式的兼容性
+            for i, stage in enumerate(ch_stages):
+                # 確保有足夠的階段容器
+                while len(color_pee_stages) <= i:
+                    color_pee_stages.append({
+                        'embedding': i,
+                        'payload': 0,
+                        'channel_payloads': {'blue': 0, 'green': 0, 'red': 0},
+                        'bpp': 0,
+                        'psnr': 0,
+                        'ssim': 0,
+                        'hist_corr': 0,
+                        'channel_metrics': {
+                            'blue': {'psnr': 0, 'ssim': 0, 'hist_corr': 0},
+                            'green': {'psnr': 0, 'ssim': 0, 'hist_corr': 0},
+                            'red': {'psnr': 0, 'ssim': 0, 'hist_corr': 0}
+                        },
+                        'prediction_method': prediction_method.value,
+                        'split_size': split_size,
+                        'block_base': block_base,
+                        'original_img': img,  # 保存原始彩色圖像
+                        'block_params': []  # 用於兼容現有的表格生成函數
+                    })
                 
-                # 也分別保存各通道的旋轉效果
-                stage_info['rotated_channel_imgs'] = {
-                    'blue': rotated_merged_channels[0],
-                    'green': rotated_merged_channels[1],
-                    'red': rotated_merged_channels[2]
+                # 添加通道特定的資訊
+                combined_stage = color_pee_stages[i]
+                combined_stage['channel_payloads'][ch_name] = stage['payload']
+                combined_stage['channel_metrics'][ch_name] = {
+                    'psnr': stage['psnr'],
+                    'ssim': stage['ssim'],
+                    'hist_corr': stage['hist_corr']
                 }
                 
+                # 累加總payload
+                combined_stage['payload'] += stage['payload']
+                
+                # 🔧 保存各種圖像資訊以便後續可視化
+                # 保存階段圖像（每個通道處理完後更新）
+                if 'channel_imgs' not in combined_stage:
+                    combined_stage['channel_imgs'] = {}
+                combined_stage['channel_imgs'][ch_name] = cp.asnumpy(stage['stage_img']) if isinstance(stage['stage_img'], cp.ndarray) else stage['stage_img']
+                
+                # 保存子圖像資訊
+                if 'channel_sub_images' not in combined_stage:
+                    combined_stage['channel_sub_images'] = {}
+                if 'sub_images' in stage:
+                    combined_stage['channel_sub_images'][ch_name] = stage['sub_images']
+                
+                # 保存旋轉子圖像資訊（split方法的特色）
+                if 'rotated_sub_images' in stage:
+                    if 'channel_rotated_sub_images' not in combined_stage:
+                        combined_stage['channel_rotated_sub_images'] = {}
+                    combined_stage['channel_rotated_sub_images'][ch_name] = stage['rotated_sub_images']
+                
+                # 保存旋轉角度資訊
+                if 'rotations' in stage and 'rotations' not in combined_stage:
+                    combined_stage['rotations'] = stage['rotations']  # 所有通道應該使用相同的旋轉
+                
+                # 🔧 合併區塊參數（為了兼容現有的表格生成函數）
+                if 'block_params' in stage:
+                    # 如果是第一個通道，初始化block_params結構
+                    if ch_idx == 0:
+                        combined_stage['block_params'] = []
+                        for j, block_param in enumerate(stage['block_params']):
+                            combined_stage['block_params'].append({
+                                'channel_params': {
+                                    'blue': {},
+                                    'green': {},
+                                    'red': {}
+                                },
+                                # 使用第一個通道的基本參數
+                                'weights': block_param.get('weights', 'N/A'),
+                                'EL': block_param.get('EL', 0),
+                                'payload': 0,  # 會累加
+                                'psnr': 0,     # 會平均
+                                'ssim': 0,     # 會平均
+                                'hist_corr': 0, # 會平均
+                                'rotation': block_param.get('rotation', 0),
+                                'prediction_method': prediction_method.value
+                            })
+                    
+                    # 保存通道特定的區塊參數並累加/平均化指標
+                    for j, block_param in enumerate(stage['block_params']):
+                        if j < len(combined_stage['block_params']):
+                            # 保存通道特定的參數
+                            combined_stage['block_params'][j]['channel_params'][ch_name] = block_param
+                            
+                            # 累加payload
+                            combined_stage['block_params'][j]['payload'] += block_param.get('payload', 0)
+                            
+                            # 累加指標（最後會除以3）
+                            combined_stage['block_params'][j]['psnr'] += block_param.get('psnr', 0)
+                            combined_stage['block_params'][j]['ssim'] += block_param.get('ssim', 0)
+                            combined_stage['block_params'][j]['hist_corr'] += block_param.get('hist_corr', 0)
+                            
+                            # 在最後一個通道時計算平均值
+                            if ch_idx == 2:  # 紅色通道（最後一個）
+                                combined_stage['block_params'][j]['psnr'] /= 3
+                                combined_stage['block_params'][j]['ssim'] /= 3
+                                combined_stage['block_params'][j]['hist_corr'] /= 3
+            
+            # 清理記憶體
+            cleanup_memory()
+            
         except Exception as e:
-            print(f"Warning: Could not merge rotated channel images: {e}")
+            print(f"Error processing {ch_name} channel: {str(e)}")
+            print(f"Using original channel data for {ch_name}")
+            # 如果某個通道處理失敗，使用原始通道
+            final_channels.append(channel)
+            continue
+    
+    # 🔧 重新組合彩色圖像
+    if len(final_channels) == 3:
+        final_color_img = combine_color_channels(final_channels[0], final_channels[1], final_channels[2])
+        print(f"\nSuccessfully combined all three channels")
+    else:
+        print(f"Warning: Only {len(final_channels)} channels processed successfully")
+        print("Using original image as fallback")
+        final_color_img = img
+    
+    # 🔧 計算合併階段的整體指標
+    pixel_count = img.shape[0] * img.shape[1]  # 只計算像素位置數，不包含通道數
+    
+    for stage in color_pee_stages:
+        # 🔧 修正BPP計算：總payload除以像素位置數（不包含通道數）
+        stage['bpp'] = stage['payload'] / pixel_count
         
-        # 重新組合彩色圖像
-        stage_img = combine_color_channels(
-            cp.asnumpy(embedded_channels[0]),  # blue
-            cp.asnumpy(embedded_channels[1]),  # green
-            cp.asnumpy(embedded_channels[2])   # red
-        )
+        # 計算平均品質指標
+        channel_metrics = stage['channel_metrics']
+        stage['psnr'] = sum(channel_metrics[ch]['psnr'] for ch in channel_names) / 3
+        stage['ssim'] = sum(channel_metrics[ch]['ssim'] for ch in channel_names) / 3
+        stage['hist_corr'] = sum(channel_metrics[ch]['hist_corr'] for ch in channel_names) / 3
         
-        stage_info['stage_img'] = stage_img
-        
-        # 計算整體品質指標
-        overall_psnr = sum(stage_info['channel_metrics'][ch]['psnr'] for ch in channel_names) / 3
-        overall_ssim = sum(stage_info['channel_metrics'][ch]['ssim'] for ch in channel_names) / 3
-        overall_hist_corr = sum(stage_info['channel_metrics'][ch]['hist_corr'] for ch in channel_names) / 3
-        
-        stage_info['psnr'] = float(overall_psnr)
-        stage_info['ssim'] = float(overall_ssim) 
-        stage_info['hist_corr'] = float(overall_hist_corr)
-        stage_info['payload'] = stage_payload
-        stage_info['bpp'] = float(stage_info['payload'] / total_pixels)
+        # 🔧 合併階段圖像（如果所有通道都有的話）
+        if 'channel_imgs' in stage and len(stage['channel_imgs']) == 3:
+            stage['stage_img'] = combine_color_channels(
+                stage['channel_imgs']['blue'],
+                stage['channel_imgs']['green'], 
+                stage['channel_imgs']['red']
+            )
         
         # 輸出階段摘要
-        print(f"\nColor Embedding {embedding} summary:")
-        print(f"Prediction Method: {prediction_method.value}")
-        print(f"Total Payload: {stage_info['payload']}")
-        print(f"BPP: {stage_info['bpp']:.4f}")
-        print(f"Overall PSNR: {stage_info['psnr']:.2f}")
-        print(f"Overall SSIM: {stage_info['ssim']:.4f}")
-        print(f"Overall Hist Corr: {stage_info['hist_corr']:.4f}")
-        print(f"Split info: {split_size}x{split_size}, {'Block-based' if block_base else 'Quarter-based'}")
-        print("Channel payloads:")
-        for ch_name, payload in stage_info['channel_payloads'].items():
-            print(f"  {ch_name.capitalize()}: {payload}")
-        
-        # 更新資訊
-        pee_stages.append(stage_info)
-        total_payload += stage_payload
-        previous_psnr = stage_info['psnr']
-        previous_ssim = stage_info['ssim']
-        
-        # 更新當前圖像和通道
-        current_img = stage_img
-        current_channels = [
-            cp.asnumpy(embedded_channels[0]),
-            cp.asnumpy(embedded_channels[1]), 
-            cp.asnumpy(embedded_channels[2])
-        ]
-        
-        # 檢查是否已達到總目標
-        if remaining_target is not None and remaining_target <= 0:
-            print(f"Reached target payload ({target_payload_size} bits) at stage {embedding}")
-            break
-        
-        # 清理記憶體
-        cleanup_memory()
-
-    # 返回最終結果
-    final_color_img = current_img
-    return final_color_img, int(total_payload), pee_stages
+        print(f"\nColor Stage {stage['embedding']} summary:")
+        print(f"  Total Payload: {stage['payload']} bits")
+        print(f"  BPP: {stage['bpp']:.6f}")
+        print(f"  Average PSNR: {stage['psnr']:.2f}")
+        print(f"  Average SSIM: {stage['ssim']:.4f}")
+        print(f"  Average Hist Corr: {stage['hist_corr']:.4f}")
+        print("  Channel payloads:")
+        for ch_name, payload in stage['channel_payloads'].items():
+            print(f"    {ch_name.capitalize()}: {payload} bits")
+    
+    # 🔧 輸出最終結果摘要
+    print(f"\n{'='*80}")
+    print(f"Final Independent Channel Processing Results:")
+    print(f"Image type: Color ({img.shape[0]}x{img.shape[1]}x{img.shape[2]})")
+    print(f"Total Payload: {total_payload} bits")
+    print(f"Total BPP: {total_payload / pixel_count:.6f}")
+    
+    if len(color_pee_stages) > 0:
+        final_stage = color_pee_stages[-1]
+        print(f"Final Average PSNR: {final_stage['psnr']:.2f}")
+        print(f"Final Average SSIM: {final_stage['ssim']:.4f}")
+        print(f"Final Average Hist Corr: {final_stage['hist_corr']:.4f}")
+    
+    print("Final channel payloads:")
+    if len(color_pee_stages) > 0:
+        final_payloads = color_pee_stages[-1]['channel_payloads']
+        total_channel_bpp = 0
+        for ch_name, payload in final_payloads.items():
+            channel_bpp = payload / pixel_count
+            total_channel_bpp += channel_bpp
+            print(f"  {ch_name.capitalize()}: {payload} bits (BPP: {channel_bpp:.6f})")
+        print(f"  Total BPP (sum of channels): {total_channel_bpp:.6f}")
+    
+    # 🔧 與等效灰階圖像的容量比較分析
+    grayscale_equivalent_bpp = total_payload / pixel_count  # 使用相同的像素計數基準
+    
+    print(f"\nBPP Analysis:")
+    print(f"  Pixel positions: {pixel_count}")
+    print(f"  Total payload: {total_payload} bits")
+    print(f"  Color image BPP: {total_payload / pixel_count:.6f}")
+    print(f"  This represents ~{total_payload / pixel_count:.1f} bits per pixel position across all channels")
+    print(f"  Compared to equivalent grayscale: {(total_payload / pixel_count):.2f}x higher capacity potential")
+    print(f"{'='*80}")
+    
+    return final_color_img, int(total_payload), color_pee_stages

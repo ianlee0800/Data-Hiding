@@ -1,0 +1,185 @@
+Simplified measurement run started at 2025-06-17 21:05:18
+Image: Male
+Method: rotation
+Prediction method: med
+Ratio of ones: 0.5
+Total embeddings: 4
+EL mode: 0
+Using step_size: 100000 bits (segments parameter 20 ignored)
+Measurement mode: step_size
+Use different weights: True
+Split size: 2, Block base: True
+
+================================================================================
+
+Step 1: Finding maximum payload capacity
+Maximum payload: 1367834 bits
+Max BPP: 1.304468
+Time taken: 0.86 seconds
+
+Step 2: Calculating measurement points
+Using step_size: 100000 bits (segments parameter ignored)
+Measurement mode: step_size=100000
+Total measurement points: 14
+Target payload points:
+  Point 1: 100000 bits (7.3% of max)
+  Point 2: 200000 bits (14.6% of max)
+  Point 3: 300000 bits (21.9% of max)
+  Point 4: 400000 bits (29.2% of max)
+  Point 5: 500000 bits (36.6% of max)
+  Point 6: 600000 bits (43.9% of max)
+  Point 7: 700000 bits (51.2% of max)
+  Point 8: 800000 bits (58.5% of max)
+  Point 9: 900000 bits (65.8% of max)
+  Point 10: 1000000 bits (73.1% of max)
+  Point 11: 1100000 bits (80.4% of max)
+  Point 12: 1200000 bits (87.7% of max)
+  Point 13: 1300000 bits (95.0% of max)
+  Point 14: 1367834 bits (100.0% of max) [using initial measurement]
+
+Step 3: Running embedding algorithm for each target point
+Processing 13 measurement points using step_size=100000
+7.3% target (point 1/13):
+  Target: 100000 bits
+  Actual: 100000 bits
+  BPP: 0.095367
+  PSNR: 61.42
+  SSIM: 0.9996
+  Hist_Corr: 0.9983
+  Time: 0.13 seconds
+
+14.6% target (point 2/13):
+  Target: 200000 bits
+  Actual: 200000 bits
+  BPP: 0.190735
+  PSNR: 59.65
+  SSIM: 0.9993
+  Hist_Corr: 0.9977
+  Time: 0.17 seconds
+
+21.9% target (point 3/13):
+  Target: 300000 bits
+  Actual: 300000 bits
+  BPP: 0.286102
+  PSNR: 56.93
+  SSIM: 0.9988
+  Hist_Corr: 0.9949
+  Time: 0.18 seconds
+
+29.2% target (point 4/13):
+  Target: 400000 bits
+  Actual: 400000 bits
+  BPP: 0.381470
+  PSNR: 55.20
+  SSIM: 0.9980
+  Hist_Corr: 0.9836
+  Time: 0.20 seconds
+
+36.6% target (point 5/13):
+  Target: 500000 bits
+  Actual: 500000 bits
+  BPP: 0.476837
+  PSNR: 53.59
+  SSIM: 0.9975
+  Hist_Corr: 0.9829
+  Time: 0.20 seconds
+
+43.9% target (point 6/13):
+  Target: 600000 bits
+  Actual: 600000 bits
+  BPP: 0.572205
+  PSNR: 53.62
+  SSIM: 0.9969
+  Hist_Corr: 0.9751
+  Time: 0.24 seconds
+
+51.2% target (point 7/13):
+  Target: 700000 bits
+  Actual: 700000 bits
+  BPP: 0.667572
+  PSNR: 53.02
+  SSIM: 0.9967
+  Hist_Corr: 0.9746
+  Time: 0.24 seconds
+
+58.5% target (point 8/13):
+  Target: 800000 bits
+  Actual: 800000 bits
+  BPP: 0.762939
+  PSNR: 52.79
+  SSIM: 0.9968
+  Hist_Corr: 0.9712
+  Time: 0.35 seconds
+
+65.8% target (point 9/13):
+  Target: 900000 bits
+  Actual: 900000 bits
+  BPP: 0.858307
+  PSNR: 52.21
+  SSIM: 0.9959
+  Hist_Corr: 0.9649
+  Time: 0.39 seconds
+
+73.1% target (point 10/13):
+  Target: 1000000 bits
+  Actual: 1000000 bits
+  BPP: 0.953674
+  PSNR: 51.40
+  SSIM: 0.9960
+  Hist_Corr: 0.9582
+  Time: 0.38 seconds
+
+80.4% target (point 11/13):
+  Target: 1100000 bits
+  Actual: 1100000 bits
+  BPP: 1.049042
+  PSNR: 50.98
+  SSIM: 0.9948
+  Hist_Corr: 0.9595
+  Time: 0.50 seconds
+
+87.7% target (point 12/13):
+  Target: 1200000 bits
+  Actual: 1200000 bits
+  BPP: 1.144409
+  PSNR: 50.22
+  SSIM: 0.9942
+  Hist_Corr: 0.9511
+  Time: 0.54 seconds
+
+95.0% target (point 13/13):
+  Target: 1300000 bits
+  Actual: 1300000 bits
+  BPP: 1.239777
+  PSNR: 50.12
+  SSIM: 0.9939
+  Hist_Corr: 0.9610
+  Time: 0.66 seconds
+
+Results summary:
+Measurement mode used: step_size=100000
+Total data points generated: 14
+Successful measurements: 14
+Failed measurements: 0
+Success rate: 100.0%
+Total processing time: 6.71 seconds
+Average time per point: 0.48 seconds
+Results saved to ./Prediction_Error_Embedding/outcome/plots/Male/data_med
+Final confirmation: Used step_size=100000 bits for med
+
+Data table:
+ Target_Percentage  Target_Payload  Actual_Payload      BPP      PSNR   SSIM  Hist_Corr  Processing_Time Measurement_Mode
+          7.310829          100000          100000 0.095367 61.422716 0.9996   0.998302         0.125001 step_size=100000
+         14.621657          200000          200000 0.190735 59.645836 0.9993   0.997705         0.165173 step_size=100000
+         21.932486          300000          300000 0.286102 56.929743 0.9988   0.994896         0.181024 step_size=100000
+         29.243315          400000          400000 0.381470 55.196866 0.9980   0.983601         0.203003 step_size=100000
+         36.554143          500000          500000 0.476837 53.591566 0.9975   0.982869         0.202175 step_size=100000
+         43.864972          600000          600000 0.572205 53.618753 0.9969   0.975086         0.238307 step_size=100000
+         51.175801          700000          700000 0.667572 53.021286 0.9967   0.974569         0.243359 step_size=100000
+         58.486629          800000          800000 0.762939 52.788847 0.9968   0.971229         0.347035 step_size=100000
+         65.797458          900000          900000 0.858307 52.205026 0.9959   0.964901         0.394887 step_size=100000
+         73.108287         1000000         1000000 0.953674 51.398610 0.9960   0.958209         0.382185 step_size=100000
+         80.419115         1100000         1100000 1.049042 50.976704 0.9948   0.959511         0.495777 step_size=100000
+         87.729944         1200000         1200000 1.144409 50.217361 0.9942   0.951089         0.544871 step_size=100000
+         95.040772         1300000         1300000 1.239777 50.116947 0.9939   0.960956         0.655837 step_size=100000
+        100.000000         1367834         1367834 1.304468 50.242997 0.9943   0.974826         0.857195 step_size=100000

@@ -109,7 +109,7 @@ def main():
     prediction_method_str = "ALL"
     
     # 方法選擇
-    method = "split"          # 可選："rotation", "split", "quadtree"
+    method = "rotation"          # 可選："rotation", "split", "quadtree"
     
     # 方法比較參數（僅當use_method_comparison=True時有效）
     methods_to_compare = ["rotation", "quadtree"]  # 要比較的方法
@@ -1282,11 +1282,18 @@ def main():
             # 計算並儲存 BPP-PSNR 數據
             bpp_psnr_data = []
             accumulated_payload = 0
+            
+            # 🔧 正確計算像素計數
+            if is_grayscale_img:
+                pixel_count_for_bpp = origImg.size
+            else:
+                pixel_count_for_bpp = origImg.shape[0] * origImg.shape[1]
+            
             for stage in pee_stages:
                 accumulated_payload += stage['payload']
                 bpp_psnr_data.append({
                     'stage': stage['embedding'],
-                    'bpp': accumulated_payload / total_pixels,
+                    'bpp': accumulated_payload / pixel_count_for_bpp,
                     'psnr': stage['psnr']
                 })
 
@@ -1345,20 +1352,25 @@ def main():
                        'stages': bpp_psnr_data,
                        'interval_stats': stats_df.to_dict('records') if stats_df is not None else None
                    })
-
-            # 計算並輸出最終結果
-            final_bpp = total_payload / total_pixels
             
             # 🔧 新增：在彩色圖像的指標計算部分（替換現有的彩色指標計算）
-            # 根據圖像類型計算最終品質指標
+            # 根據圖像類型計算最終品質指標和BPP
             if is_grayscale_img:
                 final_psnr = calculate_psnr(origImg, final_pee_img)
                 final_ssim = calculate_ssim(origImg, final_pee_img)
                 hist_orig = generate_histogram(origImg)
                 hist_final = generate_histogram(final_pee_img)
                 final_hist_corr = histogram_correlation(hist_orig, hist_final)
+                # 灰階圖像BPP計算
+                final_bpp = total_payload / origImg.size
             else:
+                # 彩色圖像品質指標計算
                 final_psnr, final_ssim, final_hist_corr = calculate_color_metrics(origImg, final_pee_img)
+                # 🔧 彩色圖像BPP計算：使用像素位置數
+                pixel_positions = origImg.shape[0] * origImg.shape[1]
+                final_bpp = total_payload / pixel_positions
+                print(f"Color image BPP calculation: {total_payload} / {pixel_positions} = {final_bpp:.6f}")
+
                 
                 # 🔧 新增：輸出各通道的最終指標
                 if 'channel_metrics' in pee_stages[-1]:

@@ -4,7 +4,7 @@ Split Method Rotation Information for F16
 Split Size: 2x2
 Split Type: Block-based
 Image Type: Color
-Total Stages: 5
+Total Stages: 4
 
 Generated Images for Each Stage:
 1. Merged Image: Direct combination of rotated sub-images
@@ -13,56 +13,41 @@ Generated Images for Each Stage:
 
 Stage 0 Rotation Information:
 ------------------------------
-Rotation angles: [0, 270, 270, 90]
-Rotation distribution:
-  0°: 1 sub-images
-  90°: 1 sub-images
-  270°: 2 sub-images
-Payload: 466691 bits
-PSNR: 53.37 dB
-SSIM: 0.9982
-
-Stage 1 Rotation Information:
-------------------------------
-Rotation angles: [0, 90, 90, 270]
-Rotation distribution:
-  0°: 1 sub-images
-  90°: 2 sub-images
-  270°: 1 sub-images
-Payload: 260299 bits
-PSNR: 55.87 dB
-SSIM: 0.9985
-
-Stage 2 Rotation Information:
-------------------------------
-Rotation angles: [90, 270, 270, 180]
-Rotation distribution:
-  90°: 1 sub-images
-  180°: 1 sub-images
-  270°: 2 sub-images
-Payload: 138161 bits
-PSNR: 56.93 dB
-SSIM: 0.9989
-
-Stage 3 Rotation Information:
-------------------------------
 Rotation angles: [90, 0, 0, 0]
 Rotation distribution:
   0°: 3 sub-images
   90°: 1 sub-images
-Payload: 118224 bits
-PSNR: 60.61 dB
-SSIM: 0.9994
+Payload: 814724 bits
+PSNR: 50.81 dB
+SSIM: 0.9963
 
-Stage 4 Rotation Information:
+Stage 1 Rotation Information:
 ------------------------------
-Rotation angles: [180, 90, 270, 0]
+Rotation angles: [180, 180, 0, 180]
 Rotation distribution:
   0°: 1 sub-images
-  90°: 1 sub-images
-  180°: 1 sub-images
+  180°: 3 sub-images
+Payload: 269522 bits
+PSNR: 49.84 dB
+SSIM: 0.9952
+
+Stage 2 Rotation Information:
+------------------------------
+Rotation angles: [90, 90, 270, 90]
+Rotation distribution:
+  90°: 3 sub-images
   270°: 1 sub-images
-Payload: 116414 bits
-PSNR: inf dB
-SSIM: 0.9996
+Payload: 138651 bits
+PSNR: 49.59 dB
+SSIM: 0.9949
+
+Stage 3 Rotation Information:
+------------------------------
+Rotation angles: [180, 180, 180, 0]
+Rotation distribution:
+  0°: 1 sub-images
+  180°: 3 sub-images
+Payload: 148236 bits
+PSNR: 48.94 dB
+SSIM: 0.9943
 

@@ -1,6 +1,6 @@
-Multi-predictor precise measurement run started at 2025-06-17 01:34:47
+Multi-predictor precise measurement run started at 2025-06-17 23:09:28
 Image: F16.tiff
-Method: split
+Method: rotation
 Total embeddings: 4
 EL mode: 0
 Using step_size: 100000 bits (segments parameter ignored)
@@ -19,8 +19,8 @@ Using ratio_of_ones = 0.5
 Using step_size = 100000 bits
 
 Completed measurements for proposed predictor
-Time taken: 72.75 seconds
-Generated 10 data points
+Time taken: 54.53 seconds
+Generated 15 data points
 Measurement mode used: step_size=100000
 
 Starting precise measurements for med predictor
@@ -28,8 +28,8 @@ Using ratio_of_ones = 0.5
 Using step_size = 100000 bits
 
 Completed measurements for med predictor
-Time taken: 11.82 seconds
-Generated 12 data points
+Time taken: 14.34 seconds
+Generated 19 data points
 Measurement mode used: step_size=100000
 
 Starting precise measurements for gap predictor
@@ -37,8 +37,8 @@ Using ratio_of_ones = 0.5
 Using step_size = 100000 bits
 
 Completed measurements for gap predictor
-Time taken: 10.46 seconds
-Generated 11 data points
+Time taken: 11.28 seconds
+Generated 16 data points
 Measurement mode used: step_size=100000
 
 Starting precise measurements for rhombus predictor
@@ -46,12 +46,12 @@ Using ratio_of_ones = 0.5
 Using step_size = 100000 bits
 
 Completed measurements for rhombus predictor
-Time taken: 14.42 seconds
-Generated 15 data points
+Time taken: 17.74 seconds
+Generated 23 data points
 Measurement mode used: step_size=100000
 
 
-Comparison completed at 2025-06-17 01:36:39
-Total processing time: 111.75 seconds
+Comparison completed at 2025-06-17 23:11:08
+Total processing time: 100.21 seconds
 Final confirmation: Used step_size=100000 for all predictors
 
