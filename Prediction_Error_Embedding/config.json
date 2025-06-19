@@ -1,0 +1,54 @@
+{
+  "experiment": {
+    "name": "PEE_Experiment_F16_Quadtree",
+    "description": "F16 彩色圖像使用 Quadtree 方法的 PEE 實驗"
+  },
+  "image": {
+    "name": "F16",
+    "filetype": "tiff"
+  },
+  "embedding": {
+    "total_embeddings": 4,
+    "el_mode": 0,
+    "use_different_weights": true,
+    "predictor_ratios": {
+      "PROPOSED": 0.5,
+      "MED": 0.5,
+      "GAP": 0.5,
+      "RHOMBUS": 0.5
+    }
+  },
+  "method": {
+    "name": "quadtree",
+    "rotation": {
+      "split_size": 2
+    },
+    "split": {
+      "split_size": 2,
+      "block_base": false
+    },
+    "quadtree": {
+      "min_block_size": 16,
+      "variance_threshold": 300,
+      "adaptive_threshold": true,
+      "search_mode": "balanced",
+      "target_bpp_for_search": 0.8,
+      "target_psnr_for_search": 35.0
+    }
+  },
+  "measurement": {
+    "use_precise_measurement": true,
+    "use_method_comparison": false,
+    "stats_segments": 20,
+    "step_size": 100000,
+    "methods_to_compare": ["rotation", "quadtree"],
+    "comparison_predictor": "proposed"
+  },
+  "prediction": {
+    "method": "ALL"
+  },
+  "output": {
+    "verbose": true,
+    "save_visualizations": true
+  }
+}

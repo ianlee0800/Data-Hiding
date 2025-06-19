@@ -1,0 +1,239 @@
+Simplified measurement run started at 2025-06-16 15:54:39
+Image: Male
+Method: rotation
+Prediction method: med
+Ratio of ones: 0.5
+Total embeddings: 4
+EL mode: 0
+Segments: 20
+Use different weights: 2
+
+================================================================================
+
+Step 1: Finding maximum payload capacity
+Maximum payload: 1382056 bits
+Max BPP: 1.318031
+Time taken: 0.76 seconds
+
+Step 2: Calculating 20 evenly distributed payload points
+Target payload points:
+  Point 1: 69102 bits (5.0% of max)
+  Point 2: 138205 bits (10.0% of max)
+  Point 3: 207308 bits (15.0% of max)
+  Point 4: 276411 bits (20.0% of max)
+  Point 5: 345514 bits (25.0% of max)
+  Point 6: 414616 bits (30.0% of max)
+  Point 7: 483719 bits (35.0% of max)
+  Point 8: 552822 bits (40.0% of max)
+  Point 9: 621925 bits (45.0% of max)
+  Point 10: 691028 bits (50.0% of max)
+  Point 11: 760130 bits (55.0% of max)
+  Point 12: 829233 bits (60.0% of max)
+  Point 13: 898336 bits (65.0% of max)
+  Point 14: 967439 bits (70.0% of max)
+  Point 15: 1036542 bits (75.0% of max)
+  Point 16: 1105644 bits (80.0% of max)
+  Point 17: 1174747 bits (85.0% of max)
+  Point 18: 1243850 bits (90.0% of max)
+  Point 19: 1312953 bits (95.0% of max)
+  Point 20: 1382056 bits (100.0% of max) [using initial measurement]
+
+Step 3: Running embedding algorithm for each target point
+5.0% target:
+  Target: 69102 bits
+  Actual: 69102 bits
+  BPP: 0.065901
+  PSNR: 61.68
+  SSIM: 0.9997
+  Hist_Corr: 0.9990
+  Time: 0.15 seconds
+
+10.0% target:
+  Target: 138205 bits
+  Actual: 138205 bits
+  BPP: 0.131803
+  PSNR: 59.25
+  SSIM: 0.9994
+  Hist_Corr: 0.9971
+  Time: 0.16 seconds
+
+15.0% target:
+  Target: 207308 bits
+  Actual: 207308 bits
+  BPP: 0.197704
+  PSNR: 57.73
+  SSIM: 0.9990
+  Hist_Corr: 0.9919
+  Time: 0.15 seconds
+
+20.0% target:
+  Target: 276411 bits
+  Actual: 276411 bits
+  BPP: 0.263606
+  PSNR: 56.91
+  SSIM: 0.9987
+  Hist_Corr: 0.9916
+  Time: 0.16 seconds
+
+25.0% target:
+  Target: 345514 bits
+  Actual: 345514 bits
+  BPP: 0.329508
+  PSNR: 55.12
+  SSIM: 0.9982
+  Hist_Corr: 0.9880
+  Time: 0.17 seconds
+
+30.0% target:
+  Target: 414616 bits
+  Actual: 414616 bits
+  BPP: 0.395409
+  PSNR: 54.88
+  SSIM: 0.9981
+  Hist_Corr: 0.9836
+  Time: 0.17 seconds
+
+35.0% target:
+  Target: 483719 bits
+  Actual: 483719 bits
+  BPP: 0.461310
+  PSNR: 54.31
+  SSIM: 0.9977
+  Hist_Corr: 0.9856
+  Time: 0.17 seconds
+
+40.0% target:
+  Target: 552822 bits
+  Actual: 552822 bits
+  BPP: 0.527212
+  PSNR: 53.64
+  SSIM: 0.9974
+  Hist_Corr: 0.9809
+  Time: 0.18 seconds
+
+45.0% target:
+  Target: 621925 bits
+  Actual: 621925 bits
+  BPP: 0.593114
+  PSNR: 52.61
+  SSIM: 0.9969
+  Hist_Corr: 0.9882
+  Time: 0.19 seconds
+
+50.0% target:
+  Target: 691028 bits
+  Actual: 691028 bits
+  BPP: 0.659016
+  PSNR: 53.01
+  SSIM: 0.9972
+  Hist_Corr: 0.9805
+  Time: 0.20 seconds
+
+55.0% target:
+  Target: 760130 bits
+  Actual: 760130 bits
+  BPP: 0.724916
+  PSNR: 52.55
+  SSIM: 0.9969
+  Hist_Corr: 0.9851
+  Time: 0.35 seconds
+
+60.0% target:
+  Target: 829233 bits
+  Actual: 829233 bits
+  BPP: 0.790818
+  PSNR: 52.28
+  SSIM: 0.9966
+  Hist_Corr: 0.9775
+  Time: 0.35 seconds
+
+65.0% target:
+  Target: 898336 bits
+  Actual: 898336 bits
+  BPP: 0.856720
+  PSNR: 51.85
+  SSIM: 0.9963
+  Hist_Corr: 0.9777
+  Time: 0.34 seconds
+
+70.0% target:
+  Target: 967439 bits
+  Actual: 967439 bits
+  BPP: 0.922622
+  PSNR: 51.59
+  SSIM: 0.9957
+  Hist_Corr: 0.9666
+  Time: 0.36 seconds
+
+75.0% target:
+  Target: 1036542 bits
+  Actual: 1036542 bits
+  BPP: 0.988523
+  PSNR: 51.45
+  SSIM: 0.9957
+  Hist_Corr: 0.9712
+  Time: 0.53 seconds
+
+80.0% target:
+  Target: 1105644 bits
+  Actual: 1105644 bits
+  BPP: 1.054424
+  PSNR: 50.84
+  SSIM: 0.9951
+  Hist_Corr: 0.9731
+  Time: 0.50 seconds
+
+85.0% target:
+  Target: 1174747 bits
+  Actual: 1174747 bits
+  BPP: 1.120326
+  PSNR: 50.37
+  SSIM: 0.9949
+  Hist_Corr: 0.9751
+  Time: 0.50 seconds
+
+90.0% target:
+  Target: 1243850 bits
+  Actual: 1243850 bits
+  BPP: 1.186228
+  PSNR: 50.38
+  SSIM: 0.9943
+  Hist_Corr: 0.9699
+  Time: 0.64 seconds
+
+95.0% target:
+  Target: 1312953 bits
+  Actual: 1312953 bits
+  BPP: 1.252130
+  PSNR: 50.13
+  SSIM: 0.9940
+  Hist_Corr: 0.9626
+  Time: 0.66 seconds
+
+Results summary:
+Total processing time: 9.14 seconds
+Average time per point: 0.46 seconds
+Results saved to ./Prediction_Error_Embedding/outcome/plots/Male/data_med
+
+Data table:
+ Target_Percentage  Target_Payload  Actual_Payload      BPP      PSNR   SSIM  Hist_Corr  Processing_Time
+          4.999942           69102           69102 0.065901 61.680524 0.9997   0.999023         0.154557
+          9.999957          138205          138205 0.131803 59.249862 0.9994   0.997150         0.156181
+         14.999971          207308          207308 0.197704 57.732809 0.9990   0.991909         0.154969
+         19.999986          276411          276411 0.263606 56.907155 0.9987   0.991588         0.155964
+         25.000000          345514          345514 0.329508 55.120881 0.9982   0.988013         0.170032
+         29.999942          414616          414616 0.395409 54.879988 0.9981   0.983643         0.174854
+         34.999957          483719          483719 0.461310 54.310097 0.9977   0.985610         0.170616
+         39.999971          552822          552822 0.527212 53.643163 0.9974   0.980919         0.179614
+         44.999986          621925          621925 0.593114 52.611537 0.9969   0.988249         0.192858
+         50.000000          691028          691028 0.659016 53.012661 0.9972   0.980458         0.196046
+         54.999942          760130          760130 0.724916 52.548772 0.9969   0.985116         0.349783
+         59.999957          829233          829233 0.790818 52.283957 0.9966   0.977503         0.348837
+         64.999971          898336          898336 0.856720 51.845334 0.9963   0.977659         0.344103
+         69.999986          967439          967439 0.922622 51.594072 0.9957   0.966555         0.363100
+         75.000000         1036542         1036542 0.988523 51.451999 0.9957   0.971223         0.528965
+         79.999942         1105644         1105644 1.054424 50.842161 0.9951   0.973054         0.500641
+         84.999957         1174747         1174747 1.120326 50.373460 0.9949   0.975074         0.499461
+         89.999971         1243850         1243850 1.186228 50.381270 0.9943   0.969876         0.635124
+         94.999986         1312953         1312953 1.252130 50.134217 0.9940   0.962586         0.656422
+        100.000000         1382056         1382056 1.318031 50.211827 0.9943   0.969214         0.760892

@@ -1,0 +1,72 @@
+Multi-predictor comparison run started at 2025-06-16 17:51:42
+Image: Male.tiff
+Method: split
+Parameters: embeddings=4, el_mode=0
+Predictor ratio settings:
+  PROPOSED: 0.5
+  MED: 0.5
+  GAP: 0.5
+  RHOMBUS: 0.5
+Split size: 2x2, block_base=True
+
+================================================================================
+
+Starting run with proposed predictor at 2025-06-16 17:51:42
+Run completed for proposed predictor
+Total payload: 1238724
+PSNR: 50.76
+SSIM: 0.9938
+Processing time: 11.22 seconds
+
+------------------------------------------------------------
+
+Starting run with med predictor at 2025-06-16 17:51:54
+Run completed for med predictor
+Total payload: 1467026
+PSNR: 50.05
+SSIM: 0.9944
+Processing time: 13.84 seconds
+
+------------------------------------------------------------
+
+Starting run with gap predictor at 2025-06-16 17:51:56
+Run completed for gap predictor
+Total payload: 1351928
+PSNR: 49.97
+SSIM: 0.9920
+Processing time: 16.36 seconds
+
+------------------------------------------------------------
+
+Starting run with rhombus predictor at 2025-06-16 17:51:59
+Run completed for rhombus predictor
+Total payload: 1912222
+PSNR: 49.85
+SSIM: 0.9937
+Processing time: 18.83 seconds
+
+------------------------------------------------------------
+
+
+Error generating comparison: 'Target_Percentage'
+Traceback (most recent call last):
+  File "C:\Users\Admin\Anaconda3\envs\pee_thesis\lib\site-packages\pandas\core\indexes\base.py", line 3653, in get_loc
+    return self._engine.get_loc(casted_key)
+  File "pandas\_libs\index.pyx", line 147, in pandas._libs.index.IndexEngine.get_loc
+  File "pandas\_libs\index.pyx", line 176, in pandas._libs.index.IndexEngine.get_loc
+  File "pandas\_libs\hashtable_class_helper.pxi", line 7080, in pandas._libs.hashtable.PyObjectHashTable.get_item
+  File "pandas\_libs\hashtable_class_helper.pxi", line 7088, in pandas._libs.hashtable.PyObjectHashTable.get_item
+KeyError: 'Target_Percentage'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "d:\Google Drive\files\ºÓ¯Z\Data-Hiding\Prediction_Error_Embedding\utils.py", line 2503, in run_multiple_predictors
+    plot_predictor_comparison(all_stats, imgName, method, comparison_dir)
+  File "d:\Google Drive\files\ºÓ¯Z\Data-Hiding\Prediction_Error_Embedding\utils.py", line 1588, in plot_predictor_comparison
+    plt.plot(df['Target_Percentage'], df['PSNR'],
+  File "C:\Users\Admin\Anaconda3\envs\pee_thesis\lib\site-packages\pandas\core\frame.py", line 3761, in __getitem__
+    indexer = self.columns.get_loc(key)
+  File "C:\Users\Admin\Anaconda3\envs\pee_thesis\lib\site-packages\pandas\core\indexes\base.py", line 3655, in get_loc
+    raise KeyError(key) from err
+KeyError: 'Target_Percentage'

@@ -1,0 +1,21 @@
+Precise measurement run started at 2025-06-18 17:20:38
+Image: F16 (512x512 color image)
+Method: split
+Prediction method: proposed
+Ratio of ones: 0.5
+Total embeddings: 4
+EL mode: 0
+Pixel count for BPP calculation: 262144
+Using step_size: 100000 bits (segments parameter 20 ignored)
+Measurement mode: step_size
+Use different weights: True
+
+================================================================================
+
+Maximum payload: 2130878 bits
+Max BPP: 8.128654
+Max PSNR: 47.82
+Max SSIM: 0.9924
+Max Hist Corr: 0.9976
+Time taken: 7.50 seconds
+

@@ -1,0 +1,207 @@
+Simplified measurement run started at 2025-06-17 20:15:54
+Image: F16
+Method: rotation
+Prediction method: gap
+Ratio of ones: 0.5
+Total embeddings: 4
+EL mode: 0
+Using step_size: 100000 bits (segments parameter 20 ignored)
+Measurement mode: step_size
+Use different weights: True
+Split size: 2, Block base: True
+
+================================================================================
+
+Step 1: Finding maximum payload capacity
+Maximum payload: 1554242 bits
+Max BPP: 1.976321
+Time taken: 0.88 seconds
+
+Step 2: Calculating measurement points
+Using step_size: 100000 bits (segments parameter ignored)
+Measurement mode: step_size=100000
+Total measurement points: 16
+Target payload points:
+  Point 1: 100000 bits (6.4% of max)
+  Point 2: 200000 bits (12.9% of max)
+  Point 3: 300000 bits (19.3% of max)
+  Point 4: 400000 bits (25.7% of max)
+  Point 5: 500000 bits (32.2% of max)
+  Point 6: 600000 bits (38.6% of max)
+  Point 7: 700000 bits (45.0% of max)
+  Point 8: 800000 bits (51.5% of max)
+  Point 9: 900000 bits (57.9% of max)
+  Point 10: 1000000 bits (64.3% of max)
+  Point 11: 1100000 bits (70.8% of max)
+  Point 12: 1200000 bits (77.2% of max)
+  Point 13: 1300000 bits (83.6% of max)
+  Point 14: 1400000 bits (90.1% of max)
+  Point 15: 1500000 bits (96.5% of max)
+  Point 16: 1554242 bits (100.0% of max) [using initial measurement]
+
+Step 3: Running embedding algorithm for each target point
+Processing 15 measurement points using step_size=100000
+6.4% target (point 1/15):
+  Target: 100000 bits
+  Actual: 99999 bits
+  BPP: 0.127155
+  PSNR: 57.73
+  SSIM: 0.9991
+  Hist_Corr: 1.0000
+  Time: 0.23 seconds
+
+12.9% target (point 2/15):
+  Target: 200000 bits
+  Actual: 199998 bits
+  BPP: 0.254311
+  PSNR: 54.70
+  SSIM: 0.9983
+  Hist_Corr: 0.9999
+  Time: 0.26 seconds
+
+19.3% target (point 3/15):
+  Target: 300000 bits
+  Actual: 300000 bits
+  BPP: 0.381470
+  PSNR: 54.37
+  SSIM: 0.9980
+  Hist_Corr: 0.9998
+  Time: 0.25 seconds
+
+25.7% target (point 4/15):
+  Target: 400000 bits
+  Actual: 399999 bits
+  BPP: 0.508625
+  PSNR: 51.69
+  SSIM: 0.9962
+  Hist_Corr: 0.9994
+  Time: 0.29 seconds
+
+32.2% target (point 5/15):
+  Target: 500000 bits
+  Actual: 499998 bits
+  BPP: 0.635780
+  PSNR: 52.36
+  SSIM: 0.9966
+  Hist_Corr: 0.9995
+  Time: 0.29 seconds
+
+38.6% target (point 6/15):
+  Target: 600000 bits
+  Actual: 600000 bits
+  BPP: 0.762939
+  PSNR: 51.32
+  SSIM: 0.9962
+  Hist_Corr: 0.9991
+  Time: 0.33 seconds
+
+45.0% target (point 7/15):
+  Target: 700000 bits
+  Actual: 699999 bits
+  BPP: 0.890095
+  PSNR: 51.09
+  SSIM: 0.9958
+  Hist_Corr: 0.9990
+  Time: 0.32 seconds
+
+51.5% target (point 8/15):
+  Target: 800000 bits
+  Actual: 799998 bits
+  BPP: 1.017250
+  PSNR: 50.17
+  SSIM: 0.9950
+  Hist_Corr: 0.9987
+  Time: 0.42 seconds
+
+57.9% target (point 9/15):
+  Target: 900000 bits
+  Actual: 900000 bits
+  BPP: 1.144409
+  PSNR: 49.16
+  SSIM: 0.9940
+  Hist_Corr: 0.9980
+  Time: 0.44 seconds
+
+64.3% target (point 10/15):
+  Target: 1000000 bits
+  Actual: 999999 bits
+  BPP: 1.271564
+  PSNR: 49.59
+  SSIM: 0.9943
+  Hist_Corr: 0.9988
+  Time: 0.47 seconds
+
+70.8% target (point 11/15):
+  Target: 1100000 bits
+  Actual: 1099998 bits
+  BPP: 1.398720
+  PSNR: 49.99
+  SSIM: 0.9948
+  Hist_Corr: 0.9990
+  Time: 0.58 seconds
+
+77.2% target (point 12/15):
+  Target: 1200000 bits
+  Actual: 1200000 bits
+  BPP: 1.525879
+  PSNR: 49.13
+  SSIM: 0.9937
+  Hist_Corr: 0.9984
+  Time: 0.62 seconds
+
+83.6% target (point 13/15):
+  Target: 1300000 bits
+  Actual: 1299999 bits
+  BPP: 1.653034
+  PSNR: 48.80
+  SSIM: 0.9931
+  Hist_Corr: 0.9992
+  Time: 0.71 seconds
+
+90.1% target (point 14/15):
+  Target: 1400000 bits
+  Actual: 1399998 bits
+  BPP: 1.780190
+  PSNR: 47.93
+  SSIM: 0.9920
+  Hist_Corr: 0.9984
+  Time: 0.77 seconds
+
+96.5% target (point 15/15):
+  Target: 1500000 bits
+  Actual: 1500000 bits
+  BPP: 1.907349
+  PSNR: 47.89
+  SSIM: 0.9919
+  Hist_Corr: 0.9980
+  Time: 0.81 seconds
+
+Results summary:
+Measurement mode used: step_size=100000
+Total data points generated: 16
+Successful measurements: 16
+Failed measurements: 0
+Success rate: 100.0%
+Total processing time: 9.57 seconds
+Average time per point: 0.60 seconds
+Results saved to ./Prediction_Error_Embedding/outcome/plots/F16/data_gap
+Final confirmation: Used step_size=100000 bits for gap
+
+Data table:
+ Target_Percentage  Target_Payload  Actual_Payload      BPP      PSNR   SSIM  Hist_Corr  Processing_Time Measurement_Mode
+          6.434004          100000           99999 0.127155 57.732292 0.9991   0.999960         0.234120 step_size=100000
+         12.868009          200000          199998 0.254311 54.704018 0.9983   0.999896         0.259037 step_size=100000
+         19.302013          300000          300000 0.381470 54.374623 0.9980   0.999805         0.250639 step_size=100000
+         25.736018          400000          399999 0.508625 51.687163 0.9962   0.999378         0.289370 step_size=100000
+         32.170022          500000          499998 0.635780 52.356781 0.9966   0.999480         0.292348 step_size=100000
+         38.604027          600000          600000 0.762939 51.322435 0.9962   0.999142         0.326832 step_size=100000
+         45.038031          700000          699999 0.890095 51.092406 0.9958   0.999046         0.320995 step_size=100000
+         51.472036          800000          799998 1.017250 50.171730 0.9950   0.998717         0.417508 step_size=100000
+         57.906040          900000          900000 1.144409 49.163611 0.9940   0.998028         0.443135 step_size=100000
+         64.340045         1000000          999999 1.271564 49.593199 0.9943   0.998814         0.468130 step_size=100000
+         70.774049         1100000         1099998 1.398720 49.988028 0.9948   0.998983         0.582891 step_size=100000
+         77.208054         1200000         1200000 1.525879 49.126100 0.9937   0.998407         0.616618 step_size=100000
+         83.642058         1300000         1299999 1.653034 48.804691 0.9931   0.999229         0.714831 step_size=100000
+         90.076063         1400000         1399998 1.780190 47.929287 0.9920   0.998407         0.770197 step_size=100000
+         96.510067         1500000         1500000 1.907349 47.892058 0.9919   0.998017         0.809836 step_size=100000
+        100.000000         1554242         1554242 1.976321 47.888897 0.9919   0.998675         0.884529 step_size=100000

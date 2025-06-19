@@ -1,0 +1,56 @@
+Split Method Rotation Information for F16
+==================================================
+
+Split Size: 2x2
+Split Type: Quarter-based
+Image Type: Color
+Total Stages: 4
+
+Generated Images for Each Stage:
+1. Merged Image: Direct combination of rotated sub-images
+2. Tiled Image: Grid layout of rotated sub-images
+3. Comparison Image: Original vs Merged vs Tiled
+
+Stage 0 Rotation Information:
+------------------------------
+Rotation angles: [270, 180, 180, 0]
+Rotation distribution:
+  0°: 1 sub-images
+  180°: 2 sub-images
+  270°: 1 sub-images
+Payload: 882893 bits
+PSNR: 49.42 dB
+SSIM: 0.9958
+
+Stage 1 Rotation Information:
+------------------------------
+Rotation angles: [0, 90, 180, 0]
+Rotation distribution:
+  0°: 2 sub-images
+  90°: 1 sub-images
+  180°: 1 sub-images
+Payload: 449398 bits
+PSNR: 48.15 dB
+SSIM: 0.9947
+
+Stage 2 Rotation Information:
+------------------------------
+Rotation angles: [180, 270, 180, 90]
+Rotation distribution:
+  90°: 1 sub-images
+  180°: 2 sub-images
+  270°: 1 sub-images
+Payload: 423182 bits
+PSNR: 46.98 dB
+SSIM: 0.9935
+
+Stage 3 Rotation Information:
+------------------------------
+Rotation angles: [0, 180, 0, 180]
+Rotation distribution:
+  0°: 2 sub-images
+  180°: 2 sub-images
+Payload: 424514 bits
+PSNR: 46.04 dB
+SSIM: 0.9923
+

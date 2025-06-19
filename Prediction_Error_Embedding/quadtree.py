@@ -1,25 +1,42 @@
 import numpy as np
 import cupy as cp
+import cv2
+import os
+import time
+from tqdm import tqdm
+
+# 🔧 從 pee 模組導入核心功能
 from pee import (
     multi_pass_embedding,
     compute_improved_adaptive_el,
-    brute_force_weight_search_cuda
+    brute_force_weight_search_cuda,
+    calculate_block_variance_cuda,          # ✅ 修復：從 pee 導入 variance 計算
+    predict_image_cuda                      # ✅ 修復：從 pee 導入預測圖像計算
 )
 
+# 🔧 從 utils 模組導入工具函數和品質指標
 from utils import (
     generate_random_binary_array,
-    ensure_dir
+    calculate_psnr,                       # ✅ 修復：品質指標計算
+    calculate_ssim,                       # ✅ 修復：品質指標計算
+    histogram_correlation,                # ✅ 修復：品質指標計算
+    cleanup_memory,                       # ✅ 修復：記憶體管理
+    DataConverter                         # ✅ 修復：數據轉換工具
 )
 
-from common import *
-
+# 🔧 從 image_processing 導入所有圖像處理和視覺化功能
 from image_processing import (
     PredictionMethod,
-    save_image,
-    predict_image_cuda
+    save_image,                           # ✅ 修復：缺少的導入
+    split_color_channels,                 # ✅ 修復：從 image_processing 導入
+    combine_color_channels,               # ✅ 修復：從 image_processing 導入
+    convert_single_channel_to_color,      # ✅ 修復：視覺化函數
+    enhance_with_grid_visualization,      # ✅ 修復：視覺化函數
+    enhance_block_visualizations,         # ✅ 修復：視覺化函數
+    enhance_final_visualizations          # ✅ 修復：視覺化函數
 )
 
-def cleanup_quadtree_resources():
+def cleanup_memory():
     """
     清理 quadtree 處理過程中使用的資源
     """
@@ -28,6 +45,331 @@ def cleanup_quadtree_resources():
         cp.get_default_memory_pool().free_all_blocks()
     except Exception as e:
         print(f"Error cleaning up quadtree resources: {str(e)}")
+
+def adaptive_variance_threshold_search_cuda(img, ratio_of_ones, min_block_size, 
+                                           el_mode, prediction_method, 
+                                           target_bpp, target_psnr,
+                                           threshold_range=(100, 800, 50),
+                                           use_different_weights=False,
+                                           total_embeddings=1,
+                                           verbose=False):
+    """
+    使用暴力搜索找到最佳的 variance threshold
+    
+    Parameters:
+    -----------
+    img : numpy.ndarray
+        輸入圖像 (灰階或彩色)
+    ratio_of_ones : float
+        嵌入數據中1的比例
+    min_block_size : int
+        最小區塊大小
+    el_mode : int
+        EL模式
+    prediction_method : PredictionMethod
+        預測方法
+    target_bpp : float
+        目標BPP
+    target_psnr : float
+        目標PSNR
+    threshold_range : tuple
+        搜索範圍 (min_threshold, max_threshold, step)
+    use_different_weights : bool
+        是否使用不同權重
+    total_embeddings : int
+        總嵌入次數（用於測試）
+    verbose : bool
+        是否輸出詳細資訊
+        
+    Returns:
+    --------
+    tuple
+        (best_threshold, best_metrics) 最佳閾值和對應的指標
+    """
+    
+    print(f"\n{'='*60}")
+    print(f"Adaptive Variance Threshold Search")
+    print(f"{'='*60}")
+    print(f"Search range: {threshold_range[0]} to {threshold_range[1]} (step: {threshold_range[2]})")
+    print(f"Target BPP: {target_bpp:.4f}, Target PSNR: {target_psnr:.2f}")
+    
+    # 生成搜索範圍
+    min_thresh, max_thresh, step = threshold_range
+    threshold_candidates = list(range(min_thresh, max_thresh + step, step))
+    
+    if verbose:
+        print(f"Testing {len(threshold_candidates)} threshold values: {threshold_candidates}")
+    
+    # 初始化結果記錄
+    results = []
+    
+    # 對每個 threshold 進行測試
+    for i, threshold in enumerate(tqdm(threshold_candidates, desc="Testing thresholds")):
+        
+        if verbose:
+            print(f"\nTesting threshold {threshold} ({i+1}/{len(threshold_candidates)})")
+        
+        try:
+            # 執行簡化的quadtree嵌入測試
+            start_time = time.time()
+            
+            # 使用當前threshold進行測試
+            final_img, payload, stages = test_quadtree_with_threshold(
+                img, threshold, ratio_of_ones, min_block_size, el_mode,
+                prediction_method, use_different_weights, total_embeddings
+            )
+            
+            test_time = time.time() - start_time
+            
+            # 計算品質指標
+            total_pixels = img.size
+            bpp = payload / total_pixels
+            
+            psnr = calculate_psnr(img, final_img)
+            ssim = calculate_ssim(img, final_img)
+            hist_corr = histogram_correlation(
+                np.histogram(img, bins=256, range=(0, 255))[0],
+                np.histogram(final_img, bins=256, range=(0, 255))[0]
+            )
+            
+            # 計算適應度分數
+            fitness = calculate_threshold_fitness(
+                bpp, psnr, ssim, target_bpp, target_psnr, payload
+            )
+            
+            # 記錄結果
+            result = {
+                'threshold': threshold,
+                'payload': payload,
+                'bpp': bpp,
+                'psnr': psnr,
+                'ssim': ssim,
+                'hist_corr': hist_corr,
+                'fitness': fitness,
+                'test_time': test_time
+            }
+            
+            results.append(result)
+            
+            if verbose:
+                print(f"  Payload: {payload}, BPP: {bpp:.4f}")
+                print(f"  PSNR: {psnr:.2f}, SSIM: {ssim:.4f}")
+                print(f"  Fitness: {fitness:.4f}, Time: {test_time:.2f}s")
+                
+        except Exception as e:
+            print(f"Error testing threshold {threshold}: {str(e)}")
+            continue
+    
+    # 找出最佳threshold
+    if not results:
+        print("No valid results found, using default threshold 300")
+        return 300, None
+    
+    # 按適應度排序，選擇最佳結果
+    results.sort(key=lambda x: x['fitness'], reverse=True)
+    best_result = results[0]
+    
+    print(f"\n{'='*60}")
+    print(f"Search Results Summary")
+    print(f"{'='*60}")
+    print(f"Best threshold: {best_result['threshold']}")
+    print(f"Best payload: {best_result['payload']}")
+    print(f"Best BPP: {best_result['bpp']:.4f} (target: {target_bpp:.4f})")
+    print(f"Best PSNR: {best_result['psnr']:.2f} (target: {target_psnr:.2f})")
+    print(f"Best SSIM: {best_result['ssim']:.4f}")
+    print(f"Best fitness: {best_result['fitness']:.4f}")
+    
+    # 顯示前3名結果
+    print(f"\nTop 3 results:")
+    for i, result in enumerate(results[:3]):
+        print(f"  {i+1}. Threshold: {result['threshold']}, "
+              f"Payload: {result['payload']}, "
+              f"PSNR: {result['psnr']:.2f}, "
+              f"Fitness: {result['fitness']:.4f}")
+    
+    return best_result['threshold'], best_result
+
+def test_quadtree_with_threshold(img, variance_threshold, ratio_of_ones, 
+                                min_block_size, el_mode, prediction_method,
+                                use_different_weights, total_embeddings):
+    """
+    使用指定的variance threshold進行簡化的quadtree測試
+    
+    Parameters:
+    -----------
+    img : numpy.ndarray
+        輸入圖像
+    variance_threshold : float
+        要測試的變異閾值
+    其他參數同 pee_process_with_quadtree_cuda
+        
+    Returns:
+    --------
+    tuple
+        (final_img, total_payload, stages)
+    """
+    
+    # 檢查是否為彩色圖像
+    if len(img.shape) == 3 and img.shape[2] == 3:
+        # 對彩色圖像，只處理藍色通道進行快速測試
+        b_channel, _, _ = split_color_channels(img)
+        test_img = b_channel
+    else:
+        test_img = img
+    
+    # 調用簡化版的quadtree處理
+    try:
+        final_img, total_payload, stages = pee_process_with_quadtree_cuda(
+            test_img,
+            total_embeddings=min(total_embeddings, 2),  # 限制嵌入次數以加速測試
+            ratio_of_ones=ratio_of_ones,
+            use_different_weights=use_different_weights,
+            min_block_size=min_block_size,
+            variance_threshold=variance_threshold,
+            el_mode=el_mode,
+            rotation_mode='none',  # 關閉旋轉以加速測試
+            prediction_method=prediction_method,
+            target_payload_size=-1,
+            max_block_size=None,
+            imgName=None,  # 不保存圖像
+            output_dir=None
+        )
+        
+        return final_img, total_payload, stages
+        
+    except Exception as e:
+        print(f"Error in test_quadtree_with_threshold: {str(e)}")
+        raise
+
+def calculate_threshold_fitness(bpp, psnr, ssim, target_bpp, target_psnr, payload):
+    """
+    計算variance threshold的適應度分數
+    
+    Parameters:
+    -----------
+    bpp : float
+        實際BPP
+    psnr : float
+        實際PSNR
+    ssim : float
+        實際SSIM
+    target_bpp : float
+        目標BPP
+    target_psnr : float
+        目標PSNR
+    payload : int
+        實際payload
+        
+    Returns:
+    --------
+    float
+        適應度分數 (越高越好)
+    """
+    
+    # BPP適應度 (接近目標值更好)
+    if target_bpp > 0:
+        bpp_fitness = 1.0 - abs(bpp - target_bpp) / max(target_bpp, bpp)
+        bpp_fitness = max(0, bpp_fitness)
+    else:
+        # 如果沒有目標BPP，則BPP越高越好
+        bpp_fitness = min(bpp / 2.0, 1.0)  # 限制在0-1範圍
+    
+    # PSNR適應度 (高於目標值更好)
+    if target_psnr > 0:
+        if psnr >= target_psnr:
+            psnr_fitness = 1.0
+        else:
+            psnr_fitness = psnr / target_psnr
+    else:
+        # 如果沒有目標PSNR，使用相對評分
+        psnr_fitness = min(psnr / 50.0, 1.0)  # 假設50dB為最高分
+    
+    # SSIM適應度 (越高越好)
+    ssim_fitness = ssim
+    
+    # Payload適應度 (越高越好，但有上限)
+    payload_fitness = min(payload / 100000.0, 1.0)  # 假設100k為參考值
+    
+    # 綜合適應度計算
+    # 權重分配：BPP(30%) + PSNR(40%) + SSIM(20%) + Payload(10%)
+    fitness = (bpp_fitness * 0.3 + 
+              psnr_fitness * 0.4 + 
+              ssim_fitness * 0.2 + 
+              payload_fitness * 0.1)
+    
+    return fitness
+
+def get_adaptive_variance_threshold(img, ratio_of_ones=0.5, min_block_size=16, 
+                                  el_mode=0, prediction_method=None,
+                                  target_bpp=0.8, target_psnr=35.0,
+                                  search_mode='balanced',
+                                  use_different_weights=False):
+    """
+    獲取圖像的自適應variance threshold的主要接口函數
+    
+    Parameters:
+    -----------
+    img : numpy.ndarray
+        輸入圖像
+    ratio_of_ones : float
+        嵌入數據中1的比例
+    min_block_size : int
+        最小區塊大小
+    el_mode : int
+        EL模式
+    prediction_method : PredictionMethod
+        預測方法
+    target_bpp : float
+        目標BPP
+    target_psnr : float
+        目標PSNR
+    search_mode : str
+        搜索模式 ('fast', 'balanced', 'thorough')
+    use_different_weights : bool
+        是否使用不同權重
+        
+    Returns:
+    --------
+    float
+        推薦的variance threshold值
+    """
+    
+    # 設置預測方法默認值
+    if prediction_method is None:
+        from image_processing import PredictionMethod
+        prediction_method = PredictionMethod.PROPOSED
+    
+    # 根據搜索模式設置搜索範圍
+    if search_mode == 'fast':
+        threshold_range = (150, 450, 75)  # 快速模式：較少的搜索點
+        total_embeddings = 1
+    elif search_mode == 'balanced':
+        threshold_range = (100, 600, 50)  # 平衡模式：中等的搜索點
+        total_embeddings = 2
+    elif search_mode == 'thorough':
+        threshold_range = (50, 800, 25)   # 徹底模式：更多的搜索點
+        total_embeddings = 3
+    else:
+        raise ValueError(f"Unknown search_mode: {search_mode}")
+    
+    print(f"Using {search_mode} search mode")
+    
+    # 執行自適應搜索
+    best_threshold, best_metrics = adaptive_variance_threshold_search_cuda(
+        img=img,
+        ratio_of_ones=ratio_of_ones,
+        min_block_size=min_block_size,
+        el_mode=el_mode,
+        prediction_method=prediction_method,
+        target_bpp=target_bpp,
+        target_psnr=target_psnr,
+        threshold_range=threshold_range,
+        use_different_weights=use_different_weights,
+        total_embeddings=total_embeddings,
+        verbose=False
+    )
+    
+    return best_threshold
         
 def process_current_block(block, position, size, stage_info, embedding, ratio_of_ones,
                          target_bpp, target_psnr, el_mode, prediction_method=PredictionMethod.PROPOSED,
@@ -219,25 +561,37 @@ def process_current_block(block, position, size, stage_info, embedding, ratio_of
                 print(f"  Rotated embedded block back by {-rotation}° to original orientation")
         
         # 計算並記錄區塊資訊
+        # 統一數據轉換，避免重複轉換
+        compare_block_np = DataConverter.to_numpy(compare_block)
+        embedded_block_np = DataConverter.to_numpy(embedded_block)
+        original_block_np = DataConverter.to_numpy(original_block)
+        local_el_np = DataConverter.to_numpy(local_el)
+
+        # 統一計算品質指標
+        psnr_value = calculate_psnr(compare_block_np, embedded_block_np)
+        ssim_value = calculate_ssim(compare_block_np, embedded_block_np)
+
+        # 統一計算直方圖
+        hist_orig = np.histogram(compare_block_np, bins=256, range=(0, 255))[0]
+        hist_embd = np.histogram(embedded_block_np, bins=256, range=(0, 255))[0]
+        hist_corr_value = histogram_correlation(hist_orig, hist_embd)
+
         block_info = {
             'position': position,
             'size': size,
             'weights': (weights.tolist() if weights is not None and hasattr(weights, 'tolist') 
-                       else "N/A" if prediction_method in [PredictionMethod.MED, PredictionMethod.GAP] 
-                       else None),
+                    else "N/A" if prediction_method in [PredictionMethod.MED, PredictionMethod.GAP] 
+                    else None),
             'payload': int(payload),
-            'psnr': float(calculate_psnr(cp.asnumpy(compare_block), cp.asnumpy(embedded_block))),
-            'ssim': float(calculate_ssim(cp.asnumpy(compare_block), cp.asnumpy(embedded_block))),
-            'hist_corr': float(histogram_correlation(
-                np.histogram(cp.asnumpy(compare_block), bins=256, range=(0, 255))[0],
-                np.histogram(cp.asnumpy(embedded_block), bins=256, range=(0, 255))[0]
-            )),
-            'EL': int(to_numpy(local_el).max()),
+            'psnr': float(psnr_value),
+            'ssim': float(ssim_value),
+            'hist_corr': float(hist_corr_value),
+            'EL': int(local_el_np.max()),
             'prediction_method': prediction_method.value,
             'rotation': rotation,
-            'original_img': cp.asnumpy(original_block),  # 新增
-            'pred_img': pred_image_np,  # 新增
-            'embedded_img': cp.asnumpy(embedded_block)  # 新增
+            'original_img': original_block_np,
+            'pred_img': pred_image_np,
+            'embedded_img': embedded_block_np
         }
         
         # 更新階段資訊
@@ -453,9 +807,13 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                                  target_payload_size=-1,
                                  max_block_size=None,
                                  imgName=None,
-                                 output_dir=None):
+                                 output_dir=None,
+                                 adaptive_threshold=False,
+                                 search_mode='balanced',
+                                 target_bpp_for_search=0.8,
+                                 target_psnr_for_search=35.0):
     """
-    使用Quad tree的PEE處理函數，支援多種預測方法和payload控制
+    使用Quad tree的PEE處理函數，支援多種預測方法和payload控制，新增自適應variance threshold功能
     
     Parameters:
     -----------
@@ -470,7 +828,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
     min_block_size : int
         最小區塊大小 (支援到16x16)
     variance_threshold : float
-        變異閾值
+        變異閾值 (當adaptive_threshold=True時，此參數會被覆蓋)
     el_mode : int
         EL模式 (0:無限制, 1:漸增, 2:漸減)
     prediction_method : PredictionMethod
@@ -486,6 +844,14 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
         圖像名稱，用於儲存視覺化結果
     output_dir : str, optional
         輸出目錄，用於儲存視覺化結果
+    adaptive_threshold : bool, optional
+        是否使用自適應variance threshold搜索，默認False
+    search_mode : str, optional
+        自適應搜索模式 ('fast', 'balanced', 'thorough')，默認'balanced'
+    target_bpp_for_search : float, optional
+        自適應搜索的目標BPP，默認0.8
+    target_psnr_for_search : float, optional
+        自適應搜索的目標PSNR，默認35.0
         
     Returns:
     --------
@@ -503,13 +869,48 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
             img, total_embeddings, ratio_of_ones, use_different_weights,
             min_block_size, variance_threshold, el_mode, rotation_mode,
             prediction_method, target_payload_size, max_block_size,
-            imgName, output_dir
+            imgName, output_dir, adaptive_threshold, search_mode,
+            target_bpp_for_search, target_psnr_for_search
         )
+
     try:
-        # 導入必要的模組
-        import os
-        import cv2
-        
+        # 自適應variance threshold搜索
+        if adaptive_threshold:
+            print(f"\n{'='*60}")
+            print(f"Adaptive Variance Threshold Search Enabled")
+            print(f"{'='*60}")
+            print(f"Original threshold: {variance_threshold}")
+            print(f"Search mode: {search_mode}")
+            print(f"Target BPP: {target_bpp_for_search:.4f}")
+            print(f"Target PSNR: {target_psnr_for_search:.2f}")
+            
+            try:
+                optimal_threshold = get_adaptive_variance_threshold(
+                    img=img,
+                    ratio_of_ones=ratio_of_ones,
+                    min_block_size=min_block_size,
+                    el_mode=el_mode,
+                    prediction_method=prediction_method,
+                    target_bpp=target_bpp_for_search,
+                    target_psnr=target_psnr_for_search,
+                    search_mode=search_mode,
+                    use_different_weights=use_different_weights
+                )
+                
+                print(f"Adaptive search completed!")
+                print(f"Original threshold: {variance_threshold}")
+                print(f"Optimal threshold: {optimal_threshold}")
+                print(f"Improvement: {((optimal_threshold - variance_threshold) / variance_threshold * 100):+.1f}%")
+                
+                # 使用找到的最佳threshold
+                variance_threshold = optimal_threshold
+                
+            except Exception as e:
+                print(f"Warning: Adaptive threshold search failed: {str(e)}")
+                print(f"Falling back to original threshold: {variance_threshold}")
+        else:
+            print(f"Using fixed variance threshold: {variance_threshold}")
+
         # 定義 ensure_dir 函數
         def ensure_dir(file_path):
             """確保目錄存在，如果不存在則創建"""
@@ -646,6 +1047,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
 
                 print(f"Target PSNR for embedding {embedding}: {target_psnr:.2f}")
                 print(f"Target BPP for embedding {embedding}: {target_bpp:.4f}")
+                print(f"Using variance threshold: {variance_threshold}")
 
                 # 初始化階段資訊，包括所有可能的區塊大小
                 all_block_sizes = [1024, 512, 256, 128, 64, 32, 16]
@@ -660,7 +1062,9 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                     'rotation_mode': rotation_mode,
                     'prediction_method': prediction_method.value,
                     'use_different_weights': use_different_weights,
-                    'block_size_weights': {}  # 儲存每種大小區塊的統一權重
+                    'block_size_weights': {},  # 儲存每種大小區塊的統一權重
+                    'variance_threshold': variance_threshold,  # 新增：記錄使用的threshold
+                    'adaptive_threshold_used': adaptive_threshold  # 新增：記錄是否使用了自適應
                 }
 
                 # 旋轉模式設置
@@ -723,7 +1127,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                         
                         # 定期清理記憶體
                         if (i * num_blocks_horizontal + j + 1) % 4 == 0:
-                            mem_pool.free_all_blocks()
+                            cleanup_memory()
 
                 # 重建圖像 - 關鍵修改：確保正確處理旋轉
                 for block, pos, size, was_rotated in processed_blocks:
@@ -750,7 +1154,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                     stage_info['rotated_stage_img'] = rotated_stage_img
                     
                     # 建立旋轉後的區塊視覺化
-                    rotated_block_visualization = np.zeros_like(cp.asnumpy(original_img))
+                    rotated_block_visualization = np.zeros_like(DataConverter.to_numpy(original_img))
                     
                     # 定義每種區塊大小的顏色
                     block_colors = {
@@ -781,7 +1185,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                             # 填充區塊內部為原始內容
                             block_area = rotated_stage_img[y:y+size, x:x+size]
                             if isinstance(block_area, cp.ndarray):
-                                block_area = cp.asnumpy(block_area)
+                                block_area = DataConverter.to_numpy(block_area)
                                 
                             rotated_block_visualization[y:y+size, x:x+size] = block_area
                             
@@ -816,7 +1220,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                     rotated_block_visualization_color = np.zeros((height, width, 3), dtype=np.uint8)
                     
                     # 先填充灰度圖像
-                    gray_img = cp.asnumpy(original_img)
+                    gray_img = DataConverter.to_numpy(original_img)
                     for i in range(3):
                         rotated_block_visualization_color[:,:,i] = gray_img // 2  # 暗化原圖以便邊框更明顯
                     
@@ -878,14 +1282,18 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                 stage_info['stage_img'] = stage_img
 
                 # 計算品質指標 - 這裡使用未旋轉的stage_img
-                stage_img_np = cp.asnumpy(stage_img)
-                reference_img_np = cp.asnumpy(original_img)
+                # 統一數據轉換
+                stage_img_np = DataConverter.to_numpy(stage_img)
+                reference_img_np = DataConverter.to_numpy(original_img)
+
+                # 統一品質指標計算
                 psnr = calculate_psnr(reference_img_np, stage_img_np)
                 ssim = calculate_ssim(reference_img_np, stage_img_np)
-                hist_corr = histogram_correlation(
-                    np.histogram(reference_img_np, bins=256, range=(0, 255))[0],
-                    np.histogram(stage_img_np, bins=256, range=(0, 255))[0]
-                )
+
+                # 統一直方圖計算
+                hist_ref = np.histogram(reference_img_np, bins=256, range=(0, 255))[0]
+                hist_stage = np.histogram(stage_img_np, bins=256, range=(0, 255))[0]
+                hist_corr = histogram_correlation(hist_ref, hist_stage)
 
                 # 更新階段品質指標
                 stage_info['psnr'] = float(psnr)
@@ -930,6 +1338,9 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                 # 輸出階段摘要
                 print(f"\nEmbedding {embedding} summary:")
                 print(f"Prediction Method: {prediction_method.value}")
+                print(f"Variance Threshold: {variance_threshold}")
+                if adaptive_threshold:
+                    print(f"Adaptive Threshold: Enabled ({search_mode} mode)")
                 print(f"Payload: {stage_info['payload']}")
                 print(f"BPP: {stage_info['bpp']:.4f}")
                 print(f"PSNR: {stage_info['psnr']:.2f}")
@@ -966,11 +1377,21 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
                 current_img = stage_img.copy()
 
                 # 清理當前階段的記憶體
-                mem_pool.free_all_blocks()
+                cleanup_memory()
                 print(f"Memory usage after embedding {embedding}: {mem_pool.used_bytes()/1024/1024:.2f} MB")
 
             # 如果圖像之前進行了墊充，現在需要裁剪回原始大小
-            final_pee_img = cp.asnumpy(current_img)
+            final_pee_img = DataConverter.to_numpy(current_img)
+            
+            # 添加自適應threshold使用情況到最終結果摘要
+            if adaptive_threshold:
+                print(f"\n{'='*60}")
+                print(f"Adaptive Threshold Summary")
+                print(f"{'='*60}")
+                print(f"Search mode used: {search_mode}")
+                print(f"Final threshold used: {variance_threshold}")
+                print(f"Target BPP for search: {target_bpp_for_search:.4f}")
+                print(f"Target PSNR for search: {target_psnr_for_search:.2f}")
             
             # 返回最終結果
             return final_pee_img, int(total_payload), pee_stages
@@ -989,7 +1410,7 @@ def pee_process_with_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_dif
 
     finally:
         # 確保清理所有記憶體
-        cleanup_quadtree_resources()
+        cleanup_memory()
         
 def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, use_different_weights, 
                                        min_block_size, variance_threshold, el_mode, 
@@ -998,34 +1419,75 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
                                        target_payload_size=-1,
                                        max_block_size=None,
                                        imgName=None,
-                                       output_dir=None):
+                                       output_dir=None,
+                                       adaptive_threshold=False,
+                                       search_mode='balanced',
+                                       target_bpp_for_search=0.8,
+                                       target_psnr_for_search=35.0):
     """
-    Process a color image using quadtree PEE method.
+    Process a color image using quadtree PEE method with enhanced color visualization and adaptive threshold support.
     
-    This function splits a color image into its RGB channels, processes each channel
-    independently using the existing quadtree PEE method, and then recombines the
-    channels into a final color image.
+    🔧 修復內容：
+    1. 容量分配更均勻，避免紅色通道過載
+    2. BPP計算使用正確的總payload/像素位置數公式
+    3. 支持彩色圖像達到3倍灰階容量
     
     Parameters:
     -----------
-    Same as pee_process_with_quadtree_cuda, but img is now a color image
-        
-    Returns:
-    --------
-    tuple
-        (final_color_img, total_payload, color_pee_stages)
+    所有原有參數保持不變，新增以下參數：
+    adaptive_threshold : bool, optional
+        是否使用自適應variance threshold搜索，默認False
+    search_mode : str, optional
+        自適應搜索模式 ('fast', 'balanced', 'thorough')，默認'balanced'
+    target_bpp_for_search : float, optional
+        自適應搜索的目標BPP，默認0.8
+    target_psnr_for_search : float, optional
+        自適應搜索的目標PSNR，默認35.0
     """
-    import os
-    import cv2
-    import numpy as np
-    import cupy as cp
-    from color import split_color_channels, combine_color_channels
-    from common import cleanup_memory
-    
     if prediction_method is None:
-        # Import PredictionMethod if not provided to maintain compatibility
         from image_processing import PredictionMethod
         prediction_method = PredictionMethod.PROPOSED
+    
+    # 自適應variance threshold搜索（針對彩色圖像）
+    if adaptive_threshold:
+        print(f"\n{'='*60}")
+        print(f"Adaptive Variance Threshold Search for Color Image")
+        print(f"{'='*60}")
+        print(f"Original threshold: {variance_threshold}")
+        print(f"Search mode: {search_mode}")
+        print(f"Target BPP: {target_bpp_for_search:.4f}")
+        print(f"Target PSNR: {target_psnr_for_search:.2f}")
+        
+        try:
+            # 對彩色圖像，使用藍色通道進行自適應搜索
+            b_channel, _, _ = split_color_channels(img)
+            
+            optimal_threshold = get_adaptive_variance_threshold(
+                img=b_channel,  # 使用藍色通道進行搜索
+                ratio_of_ones=ratio_of_ones,
+                min_block_size=min_block_size,
+                el_mode=el_mode,
+                prediction_method=prediction_method,
+                target_bpp=target_bpp_for_search,
+                target_psnr=target_psnr_for_search,
+                search_mode=search_mode,
+                use_different_weights=use_different_weights
+            )
+            
+            print(f"Adaptive search completed for color image!")
+            print(f"Original threshold: {variance_threshold}")
+            print(f"Optimal threshold: {optimal_threshold}")
+            print(f"Improvement: {((optimal_threshold - variance_threshold) / variance_threshold * 100):+.1f}%")
+            print(f"This threshold will be applied to all color channels.")
+            
+            # 使用找到的最佳threshold
+            variance_threshold = optimal_threshold
+            
+        except Exception as e:
+            print(f"Warning: Adaptive threshold search failed for color image: {str(e)}")
+            print(f"Falling back to original threshold: {variance_threshold}")
+    else:
+        print(f"Using fixed variance threshold for color image: {variance_threshold}")
     
     # Split color image into channels
     b_channel, g_channel, r_channel = split_color_channels(img)
@@ -1033,12 +1495,41 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
     # Track total payload across all channels
     total_payload = 0
     
-    # Create directory structure for channel outputs if imgName is provided
+    # 🎨 創建增強的目錄結構
     if imgName and output_dir:
         channels_dir = f"{output_dir}/image/{imgName}/quadtree/channels"
         os.makedirs(channels_dir, exist_ok=True)
+        
+        # 🎨 新增：為彩色通道視覺化創建目錄
+        colored_channels_dir = f"{output_dir}/image/{imgName}/quadtree/channels/colored"
+        os.makedirs(colored_channels_dir, exist_ok=True)
     
     color_pee_stages = []
+    
+    # 🔧 修復1：改進容量分配邏輯
+    if target_payload_size > 0:
+        # ✅ 修復：均勻分配策略，避免紅色通道過載
+        base_allocation = target_payload_size // 3
+        remainder = target_payload_size % 3
+        
+        channel_targets = [base_allocation] * 3
+        # 將餘數平均分配給前幾個通道
+        for i in range(remainder):
+            channel_targets[i] += 1
+            
+        blue_target, green_target, red_target = channel_targets
+        
+        print(f"✅ 修復後的均勻容量分配:")
+        print(f"   Blue: {blue_target:,} bits")
+        print(f"   Green: {green_target:,} bits") 
+        print(f"   Red: {red_target:,} bits")
+        print(f"   負載均衡比例: {max(channel_targets)/min(channel_targets):.3f}x")
+        print(f"Using adaptive threshold: {variance_threshold} for all channels")
+    else:
+        channel_targets = [-1, -1, -1]
+        print(f"✅ 使用最大容量模式 - 每個通道可達到灰階圖像的最大容量")
+        print(f"   理論總容量: 約3倍等效灰階圖像容量")
+        print(f"Using maximum capacity with threshold: {variance_threshold}")
     
     # Process each channel separately
     print("\nProcessing blue channel...")
@@ -1046,16 +1537,24 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
         b_channel, total_embeddings, ratio_of_ones, use_different_weights,
         min_block_size, variance_threshold, el_mode, rotation_mode,
         prediction_method=prediction_method,
-        target_payload_size=target_payload_size // 3 if target_payload_size > 0 else -1,
+        target_payload_size=channel_targets[0],
         max_block_size=max_block_size,
         imgName=f"{imgName}_blue" if imgName else None,
-        output_dir=output_dir
+        output_dir=output_dir,
+        adaptive_threshold=False,  # 已經完成自適應搜索，不需要重複
+        search_mode=search_mode,
+        target_bpp_for_search=target_bpp_for_search,
+        target_psnr_for_search=target_psnr_for_search
     )
     total_payload += b_payload
     
-    # Save blue channel output if imgName is provided
+    # 🎨 保存藍色通道結果（灰階和彩色版本）
     if imgName and output_dir:
+        # 原始灰階版本
         cv2.imwrite(f"{channels_dir}/{imgName}_blue_final.png", final_b_img)
+        # 🎨 新增：彩色版本
+        blue_colored = convert_single_channel_to_color(final_b_img, 'blue')
+        cv2.imwrite(f"{colored_channels_dir}/{imgName}_blue_final_colored.png", blue_colored)
     
     # Clean GPU memory between channel processing
     cleanup_memory()
@@ -1065,16 +1564,24 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
         g_channel, total_embeddings, ratio_of_ones, use_different_weights,
         min_block_size, variance_threshold, el_mode, rotation_mode,
         prediction_method=prediction_method,
-        target_payload_size=target_payload_size // 3 if target_payload_size > 0 else -1,
+        target_payload_size=channel_targets[1],
         max_block_size=max_block_size,
         imgName=f"{imgName}_green" if imgName else None,
-        output_dir=output_dir
+        output_dir=output_dir,
+        adaptive_threshold=False,  # 已經完成自適應搜索，不需要重複
+        search_mode=search_mode,
+        target_bpp_for_search=target_bpp_for_search,
+        target_psnr_for_search=target_psnr_for_search
     )
     total_payload += g_payload
     
-    # Save green channel output if imgName is provided
+    # 🎨 保存綠色通道結果（灰階和彩色版本）
     if imgName and output_dir:
+        # 原始灰階版本
         cv2.imwrite(f"{channels_dir}/{imgName}_green_final.png", final_g_img)
+        # 🎨 新增：彩色版本
+        green_colored = convert_single_channel_to_color(final_g_img, 'green')
+        cv2.imwrite(f"{colored_channels_dir}/{imgName}_green_final_colored.png", green_colored)
     
     # Clean GPU memory between channel processing
     cleanup_memory()
@@ -1084,69 +1591,159 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
         r_channel, total_embeddings, ratio_of_ones, use_different_weights,
         min_block_size, variance_threshold, el_mode, rotation_mode,
         prediction_method=prediction_method,
-        target_payload_size=target_payload_size // 3 if target_payload_size > 0 else -1,
+        target_payload_size=channel_targets[2],
         max_block_size=max_block_size,
         imgName=f"{imgName}_red" if imgName else None,
-        output_dir=output_dir
+        output_dir=output_dir,
+        adaptive_threshold=False,  # 已經完成自適應搜索，不需要重複
+        search_mode=search_mode,
+        target_bpp_for_search=target_bpp_for_search,
+        target_psnr_for_search=target_psnr_for_search
     )
     total_payload += r_payload
     
-    # Save red channel output if imgName is provided
+    # 🎨 保存紅色通道結果（灰階和彩色版本）
     if imgName and output_dir:
+        # 原始灰階版本
         cv2.imwrite(f"{channels_dir}/{imgName}_red_final.png", final_r_img)
+        # 🎨 新增：彩色版本
+        red_colored = convert_single_channel_to_color(final_r_img, 'red')
+        cv2.imwrite(f"{colored_channels_dir}/{imgName}_red_final_colored.png", red_colored)
     
     # Combine channels back into a color image
     final_color_img = combine_color_channels(final_b_img, final_g_img, final_r_img)
     
-    # Create combined stages information for all 3 channels
+    # 🔧 修復2：創建與灰階一致的階段信息結構，並修復BPP計算
     for i in range(min(len(b_stages), len(g_stages), len(r_stages))):
         # Get stage info from each channel
         b_stage = b_stages[i]
         g_stage = g_stages[i]
         r_stage = r_stages[i]
         
-        # Initialize combined stage info
+        # 🔧 修復：正確計算總payload和BPP
+        stage_total_payload = b_stage['payload'] + g_stage['payload'] + r_stage['payload']
+        pixel_positions = img.shape[0] * img.shape[1]  # 像素位置數（不包括通道維度）
+        correct_bpp = stage_total_payload / pixel_positions
+        
+        print(f"\n🔧 Stage {i} BPP修復:")
+        print(f"   各通道payload: B={b_stage['payload']:,}, G={g_stage['payload']:,}, R={r_stage['payload']:,}")
+        print(f"   總payload: {stage_total_payload:,} bits")
+        print(f"   像素位置數: {pixel_positions:,}")
+        print(f"   正確BPP: {correct_bpp:.6f}")
+        
+        # 🔧 修改：確保與灰階圖像結構完全一致，使用正確的BPP計算
         combined_stage = {
-            'embedding': b_stage['embedding'],  # All should be the same
-            'payload': b_stage['payload'] + g_stage['payload'] + r_stage['payload'],
+            'embedding': b_stage['embedding'],
+            'payload': stage_total_payload,  # ✅ 使用總payload
+            'bpp': correct_bpp,  # ✅ 使用正確的BPP計算公式
+            'psnr': (b_stage['psnr'] + g_stage['psnr'] + r_stage['psnr']) / 3,
+            'ssim': (b_stage['ssim'] + g_stage['ssim'] + r_stage['ssim']) / 3,
+            'hist_corr': (b_stage['hist_corr'] + g_stage['hist_corr'] + r_stage['hist_corr']) / 3,
+            
+            # 🔧 新增：確保包含與灰階一致的必要欄位
+            'rotation_mode': b_stage.get('rotation_mode', rotation_mode),
+            'prediction_method': b_stage.get('prediction_method', prediction_method.value),
+            'variance_threshold': variance_threshold,  # 新增：記錄使用的threshold
+            'adaptive_threshold_used': adaptive_threshold,  # 新增：記錄是否使用了自適應
+            
+            # 🔧 修改：重構block_info為與灰階一致的結構
+            'block_info': {},  # 先初始化為空，下面填充
+            
+            # 彩色圖像特有的詳細信息（保持向後兼容）
             'channel_payloads': {
                 'blue': b_stage['payload'],
                 'green': g_stage['payload'],
                 'red': r_stage['payload']
             },
-            'bpp': (b_stage['bpp'] + g_stage['bpp'] + r_stage['bpp']) / 3,  # Average BPP
             'channel_metrics': {
                 'blue': {'psnr': b_stage['psnr'], 'ssim': b_stage['ssim'], 'hist_corr': b_stage['hist_corr']},
                 'green': {'psnr': g_stage['psnr'], 'ssim': g_stage['ssim'], 'hist_corr': g_stage['hist_corr']},
                 'red': {'psnr': r_stage['psnr'], 'ssim': r_stage['ssim'], 'hist_corr': r_stage['hist_corr']}
+            },
+            
+            # 保留原始通道block_info（用於詳細分析）
+            'channel_block_info': {
+                'blue': b_stage['block_info'],
+                'green': g_stage['block_info'],
+                'red': r_stage['block_info']
             }
         }
         
-        # Combine stage images if available
+        # 🔧 修改：合併block_info為與灰階一致的扁平結構
+        all_sizes = set(b_stage['block_info'].keys()) | set(g_stage['block_info'].keys()) | set(r_stage['block_info'].keys())
+        for size_str in all_sizes:
+            merged_blocks = []
+            
+            # 收集各通道的區塊，添加通道標識
+            for channel_name, channel_stage in [('blue', b_stage), ('green', g_stage), ('red', r_stage)]:
+                if size_str in channel_stage['block_info']:
+                    for block in channel_stage['block_info'][size_str]['blocks']:
+                        merged_block = block.copy()
+                        merged_block['channel'] = channel_name  # 添加通道識別
+                        merged_blocks.append(merged_block)
+            
+            if merged_blocks:
+                combined_stage['block_info'][size_str] = {'blocks': merged_blocks}
+        
+        # 🔧 新增：合併階段圖像
         if 'stage_img' in b_stage and 'stage_img' in g_stage and 'stage_img' in r_stage:
-            b_stage_img = cp.asnumpy(b_stage['stage_img']) if isinstance(b_stage['stage_img'], cp.ndarray) else b_stage['stage_img']
-            g_stage_img = cp.asnumpy(g_stage['stage_img']) if isinstance(g_stage['stage_img'], cp.ndarray) else g_stage['stage_img']
-            r_stage_img = cp.asnumpy(r_stage['stage_img']) if isinstance(r_stage['stage_img'], cp.ndarray) else r_stage['stage_img']
+            # 統一數據轉換，避免複雜的類型檢查
+            b_stage_img = DataConverter.to_numpy(b_stage['stage_img'])
+            g_stage_img = DataConverter.to_numpy(g_stage['stage_img'])
+            r_stage_img = DataConverter.to_numpy(r_stage['stage_img'])
             
             combined_stage['stage_img'] = combine_color_channels(b_stage_img, g_stage_img, r_stage_img)
         
-        # Calculate combined metrics directly from the combined image
-        if 'stage_img' in combined_stage:
-            # For simplicity, we'll use the channel averages
-            psnr = (b_stage['psnr'] + g_stage['psnr'] + r_stage['psnr']) / 3
-            ssim = (b_stage['ssim'] + g_stage['ssim'] + r_stage['ssim']) / 3
-            hist_corr = (b_stage['hist_corr'] + g_stage['hist_corr'] + r_stage['hist_corr']) / 3
+        # 🔧 新增：合併旋轉視覺化圖像（如果存在）
+        if 'rotated_stage_img' in b_stage and 'rotated_stage_img' in g_stage and 'rotated_stage_img' in r_stage:
+            try:
+                b_rotated = DataConverter.to_numpy(b_stage['rotated_stage_img']) if isinstance(b_stage['rotated_stage_img'], cp.ndarray) else b_stage['rotated_stage_img']
+                g_rotated = DataConverter.to_numpy(g_stage['rotated_stage_img']) if isinstance(g_stage['rotated_stage_img'], cp.ndarray) else g_stage['rotated_stage_img']
+                r_rotated = DataConverter.to_numpy(r_stage['rotated_stage_img']) if isinstance(r_stage['rotated_stage_img'], cp.ndarray) else r_stage['rotated_stage_img']
+                
+                combined_stage['rotated_stage_img'] = combine_color_channels(b_rotated, g_rotated, r_rotated)
+            except Exception as e:
+                print(f"Warning: Could not combine rotated stage images: {e}")
+        
+        # 🔧 新增：合併區塊視覺化（如果存在）
+        if all('rotated_block_visualization' in stage for stage in [b_stage, g_stage, r_stage]):
+            try:
+                # 取藍色通道的區塊視覺化作為基礎
+                combined_stage['rotated_block_visualization'] = b_stage['rotated_block_visualization']
+                
+                # 如果有彩色版本，則使用彩色版本
+                if 'rotated_block_visualization_color' in b_stage:
+                    combined_stage['rotated_block_visualization_color'] = b_stage['rotated_block_visualization_color']
+            except Exception as e:
+                print(f"Warning: Could not combine block visualizations: {e}")
+        
+        # 🔧 新增：添加區塊計數信息（與灰階一致）
+        if 'block_counts' in b_stage:
+            combined_block_counts = {}
+            for stage in [b_stage, g_stage, r_stage]:
+                if 'block_counts' in stage:
+                    for size_str, count in stage['block_counts'].items():
+                        if size_str not in combined_block_counts:
+                            combined_block_counts[size_str] = 0
+                        combined_block_counts[size_str] += count
+            combined_stage['block_counts'] = combined_block_counts
+        
+        # 🎨 新增：增強的視覺化處理
+        if imgName and output_dir and prediction_method.value.upper() == "PROPOSED":
+            image_dir = f"{output_dir}/image/{imgName}/quadtree"
             
-            combined_stage['psnr'] = psnr
-            combined_stage['ssim'] = ssim
-            combined_stage['hist_corr'] = hist_corr
+            # 🎨 處理 with_grid 的增強視覺化
+            if 'channel_block_info' in combined_stage:
+                enhance_with_grid_visualization(
+                    combined_stage, b_stage_img, g_stage_img, r_stage_img, 
+                    image_dir, i
+                )
             
-        # Save combined block info - store each channel's block_info separately
-        combined_stage['block_info'] = {
-            'blue': b_stage['block_info'],
-            'green': g_stage['block_info'],
-            'red': r_stage['block_info']
-        }
+            # 🎨 處理 block_size_visualizations 的增強視覺化
+            if 'channel_block_info' in combined_stage:
+                enhance_block_visualizations(
+                    combined_stage, img, image_dir, i
+                )
             
         # Add stage to combined stages
         color_pee_stages.append(combined_stage)
@@ -1156,5 +1753,56 @@ def pee_process_color_image_quadtree_cuda(img, total_embeddings, ratio_of_ones, 
             stage_dir = f"{output_dir}/image/{imgName}/quadtree"
             os.makedirs(stage_dir, exist_ok=True)
             cv2.imwrite(f"{stage_dir}/color_stage_{i}_result.png", combined_stage['stage_img'])
+    
+    # 🎨 最終結果的增強視覺化
+    if imgName and output_dir and prediction_method.value.upper() == "PROPOSED":
+        enhance_final_visualizations(
+            color_pee_stages, final_b_img, final_g_img, final_r_img,
+            f"{output_dir}/image/{imgName}/quadtree"
+        )
+    
+    # 添加自適應threshold使用情況到最終結果摘要
+    if adaptive_threshold:
+        print(f"\n{'='*60}")
+        print(f"Color Image Adaptive Threshold Summary")
+        print(f"{'='*60}")
+        print(f"Search mode used: {search_mode}")
+        print(f"Final threshold used for all channels: {variance_threshold}")
+        print(f"Target BPP for search: {target_bpp_for_search:.4f}")
+        print(f"Target PSNR for search: {target_psnr_for_search:.2f}")
+        print(f"Search performed on: Blue channel (applied to all)")
+        
+        # 輸出各通道的最終指標
+        if color_pee_stages:
+            final_stage = color_pee_stages[-1]
+            print("\nFinal channel results with adaptive threshold:")
+            for ch_name, metrics in final_stage['channel_metrics'].items():
+                print(f"  {ch_name.capitalize()}: Payload={final_stage['channel_payloads'][ch_name]}, "
+                      f"PSNR={metrics['psnr']:.2f}, SSIM={metrics['ssim']:.4f}")
+    
+    # 🔧 修復：最終結果輸出，顯示修復效果
+    print(f"\n{'='*60}")
+    print(f"✅ 彩色圖像處理完成 - 修復後結果")
+    print(f"{'='*60}")
+    print(f"總嵌入容量: {total_payload:,} bits")
+    print(f"像素位置數: {img.shape[0] * img.shape[1]:,}")
+    print(f"最終BPP: {total_payload / (img.shape[0] * img.shape[1]):.6f}")
+    print(f"各通道容量:")
+    print(f"  Blue: {b_payload:,} bits")
+    print(f"  Green: {g_payload:,} bits") 
+    print(f"  Red: {r_payload:,} bits")
+    print(f"通道負載均衡比例: {max(b_payload, g_payload, r_payload) / min(b_payload, g_payload, r_payload):.3f}x")
+    
+    # 🔧 修復後的容量比較
+    equivalent_grayscale_capacity = (img.shape[0] * img.shape[1]) * 0.8  # 假設80%嵌入率
+    capacity_multiplier = total_payload / equivalent_grayscale_capacity
+    print(f"相對於等效灰階圖像容量: {capacity_multiplier:.2f}x")
+    
+    if capacity_multiplier >= 2.5:
+        print("✅ 成功達到接近3倍灰階容量！")
+    elif capacity_multiplier >= 2.0:
+        print("🟡 達到2倍以上灰階容量，表現良好")
+    else:
+        print("🔴 容量未達到預期，可能需要進一步調整參數")
     
     return final_color_img, total_payload, color_pee_stages

@@ -1,0 +1,69 @@
+Split Method Rotation Information for Male
+==================================================
+
+Split Size: 2x2
+Split Type: Block-based
+Image Type: Grayscale
+Total Stages: 5
+
+Generated Images for Each Stage:
+1. Merged Image: Direct combination of rotated sub-images
+2. Tiled Image: Grid layout of rotated sub-images
+3. Comparison Image: Original vs Merged vs Tiled
+
+Stage 0 Rotation Information:
+------------------------------
+Rotation angles: [270, 90, 0, 0]
+Rotation distribution:
+  0°: 2 sub-images
+  90°: 1 sub-images
+  270°: 1 sub-images
+Payload: 816092 bits
+PSNR: 52.70 dB
+SSIM: 0.9963
+
+Stage 1 Rotation Information:
+------------------------------
+Rotation angles: [180, 90, 270, 0]
+Rotation distribution:
+  0°: 1 sub-images
+  90°: 1 sub-images
+  180°: 1 sub-images
+  270°: 1 sub-images
+Payload: 201770 bits
+PSNR: 51.61 dB
+SSIM: 0.9954
+
+Stage 2 Rotation Information:
+------------------------------
+Rotation angles: [0, 90, 180, 0]
+Rotation distribution:
+  0°: 2 sub-images
+  90°: 1 sub-images
+  180°: 1 sub-images
+Payload: 88453 bits
+PSNR: 51.10 dB
+SSIM: 0.9941
+
+Stage 3 Rotation Information:
+------------------------------
+Rotation angles: [0, 90, 180, 270]
+Rotation distribution:
+  0°: 1 sub-images
+  90°: 1 sub-images
+  180°: 1 sub-images
+  270°: 1 sub-images
+Payload: 70774 bits
+PSNR: 50.40 dB
+SSIM: 0.9928
+
+Stage 4 Rotation Information:
+------------------------------
+Rotation angles: [90, 0, 90, 90]
+Rotation distribution:
+  0°: 1 sub-images
+  90°: 3 sub-images
+Payload: 98026 bits
+PSNR: 49.55 dB
+SSIM: 0.9913
+
